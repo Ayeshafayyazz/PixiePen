@@ -74,7 +74,7 @@ class AuthCard extends StatelessWidget {
                     onPressed: () {
                       Navigator.pushReplacement(
                         context,
-                        MaterialPageRoute(builder: (_) => HomeScreen()),
+                        MaterialPageRoute(builder: (_) =>HomeScreen ()),
                       );
                     },
                     style: ElevatedButton.styleFrom(

@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'auth/login_screen.dart';
-import 'screens/onboarding_screen.dart';
 import 'screens/splash_screen.dart';
 
 void main() => runApp(const MyApp());

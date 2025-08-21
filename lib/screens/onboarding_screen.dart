@@ -19,21 +19,21 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       description:
       'Create magical stories with your imagination! Write, speak, and bring your tales to life.',
       imageUrl: 'assets/images/LOGOpIXIEPEN__1_-removebg-preview.png',
-      backgroundColor: Colors.white, // light lavender
+      backgroundColor: Colors.white,
     ),
     OnboardingPage(
       title: 'Write & Speak Stories 🎤',
       description:
       'Type your stories or use your voice! Our magical pen understands both writing and speaking.',
       imageUrl: 'assets/images/LOGOpIXIEPEN__1_-removebg-preview.png',
-      backgroundColor: Colors.white, // light yellow
+      backgroundColor: Colors.white,
     ),
     OnboardingPage(
       title: 'Create Magical Books 📖',
       description:
       'Turn your stories into beautiful e-books! Add pictures and make them come alive.',
       imageUrl: 'assets/images/LOGOpIXIEPEN__1_-removebg-preview.png',
-      backgroundColor: Colors.white, // pastel purple
+      backgroundColor: Colors.white,
     ),
   ];
 
@@ -60,7 +60,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     final double screenWidth = MediaQuery.of(context).size.width;
 
     return Scaffold(
-      backgroundColor: _pages[_currentIndex].backgroundColor, // Dynamic color
+      backgroundColor: _pages[_currentIndex].backgroundColor,
       body: SafeArea(
         child: Column(
           children: [
@@ -175,8 +175,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         children: [
           // Image
           Container(
-            width: screenWidth * 0.7,
-            height: screenHeight * 0.35,
+            width: screenWidth * 0.5, // smaller width
+            height: screenHeight * 0.25, // smaller height
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(24),
               boxShadow: [
@@ -191,11 +191,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               borderRadius: BorderRadius.circular(24),
               child: Image.asset(
                 page.imageUrl,
-                fit: BoxFit.cover,
+                fit: BoxFit.contain, // avoid cropping
               ),
             ),
           ),
-          const SizedBox(height: 48),
+          const SizedBox(height: 32),
 
           // Title
           Text(
