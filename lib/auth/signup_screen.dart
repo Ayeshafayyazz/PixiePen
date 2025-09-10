@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'login_screen.dart';
+import '../routes.dart';
 import 'widgets/auth_card.dart';
 
 class SignUpScreen extends StatelessWidget {
@@ -12,7 +12,6 @@ class SignUpScreen extends StatelessWidget {
       resizeToAvoidBottomInset: false,
       body: Stack(
         children: [
-          // ✅ Fixed Purple Rectangle Background
           Positioned(
             top: 240,
             right: 180,
@@ -27,13 +26,11 @@ class SignUpScreen extends StatelessWidget {
                 borderRadius: BorderRadius.only(
                   topRight: Radius.circular(70),
                   bottomLeft: Radius.circular(70),
-                  bottomRight: Radius.circular(70), // ✅ Rounded bottom-right
+                  bottomRight: Radius.circular(70),
                 ),
               ),
             ),
           ),
-
-          // ✅ Scrollable Foreground Content
           SingleChildScrollView(
             child: Column(
               children: [
@@ -49,32 +46,28 @@ class SignUpScreen extends StatelessWidget {
                   style: TextStyle(color: Colors.black54, fontSize: 16),
                 ),
                 const SizedBox(height: 70),
-                const AuthCard(isLogin: false), // 👈 Reused login/signup card
-                const SizedBox(height: 80), // 👈 Push login text further down
-              GestureDetector(
-                onTap: () {
-                  Navigator.pushReplacement(
-                    context,
-                    MaterialPageRoute(builder: (_) => const LoginScreen()),
-                  );
-                },
-                child: RichText(
-                  text: const TextSpan(
-                    text: "Already Have An Account ",
-                    style: TextStyle(color: Colors.black),
-                    children: [
-                      TextSpan(
-                        text: "LOGIN",
-                        style: TextStyle(
-                          color: Colors.purple,
-                          fontWeight: FontWeight.bold,
+                const AuthCard(isLogin: false),
+                const SizedBox(height: 80),
+                GestureDetector(
+                  onTap: () {
+                    Navigator.pushReplacementNamed(context, AppRoutes.login);
+                  },
+                  child: RichText(
+                    text: const TextSpan(
+                      text: "Already Have An Account ",
+                      style: TextStyle(color: Colors.black),
+                      children: [
+                        TextSpan(
+                          text: "LOGIN",
+                          style: TextStyle(
+                            color: Colors.purple,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
-
-          ),
                 const SizedBox(height: 20),
               ],
             ),

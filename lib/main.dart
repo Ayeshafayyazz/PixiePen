@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'screens/splash_screen.dart';
+import 'routes.dart';
+import 'screens/theme.dart'; // 👈 import our theme file
 
 void main() => runApp(const MyApp());
 
@@ -11,8 +12,11 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'PixiePen',
-      home: const SplashScreen(),
-
+      theme: appTheme.copyWith(
+        textTheme: Theme.of(context).textTheme.apply(fontFamily: 'Poppins'),
+      ),
+      initialRoute: AppRoutes.splash,
+      routes: appRoutes,
     );
   }
 }

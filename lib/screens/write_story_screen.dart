@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'speech_to_text_screen.dart';
+import 'ai_image_generator_screen.dart';
+import 'theme.dart'; // 👈 for kAppPrimary
 
 class WriteStoryScreen extends StatefulWidget {
   const WriteStoryScreen({super.key});
@@ -10,140 +12,147 @@ class WriteStoryScreen extends StatefulWidget {
 
 class _WriteStoryScreenState extends State<WriteStoryScreen> {
   final TextEditingController _titleController = TextEditingController();
-  final TextEditingController _storyController = TextEditingController();
-  int _wordCount = 0;
+  final TextEditingController _bodyController = TextEditingController();
 
-  void _updateWordCount() {
-    setState(() {
-      _wordCount = _storyController.text.trim().isEmpty
-          ? 0
-          : _storyController.text.trim().split(RegExp(r"\s+")).length;
-    });
+  int get _wordCount {
+    if (_bodyController.text.trim().isEmpty) return 0;
+    return _bodyController.text.trim().split(RegExp(r"\s+")).length;
+  }
+
+  void _saveStory() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Story saved ✅")),
+    );
+  }
+
+  void _publishStory() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Story published 🚀")),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // 🔝 Top Bar
       appBar: AppBar(
-        backgroundColor: Colors.deepPurple,
-        title: TextField(
-          controller: _titleController,
-          style: GoogleFonts.baloo2(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-            fontSize: 18,
-          ),
-          decoration: const InputDecoration(
-            hintText: "My Magical Adventure...",
-            hintStyle: TextStyle(color: Colors.white70),
-            border: InputBorder.none,
-          ),
-        ),
+        backgroundColor: kAppPrimary,
         centerTitle: true,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
+        title: const Text(
+          "Write Story ✏️",
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
+        iconTheme: const IconThemeData(color: Colors.white),
       ),
-
-      // ✍️ Main Writing Area with gradient background
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFFEDE7F6), Color(0xFFE3F2FD)], // soft purple + blue
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
         child: Column(
           children: [
+            // Title field
+            TextField(
+              controller: _titleController,
+              decoration: InputDecoration(
+                hintText: "Story Title",
+                filled: true,
+                fillColor: kAppPrimary.withOpacity(0.05),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Story field
             Expanded(
-              child: Container(
-                margin: const EdgeInsets.all(16),
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white, // white "storybook" pad
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black12.withOpacity(0.1),
-                      blurRadius: 8,
-                      offset: const Offset(0, 4),
-                    )
-                  ],
-                ),
-                child: TextField(
-                  controller: _storyController,
-                  onChanged: (_) => _updateWordCount(),
-                  maxLines: null,
-                  expands: true,
-                  style: GoogleFonts.baloo2(
-                    fontSize: 16,
-                    color: Colors.black87,
-                  ),
-                  cursorColor: Colors.deepPurple,
-                  decoration: const InputDecoration(
-                    hintText: "Once upon a time... ✨",
-                    border: InputBorder.none,
+              child: TextField(
+                controller: _bodyController,
+                onChanged: (_) => setState(() {}),
+                maxLines: null,
+                expands: true,
+                decoration: InputDecoration(
+                  hintText: "Start writing your magical story here...",
+                  filled: true,
+                  fillColor: Colors.grey.shade100,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
                   ),
                 ),
               ),
             ),
+            const SizedBox(height: 8),
 
-            // 🎛️ Floating Tool Bar
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(30),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.deepPurple.withOpacity(0.15),
-                    blurRadius: 8,
-                    offset: const Offset(0, 4),
-                  )
-                ],
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  _buildToolbarButton(Icons.people, "Perspective"),
-                  _buildToolbarButton(Icons.mic, "Speak"),
-                  _buildToolbarButton(Icons.image, "Image"),
-                ],
+            // Word count
+            Align(
+              alignment: Alignment.centerRight,
+              child: Text(
+                "Word count: $_wordCount",
+                style: const TextStyle(color: kAppPrimary),
               ),
             ),
+            const SizedBox(height: 16),
 
-            // 📑 Bottom Action Bar
-            Container(
-              color: Colors.white.withOpacity(0.9),
-              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  // Word Counter / XP
-                  Text(
-                    "Words: $_wordCount",
-                    style: GoogleFonts.baloo2(
-                      fontSize: 14,
-                      color: Colors.deepPurple,
-                      fontWeight: FontWeight.bold,
+            // Action buttons (AI Images, Speech)
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _buildActionButton(
+                  color: kAppPrimary,
+                  icon: Icons.image,
+                  label: "To Pictures",
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const AiImageGeneratorScreen(),
+                      ),
+                    );
+                  },
+                ),
+                _buildActionButton(
+                  color: kAppPrimary,
+                  icon: Icons.mic,
+                  label: "Speak",
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const SpeechToTextScreen(),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+
+            // Save and Publish
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _saveStory,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: kAppPrimary,
+                      side: const BorderSide(color: kAppPrimary),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
+                    icon: const Icon(Icons.save),
+                    label: const Text("Save"),
                   ),
-
-                  Row(
-                    children: [
-                      _bottomActionButton(Icons.preview, "Preview"),
-                      const SizedBox(width: 12),
-                      _bottomActionButton(Icons.save, "Save"),
-                      const SizedBox(width: 12),
-                      _bottomActionButton(Icons.rocket_launch, "Next"),
-                    ],
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _publishStory,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: kAppPrimary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    icon: const Icon(Icons.send),
+                    label: const Text("Publish"),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ],
         ),
@@ -151,42 +160,30 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     );
   }
 
-  // 🎛️ Toolbar button
-  Widget _buildToolbarButton(IconData icon, String label) {
+  Widget _buildActionButton({
+    required Color color,
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
     return Column(
       children: [
-        CircleAvatar(
-          backgroundColor: Colors.deepPurple,
-          child: Icon(icon, color: Colors.white),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          label,
-          style: GoogleFonts.baloo2(
-            fontSize: 12,
-            color: Colors.deepPurple,
+        InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            height: 60,
+            width: 60,
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Icon(icon, color: Colors.white, size: 28),
           ),
         ),
+        const SizedBox(height: 6),
+        Text(label, style: const TextStyle(fontSize: 13)),
       ],
-    );
-  }
-
-  // 📑 Bottom Action Button
-  Widget _bottomActionButton(IconData icon, String label) {
-    return ElevatedButton.icon(
-      style: ElevatedButton.styleFrom(
-        backgroundColor: Colors.deepPurple,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      ),
-      icon: Icon(icon, size: 16, color: Colors.white),
-      label: Text(
-        label,
-        style: GoogleFonts.baloo2(color: Colors.white, fontSize: 14),
-      ),
-      onPressed: () {
-        // TODO: Add functionality later
-      },
     );
   }
 }

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:smooth_page_indicator/smooth_page_indicator.dart';
-import '../auth/signup_screen.dart';
+import '../routes.dart';
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -49,9 +49,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 
   void _goToAuth() {
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const SignUpScreen()),
-    );
+    Navigator.pushReplacementNamed(context, AppRoutes.signup);
   }
 
   @override
@@ -64,7 +62,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            // Skip button
             Align(
               alignment: Alignment.topRight,
               child: Padding(
@@ -85,8 +82,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 ),
               ),
             ),
-
-            // Page view
             Expanded(
               child: PageView.builder(
                 controller: _pageController,
@@ -105,8 +100,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 },
               ),
             ),
-
-            // Bottom section
             Padding(
               padding: const EdgeInsets.all(24.0),
               child: Column(
@@ -122,8 +115,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     ),
                   ),
                   const SizedBox(height: 32),
-
-                  // Next / Get Started button
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
@@ -162,10 +153,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 24.0),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [
-            page.backgroundColor,
-            Colors.white,
-          ],
+          colors: [page.backgroundColor, Colors.white],
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
         ),
@@ -173,10 +161,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          // Image
           Container(
-            width: screenWidth * 0.5, // smaller width
-            height: screenHeight * 0.25, // smaller height
+            width: screenWidth * 0.5,
+            height: screenHeight * 0.25,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(24),
               boxShadow: [
@@ -189,15 +176,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(24),
-              child: Image.asset(
-                page.imageUrl,
-                fit: BoxFit.contain, // avoid cropping
-              ),
+              child: Image.asset(page.imageUrl, fit: BoxFit.contain),
             ),
           ),
           const SizedBox(height: 32),
-
-          // Title
           Text(
             page.title,
             style: const TextStyle(
@@ -208,8 +190,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 16),
-
-          // Description
           Text(
             page.description,
             style: const TextStyle(

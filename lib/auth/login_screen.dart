@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:pixiepen/auth/signup_screen.dart';
+import '../routes.dart';
 import 'widgets/auth_card.dart';
 
 class LoginScreen extends StatelessWidget {
@@ -12,7 +12,6 @@ class LoginScreen extends StatelessWidget {
       resizeToAvoidBottomInset: false,
       body: Stack(
         children: [
-          // Purple background rectangle
           Positioned(
             top: 240,
             right: 180,
@@ -49,12 +48,8 @@ class LoginScreen extends StatelessWidget {
                 const SizedBox(height: 120),
                 GestureDetector(
                   onTap: () {
-                    Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(builder: (_) => const SignUpScreen()),
-                    );
+                    Navigator.pushReplacementNamed(context, AppRoutes.signup);
                   },
-
                   child: RichText(
                     text: const TextSpan(
                       text: "Don't Have An Account? ",

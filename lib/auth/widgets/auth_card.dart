@@ -1,12 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_custom_clippers/flutter_custom_clippers.dart';
-
-import '../../screens/home_screen.dart';
-
+import '../../routes.dart';
 
 class AuthCard extends StatelessWidget {
   final bool isLogin;
-  const AuthCard({required this.isLogin});
+  const AuthCard({super.key, required this.isLogin});
 
   @override
   Widget build(BuildContext context) {
@@ -72,10 +70,7 @@ class AuthCard extends StatelessWidget {
                   const SizedBox(height: 19),
                   ElevatedButton(
                     onPressed: () {
-                      Navigator.pushReplacement(
-                        context,
-                        MaterialPageRoute(builder: (_) =>HomeScreen ()),
-                      );
+                      Navigator.pushReplacementNamed(context, AppRoutes.community);
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.blue,
@@ -95,8 +90,6 @@ class AuthCard extends StatelessWidget {
                       ),
                     ),
                   ),
-
-
                 ],
               ),
             ),
@@ -112,6 +105,7 @@ class PasswordAwareTextField extends StatefulWidget {
   final IconData icon;
 
   const PasswordAwareTextField({
+    super.key,
     required this.hint,
     required this.icon,
   });

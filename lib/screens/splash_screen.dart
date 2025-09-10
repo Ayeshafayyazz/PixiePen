@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:animated_text_kit/animated_text_kit.dart';
-import 'onboarding_screen.dart';
+import '../routes.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -35,16 +35,7 @@ class _SplashScreenState extends State<SplashScreen>
     _controller.forward();
 
     Future.delayed(const Duration(seconds: 3), () {
-      Navigator.pushReplacement(
-        context,
-        PageRouteBuilder(
-          transitionDuration: const Duration(milliseconds: 500),
-          pageBuilder: (_, __, ___) => const OnboardingScreen(),
-          transitionsBuilder: (_, animation, __, child) {
-            return FadeTransition(opacity: animation, child: child);
-          },
-        ),
-      );
+      Navigator.pushReplacementNamed(context, AppRoutes.onboarding);
     });
   }
 
@@ -56,7 +47,6 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   Widget build(BuildContext context) {
-    // Get screen width and height for responsiveness
     final screenWidth = MediaQuery.of(context).size.width;
     final screenHeight = MediaQuery.of(context).size.height;
 
@@ -77,20 +67,16 @@ class _SplashScreenState extends State<SplashScreen>
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // Image size responsive: 40% of screen width
                   Image.asset(
                     'assets/images/LOGOpIXIEPEN__1_-removebg-preview.png',
                     width: screenWidth * 0.5,
                     height: screenHeight * 0.25,
                     fit: BoxFit.contain,
                   ),
-
                   SizedBox(height: screenHeight * 0.03),
-
-                  // Responsive text
                   DefaultTextStyle(
                     style: TextStyle(
-                      fontSize: screenWidth * 0.045, // font scales with width
+                      fontSize: screenWidth * 0.045,
                       color: Colors.black,
                       fontStyle: FontStyle.italic,
                     ),
