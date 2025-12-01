@@ -15,11 +15,15 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
   void _toggleListening() {
     setState(() {
       isListening = !isListening;
+
       if (isListening) {
+        // Dummy text to simulate speech
         transcript =
         "Once upon a time, in a magical forest, there lived a curious little dragon...";
       } else {
         transcript += "\n\n[Stopped listening]";
+        // Send back the spoken text to previous screen
+        Navigator.of(context).pop(transcript);
       }
     });
   }
@@ -38,13 +42,13 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
         ),
         iconTheme: const IconThemeData(color: Colors.white),
       ),
-      body: Center( // 👈 ensures everything is centered
+      body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             // Transcript card
             Container(
-              width: MediaQuery.of(context).size.width * 0.85, // centered width
+              width: MediaQuery.of(context).size.width * 0.85,
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
                 color: Colors.white,
@@ -53,14 +57,14 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
                   BoxShadow(
                     color: Colors.black12,
                     blurRadius: 6,
-                    offset: Offset(0, 3),
+                    offset: const Offset(0, 3),
                   )
                 ],
               ),
               child: SingleChildScrollView(
                 child: Text(
                   transcript,
-                  textAlign: TextAlign.center, // 👈 text also centered
+                  textAlign: TextAlign.center,
                   style: textTheme.bodyLarge?.copyWith(
                     fontSize: 16,
                     height: 1.5,

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'theme.dart'; // ✅ make sure this file contains your kAppPrimary and appTheme
 
 class MyStoriesScreen extends StatefulWidget {
   const MyStoriesScreen({super.key});
@@ -7,7 +8,8 @@ class MyStoriesScreen extends StatefulWidget {
   State<MyStoriesScreen> createState() => _MyStoriesScreenState();
 }
 
-class _MyStoriesScreenState extends State<MyStoriesScreen> {
+class _MyStoriesScreenState extends State<MyStoriesScreen>
+    with SingleTickerProviderStateMixin {
   final List<Map<String, dynamic>> _stories = [
     {
       'id': '1',
@@ -39,9 +41,15 @@ class _MyStoriesScreenState extends State<MyStoriesScreen> {
     final selected = _stories.where((s) => s['selected']).toList();
     if (selected.isEmpty) return;
 
-    // TODO: send selected stories to EbookScreen
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("Converting ${selected.length} stories into eBook...")),
+      SnackBar(
+        content: Text(
+          "📚 Converting ${selected.length} stories into an eBook...",
+          style: const TextStyle(fontSize: 16),
+        ),
+        backgroundColor: kAppPrimary,
+        behavior: SnackBarBehavior.floating,
+      ),
     );
   }
 
@@ -50,52 +58,99 @@ class _MyStoriesScreenState extends State<MyStoriesScreen> {
     final selectedCount = _stories.where((s) => s['selected']).length;
 
     return Scaffold(
+      backgroundColor: Colors.grey.shade100,
       appBar: AppBar(
-        backgroundColor: Colors.purple,
-        title: const Text("My Stories", style: TextStyle(color: Colors.white)),
+        elevation: 0,
+        backgroundColor: kAppPrimary,
+        centerTitle: true,
+        title: const Text(
+          "📖 My Stories",
+          style: TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+            fontSize: 22,
+            letterSpacing: 0.5,
+          ),
+        ),
         iconTheme: const IconThemeData(color: Colors.white),
       ),
+
       body: ListView.builder(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(16),
         itemCount: _stories.length,
         itemBuilder: (context, index) {
           final story = _stories[index];
-          return Card(
-            margin: const EdgeInsets.only(bottom: 12),
-            shape: RoundedRectangleBorder(
+          final isSelected = story['selected'] as bool;
+
+          return AnimatedContainer(
+            duration: const Duration(milliseconds: 250),
+            margin: const EdgeInsets.only(bottom: 14),
+            decoration: BoxDecoration(
+              color: Colors.white,
               borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: isSelected ? kAppPrimary : Colors.grey.shade300,
+                width: isSelected ? 2 : 1,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: isSelected
+                      ? kAppPrimary.withOpacity(0.25)
+                      : Colors.black12,
+                  blurRadius: 6,
+                  offset: const Offset(0, 3),
+                ),
+              ],
             ),
-            elevation: 3,
             child: ListTile(
-              contentPadding: const EdgeInsets.all(12),
+              contentPadding:
+              const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
               leading: Checkbox(
-                value: story['selected'],
-                activeColor: Colors.purple,
+                value: isSelected,
+                activeColor: kAppPrimary,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(6),
+                ),
                 onChanged: (_) => _toggleSelect(index),
               ),
               title: Text(
                 story['title'],
-                style: const TextStyle(
+                style: TextStyle(
                   fontWeight: FontWeight.bold,
-                  color: Colors.purple,
+                  fontSize: 16,
+                  color: kAppPrimary,
                 ),
               ),
-              subtitle: Text(
-                story['excerpt'],
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+              subtitle: Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  story['excerpt'],
+                  style: TextStyle(
+                    color: Colors.grey.shade700,
+                    height: 1.3,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
               trailing: PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert, color: Colors.grey),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
                 onSelected: (value) {
                   if (value == 'edit') {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text("Edit ${story['title']}")),
+                      SnackBar(content: Text("✏️ Editing ${story['title']}")),
                     );
                   } else if (value == 'delete') {
                     setState(() => _stories.removeAt(index));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text("🗑️ Deleted ${story['title']}")),
+                    );
                   } else if (value == 'post') {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text("Posted ${story['title']}")),
+                      SnackBar(content: Text("🚀 Posted ${story['title']}")),
                     );
                   }
                 },
@@ -110,15 +165,51 @@ class _MyStoriesScreenState extends State<MyStoriesScreen> {
         },
       ),
 
-      // ✅ Only show button when stories are selected
-      floatingActionButton: selectedCount > 0
-          ? FloatingActionButton.extended(
-        backgroundColor: Colors.purple,
-        onPressed: _convertToEbook,
-        icon: const Icon(Icons.menu_book, color: Colors.white),
-        label: Text("Convert ($selectedCount)"),
-      )
-          : null,
+      // ✅ Smooth bottom convert bar (Human-centered UX)
+      bottomNavigationBar: AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        height: selectedCount > 0 ? 70 : 0,
+        curve: Curves.easeInOut,
+        child: selectedCount > 0
+            ? Container(
+          decoration: BoxDecoration(
+            color: kAppPrimary,
+            borderRadius:
+            const BorderRadius.vertical(top: Radius.circular(20)),
+            boxShadow: [
+              BoxShadow(
+                color: kAppPrimary.withOpacity(0.4),
+                blurRadius: 10,
+                offset: const Offset(0, -3),
+              ),
+            ],
+          ),
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: ElevatedButton.icon(
+                onPressed: _convertToEbook,
+                icon: const Icon(Icons.menu_book, color: Colors.white),
+                label: Text(
+                  "Convert $selectedCount Story${selectedCount > 1 ? 'ies' : ''} to eBook",
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.white.withOpacity(0.15),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                      vertical: 14, horizontal: 18),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        )
+            : const SizedBox.shrink(),
+      ),
     );
   }
 }

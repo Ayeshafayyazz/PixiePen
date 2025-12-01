@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:smooth_page_indicator/smooth_page_indicator.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../routes.dart';
 
 class OnboardingScreen extends StatefulWidget {
@@ -44,12 +45,24 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         curve: Curves.easeInOut,
       );
     } else {
-      _goToAuth();
+      _completeOnboarding();
     }
   }
 
-  void _goToAuth() {
-    Navigator.pushReplacementNamed(context, AppRoutes.signup);
+  Future<void> _completeOnboarding() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('onboarding_completed', true);
+    if (mounted) {
+      Navigator.pushReplacementNamed(context, AppRoutes.signup);
+    }
+  }
+
+  void _skip() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('onboarding_completed', true);
+    if (mounted) {
+      Navigator.pushReplacementNamed(context, AppRoutes.signup);
+    }
   }
 
   @override
@@ -67,7 +80,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
                 child: TextButton(
-                  onPressed: _goToAuth,
+                  onPressed: _skip,
                   style: TextButton.styleFrom(
                     foregroundColor: Colors.deepPurple.shade900,
                     backgroundColor: Colors.white.withOpacity(0.8),

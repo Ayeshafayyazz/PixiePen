@@ -20,6 +20,8 @@ class _AuthCardState extends State<AuthCard> {
   final _usernameController = TextEditingController();
   bool _isLoading = false;
   String? _errorMessage;
+  bool _obscurePassword = true;
+  bool _obscureConfirmPassword = true;
 
   @override
   void dispose() {
@@ -53,7 +55,7 @@ class _AuthCardState extends State<AuthCard> {
           _passwordController.text,
         );
       }
-      
+
       if (mounted) {
         Navigator.pushReplacementNamed(context, AppRoutes.community);
       }
@@ -130,8 +132,9 @@ class _AuthCardState extends State<AuthCard> {
                         if (value == null || value.isEmpty) {
                           return 'Please enter an email';
                         }
-                        if (!value.contains('@')) {
-                          return 'Please enter a valid email';
+                        final emailRegex = RegExp(r'^[\w-\.]+@gmail\.com$');
+                        if (!emailRegex.hasMatch(value)) {
+                          return 'Enter a valid Gmail address';
                         }
                         return null;
                       },
@@ -139,18 +142,27 @@ class _AuthCardState extends State<AuthCard> {
                     const SizedBox(height: 10),
                     TextFormField(
                       controller: _passwordController,
-                      decoration: const InputDecoration(
+                      obscureText: _obscurePassword,
+                      decoration: InputDecoration(
                         hintText: 'Password',
-                        prefixIcon: Icon(Icons.lock_outline),
+                        prefixIcon: const Icon(Icons.lock_outline),
+                        suffixIcon: IconButton(
+                          icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
+                          onPressed: () {
+                            setState(() {
+                              _obscurePassword = !_obscurePassword;
+                            });
+                          },
+                        ),
                       ),
-                      obscureText: true,
                       validator: (value) {
                         if (value == null || value.isEmpty) {
                           return 'Please enter a password';
                         }
-                        if (!widget.isLogin && value.length < 6) {
-                          return 'Password must be at least 6 characters';
-                        }
+    final passwordRegex = RegExp(r'^.{6,}$'); // At least 6 characters
+    if (!widget.isLogin && !passwordRegex.hasMatch(value)) {
+    return 'Password must be at least 6 characters';
+    }
                         return null;
                       },
                     ),
@@ -158,11 +170,19 @@ class _AuthCardState extends State<AuthCard> {
                       const SizedBox(height: 10),
                       TextFormField(
                         controller: _confirmPasswordController,
-                        decoration: const InputDecoration(
+                        obscureText: _obscureConfirmPassword,
+                        decoration: InputDecoration(
                           hintText: 'Confirm Password',
-                          prefixIcon: Icon(Icons.lock_outline),
+                          prefixIcon: const Icon(Icons.lock_outline),
+                          suffixIcon: IconButton(
+                            icon: Icon(_obscureConfirmPassword ? Icons.visibility_off : Icons.visibility),
+                            onPressed: () {
+                              setState(() {
+                                _obscureConfirmPassword = !_obscureConfirmPassword;
+                              });
+                            },
+                          ),
                         ),
-                        obscureText: true,
                         validator: (value) {
                           if (value != _passwordController.text) {
                             return 'Passwords do not match';
@@ -175,116 +195,32 @@ class _AuthCardState extends State<AuthCard> {
                       Align(
                         alignment: Alignment.centerRight,
                         child: TextButton(
-                          onPressed: () {
-                            // TODO: Implement forgot password
-                          },
-                          child: const Text(
-                            "Forget Password?",
-                            style: TextStyle(color: Colors.black54),
-                          ),
+                          onPressed: () {},
+                          child: const Text("Forget Password?", style: TextStyle(color: Colors.black54)),
                         ),
                       ),
                     if (_errorMessage != null)
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: 8.0),
-                        child: Text(
-                          _errorMessage!,
-                          style: const TextStyle(
-                            color: Colors.red,
-                            fontSize: 12,
-                          ),
-                        ),
+                        child: Text(_errorMessage!, style: const TextStyle(color: Colors.red, fontSize: 12)),
                       ),
                     const SizedBox(height: 19),
                     ElevatedButton(
                       onPressed: _isLoading ? null : _submit,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.blue,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(30),
-                        ),
-                        padding: const EdgeInsets.symmetric(
-                          vertical: 10,
-                          horizontal: 40,
-                        ),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 40),
                       ),
                       child: _isLoading
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                color: Colors.white,
-                                strokeWidth: 2,
-                              ),
-                            )
-                          : Text(
-                              widget.isLogin ? 'Login' : 'SignUp',
-                              style: const TextStyle(
-                                fontSize: 16,
-                                color: Colors.white,
-                              ),
-                            ),
+                          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                          : Text(widget.isLogin ? 'Login' : 'SignUp', style: const TextStyle(fontSize: 16, color: Colors.white)),
                     ),
                   ],
                 ),
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class PasswordAwareTextField extends StatefulWidget {
-  final String hint;
-  final IconData icon;
-
-  const PasswordAwareTextField({
-    super.key,
-    required this.hint,
-    required this.icon,
-  });
-
-  @override
-  State<PasswordAwareTextField> createState() => _PasswordAwareTextFieldState();
-}
-
-class _PasswordAwareTextFieldState extends State<PasswordAwareTextField> {
-  bool _obscureText = true;
-
-  @override
-  Widget build(BuildContext context) {
-    final isPassword = widget.hint.toLowerCase().contains("password");
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: TextField(
-        obscureText: isPassword ? _obscureText : false,
-        decoration: InputDecoration(
-          hintText: widget.hint,
-          prefixIcon: Icon(widget.icon),
-          suffixIcon: isPassword
-              ? IconButton(
-            icon: Icon(
-              _obscureText
-                  ? Icons.visibility_off
-                  : Icons.visibility,
-              color: Colors.grey,
-            ),
-            onPressed: () {
-              setState(() {
-                _obscureText = !_obscureText;
-              });
-            },
-          )
-              : null,
-          filled: true,
-          fillColor: Colors.white,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide.none,
-          ),
         ),
       ),
     );

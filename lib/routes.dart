@@ -17,9 +17,6 @@ class AppRoutes {
   static const String onboarding = '/onboarding';
   static const String login = '/login';
   static const String signup = '/signup';
-  static const String home = '/home';
-
-  // Extra app screens
   static const String community = '/community';
   static const String ebook = '/ebook';
   static const String profile = '/profile';

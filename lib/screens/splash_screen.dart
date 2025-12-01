@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:animated_text_kit/animated_text_kit.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../routes.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -34,9 +35,23 @@ class _SplashScreenState extends State<SplashScreen>
 
     _controller.forward();
 
-    Future.delayed(const Duration(seconds: 3), () {
+    _navigateNext();
+  }
+
+  Future<void> _navigateNext() async {
+    await Future.delayed(const Duration(seconds: 3));
+
+    final prefs = await SharedPreferences.getInstance();
+    final bool onboardingCompleted = prefs.getBool('onboarding_completed') ?? false;
+    final bool loggedIn = prefs.getBool('logged_in') ?? false;
+
+    if (loggedIn) {
+      Navigator.pushReplacementNamed(context, AppRoutes.community);
+    } else if (onboardingCompleted) {
+      Navigator.pushReplacementNamed(context, AppRoutes.login);
+    } else {
       Navigator.pushReplacementNamed(context, AppRoutes.onboarding);
-    });
+    }
   }
 
   @override
