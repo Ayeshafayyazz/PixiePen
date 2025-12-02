@@ -15,16 +15,14 @@ class EbookScreen extends StatelessWidget {
         actions: [
           IconButton(
             icon: const Icon(Icons.search, color: Colors.white),
-            onPressed: () {
-              // TODO: implement search
-            },
+            onPressed: () {},
           ),
         ],
       ),
       body: GridView.builder(
         padding: const EdgeInsets.all(16),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2, // 2 books per row
+          crossAxisCount: 2,
           childAspectRatio: 0.65,
           crossAxisSpacing: 12,
           mainAxisSpacing: 16,
@@ -37,7 +35,10 @@ class EbookScreen extends StatelessWidget {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (_) => EbookDetailScreen(book: book),
+                  builder: (_) => EbookDetailScreen(
+                    book: book,
+                    chapters: demoChapters[book.id] ?? [],
+                  ),
                 ),
               );
             },
@@ -75,7 +76,10 @@ class EbookScreen extends StatelessWidget {
                           book.title,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleMedium
+                              ?.copyWith(
                             fontWeight: FontWeight.bold,
                             color: scheme.onSurface,
                           ),
@@ -83,9 +87,10 @@ class EbookScreen extends StatelessWidget {
                         const SizedBox(height: 6),
                         Text(
                           "by ${book.author}",
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: scheme.onSurfaceVariant,
-                          ),
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodySmall
+                              ?.copyWith(color: scheme.onSurfaceVariant),
                         ),
                       ],
                     ),
@@ -102,7 +107,13 @@ class EbookScreen extends StatelessWidget {
 
 class EbookDetailScreen extends StatelessWidget {
   final Ebook book;
-  const EbookDetailScreen({super.key, required this.book});
+  final List<String> chapters;
+
+  const EbookDetailScreen({
+    super.key,
+    required this.book,
+    required this.chapters,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -120,8 +131,12 @@ class EbookDetailScreen extends StatelessWidget {
           children: [
             ClipRRect(
               borderRadius: BorderRadius.circular(12),
-              child: Image.network(book.coverUrl,
-                  height: 200, width: 140, fit: BoxFit.cover),
+              child: Image.network(
+                book.coverUrl,
+                height: 200,
+                width: 140,
+                fit: BoxFit.cover,
+              ),
             ),
             const SizedBox(height: 16),
             Text(
@@ -137,30 +152,32 @@ class EbookDetailScreen extends StatelessWidget {
             ),
             const SizedBox(height: 20),
             Expanded(
-              child: SingleChildScrollView(
-                child: Text(
-                  book.description,
-                  style: Theme.of(context).textTheme.bodyLarge,
-                ),
+              child: ListView.builder(
+                itemCount: chapters.length,
+                itemBuilder: (context, index) {
+                  return ListTile(
+                    leading: CircleAvatar(
+                      child: Text('${index + 1}'),
+                      backgroundColor: scheme.primary,
+                      foregroundColor: Colors.white,
+                    ),
+                    title: Text(chapters[index]),
+                    trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                    onTap: () {
+                      // Open chapter reading screen
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => ChapterReaderScreen(
+                            bookTitle: book.title,
+                            chapterTitle: chapters[index],
+                          ),
+                        ),
+                      );
+                    },
+                  );
+                },
               ),
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton.icon(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => EbookReaderScreen(book: book),
-                  ),
-                );
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: scheme.primary,
-                foregroundColor: Colors.white,
-                minimumSize: const Size(double.infinity, 50),
-              ),
-              icon: const Icon(Icons.menu_book),
-              label: const Text("Read Book"),
             ),
           ],
         ),
@@ -169,10 +186,16 @@ class EbookDetailScreen extends StatelessWidget {
   }
 }
 
-/// Simple reader page
-class EbookReaderScreen extends StatelessWidget {
-  final Ebook book;
-  const EbookReaderScreen({super.key, required this.book});
+// Chapter reader screen
+class ChapterReaderScreen extends StatelessWidget {
+  final String bookTitle;
+  final String chapterTitle;
+
+  const ChapterReaderScreen({
+    super.key,
+    required this.bookTitle,
+    required this.chapterTitle,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -181,14 +204,13 @@ class EbookReaderScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: scheme.primary,
-        title: Text(book.title, style: const TextStyle(color: Colors.white)),
-        iconTheme: const IconThemeData(color: Colors.white),
+        title: Text(chapterTitle, style: const TextStyle(color: Colors.white)),
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: SingleChildScrollView(
           child: Text(
-            _longDummyText(book.description),
+            _dummyChapterText(chapterTitle),
             style: Theme.of(context).textTheme.bodyLarge?.copyWith(height: 1.5),
           ),
         ),
@@ -196,12 +218,18 @@ class EbookReaderScreen extends StatelessWidget {
     );
   }
 
-  /// Dummy long text for demo
-  String _longDummyText(String seed) {
-    return List<String>.generate(10, (i) => seed).join("\n\n");
+  // Dummy text for chapters
+  String _dummyChapterText(String chapter) {
+    return "📖 $chapter\n\n" +
+        List<String>.generate(
+            5,
+                (i) =>
+            "This is some dummy content for $chapter. It contains exciting events and storytelling that make the reader engaged.")
+            .join("\n\n");
   }
 }
 
+// Ebook model
 class Ebook {
   final String id;
   final String title;
@@ -218,7 +246,7 @@ class Ebook {
   });
 }
 
-/// DEMO DATA
+// Demo books
 final demoBooks = [
   Ebook(
     id: "1",
@@ -245,3 +273,10 @@ final demoBooks = [
     "A poetic tale about love, loss, and looking at life through the eyes of a child.",
   ),
 ];
+
+// Demo chapters for each book
+final Map<String, List<String>> demoChapters = {
+  "1": ["The Magical Garden", "The Hidden Key"], // Secret Garden
+  "2": ["Down the Rabbit Hole", "The Tea Party"], // Alice in Wonderland
+  "3": ["The Planet of the Little Prince", "The Fox Story"], // The Little Prince
+};

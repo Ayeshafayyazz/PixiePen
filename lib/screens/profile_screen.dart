@@ -54,8 +54,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
           iconTheme: const IconThemeData(color: Colors.white),
           actions: [
             IconButton(
-              icon: const Icon(Icons.notifications, color: Colors.white),
-              onPressed: () {},
+              icon: const Icon(Icons.logout, color: Colors.white),
+              onPressed: _logout, // logout with confirmation popup
             ),
           ],
         ),
@@ -70,14 +70,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
               labelStyle: TextStyle(fontWeight: FontWeight.bold),
               tabs: [
                 Tab(text: "My Stories"),
-                Tab(text: "Saved"),
+                Tab(text: "Drafts"),
               ],
             ),
             Expanded(
               child: TabBarView(
                 children: [
                   _StoriesTab(title: "My Stories"),
-                  _StoriesTab(title: "Saved Stories"),
+                  _StoriesTab(title: "Draft Stories"),
                 ],
               ),
             ),
@@ -205,7 +205,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
             Navigator.pop(context);
             Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
           }),
-          _buildDrawerItem(Icons.logout, "Logout", _logout),
           const SizedBox(height: 16),
         ],
       ),
@@ -404,8 +403,44 @@ class _StoriesTab extends StatelessWidget {
 }
 
 // Settings Screen
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  bool _notificationsEnabled = true; // default ON
+  final TextEditingController _passwordController = TextEditingController();
+
+  Future<void> _changePassword() async {
+    final newPassword = _passwordController.text.trim();
+    if (newPassword.isEmpty || newPassword.length < 6) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Password must be at least 6 characters long')),
+      );
+      return;
+    }
+
+    try {
+      await FirebaseAuth.instance.currentUser!.updatePassword(newPassword);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Password updated successfully'), backgroundColor: Colors.green),
+      );
+      Navigator.pop(context); // close dialog
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to update password: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _passwordController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -417,25 +452,76 @@ class SettingsScreen extends StatelessWidget {
       ),
       body: ListView(
         children: [
+          // Change Password
           ListTile(
             leading: const Icon(Icons.lock),
             title: const Text("Change Password"),
             onTap: () {
-              // TODO: Implement Change Password
+              showDialog(
+                context: context,
+                builder: (_) => AlertDialog(
+                  title: const Text("Change Password"),
+                  content: TextField(
+                    controller: _passwordController,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: "New Password",
+                      hintText: "Enter new password",
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text("Cancel"),
+                    ),
+                    TextButton(
+                      onPressed: _changePassword,
+                      child: const Text("Save"),
+                    ),
+                  ],
+                ),
+              );
             },
           ),
-          ListTile(
-            leading: const Icon(Icons.notifications),
+          // Notifications toggle
+          SwitchListTile(
+            secondary: const Icon(Icons.notifications),
             title: const Text("Notifications"),
-            onTap: () {
-              // TODO: Implement Notifications Settings
+            value: _notificationsEnabled,
+            onChanged: (bool value) {
+              setState(() {
+                _notificationsEnabled = value;
+              });
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    value ? 'Notifications Enabled' : 'Notifications Disabled',
+                  ),
+                ),
+              );
             },
           ),
+          // About dialog
           ListTile(
             leading: const Icon(Icons.info),
             title: const Text("About"),
             onTap: () {
-              // TODO: Implement About
+              showDialog(
+                context: context,
+                builder: (_) => AlertDialog(
+                  title: const Text("About PixiePen"),
+                  content: const Text(
+                    "PixiePen is a fun and creative app for kids to write and illustrate their own stories using AI-powered tools.",
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text("OK"),
+                    ),
+                  ],
+                ),
+              );
             },
           ),
         ],

@@ -29,11 +29,20 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
       'excerpt': 'Behind the mountains, a castle shimmered under the moonlight…',
       'selected': false,
     },
+    {
+      'id': '4',
+      'title': 'The Enchanted River',
+      'excerpt': 'A river sparkled with colors that changed with every step…',
+      'selected': false,
+    },
   ];
+
+  bool _selectionMode = false;
 
   void _toggleSelect(int index) {
     setState(() {
       _stories[index]['selected'] = !_stories[index]['selected'];
+      _selectionMode = _stories.any((story) => story['selected']);
     });
   }
 
@@ -74,7 +83,6 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
         ),
         iconTheme: const IconThemeData(color: Colors.white),
       ),
-
       body: ListView.builder(
         padding: const EdgeInsets.all(16),
         itemCount: _stories.length,
@@ -82,90 +90,86 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
           final story = _stories[index];
           final isSelected = story['selected'] as bool;
 
-          return AnimatedContainer(
-            duration: const Duration(milliseconds: 250),
-            margin: const EdgeInsets.only(bottom: 14),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: isSelected ? kAppPrimary : Colors.grey.shade300,
-                width: isSelected ? 2 : 1,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: isSelected
-                      ? kAppPrimary.withOpacity(0.25)
-                      : Colors.black12,
-                  blurRadius: 6,
-                  offset: const Offset(0, 3),
+          return GestureDetector(
+            onLongPress: () => _toggleSelect(index),
+            onTap: () {
+              if (_selectionMode) _toggleSelect(index);
+            },
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 250),
+              margin: const EdgeInsets.only(bottom: 14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: isSelected ? kAppPrimary : Colors.grey.shade300,
+                  width: isSelected ? 2 : 1,
                 ),
-              ],
-            ),
-            child: ListTile(
-              contentPadding:
-              const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-              leading: Checkbox(
-                value: isSelected,
-                activeColor: kAppPrimary,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                onChanged: (_) => _toggleSelect(index),
-              ),
-              title: Text(
-                story['title'],
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
-                  color: kAppPrimary,
-                ),
-              ),
-              subtitle: Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(
-                  story['excerpt'],
-                  style: TextStyle(
-                    color: Colors.grey.shade700,
-                    height: 1.3,
+                boxShadow: [
+                  BoxShadow(
+                    color: isSelected
+                        ? kAppPrimary.withOpacity(0.25)
+                        : Colors.black12,
+                    blurRadius: 6,
+                    offset: const Offset(0, 3),
                   ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              trailing: PopupMenuButton<String>(
-                icon: const Icon(Icons.more_vert, color: Colors.grey),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                onSelected: (value) {
-                  if (value == 'edit') {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text("✏️ Editing ${story['title']}")),
-                    );
-                  } else if (value == 'delete') {
-                    setState(() => _stories.removeAt(index));
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text("🗑️ Deleted ${story['title']}")),
-                    );
-                  } else if (value == 'post') {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text("🚀 Posted ${story['title']}")),
-                    );
-                  }
-                },
-                itemBuilder: (context) => const [
-                  PopupMenuItem(value: 'edit', child: Text("Edit")),
-                  PopupMenuItem(value: 'delete', child: Text("Delete")),
-                  PopupMenuItem(value: 'post', child: Text("Post")),
                 ],
+              ),
+              child: ListTile(
+                contentPadding:
+                const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                title: Text(
+                  story['title'],
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                    color: kAppPrimary,
+                  ),
+                ),
+                subtitle: Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    story['excerpt'],
+                    style: TextStyle(
+                      color: Colors.grey.shade700,
+                      height: 1.3,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                trailing: PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_vert, color: Colors.grey),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  onSelected: (value) {
+                    if (value == 'edit') {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text("✏️ Editing ${story['title']}")),
+                      );
+                    } else if (value == 'delete') {
+                      setState(() => _stories.removeAt(index));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text("🗑️ Deleted ${story['title']}")),
+                      );
+                    } else if (value == 'post') {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text("🚀 Posted ${story['title']}")),
+                      );
+                    }
+                  },
+                  itemBuilder: (context) => const [
+                    PopupMenuItem(value: 'edit', child: Text("Edit")),
+                    PopupMenuItem(value: 'delete', child: Text("Delete")),
+                    PopupMenuItem(value: 'post', child: Text("Post")),
+                  ],
+                ),
               ),
             ),
           );
         },
       ),
-
-      // ✅ Smooth bottom convert bar (Human-centered UX)
       bottomNavigationBar: AnimatedContainer(
         duration: const Duration(milliseconds: 300),
         height: selectedCount > 0 ? 70 : 0,

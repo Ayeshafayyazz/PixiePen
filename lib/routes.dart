@@ -5,11 +5,9 @@ import 'screens/splash_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'auth/login_screen.dart';
 import 'auth/signup_screen.dart';
-import 'screens/home_screen.dart';
 import 'screens/community.dart';
 import 'screens/ebook_screen.dart';
 import 'screens/profile_screen.dart';
-import 'screens/reward_screen.dart';
 import 'screens/write_story_screen.dart';
 
 class AppRoutes {
@@ -34,6 +32,5 @@ final Map<String, WidgetBuilder> appRoutes = {
   AppRoutes.community: (_) => const CommunityScreen(),
   AppRoutes.ebook: (_) => const EbookScreen(),
   AppRoutes.profile: (_) => const ProfileScreen(),
-  AppRoutes.rewards: (_) => const RewardScreen(),
 
 };

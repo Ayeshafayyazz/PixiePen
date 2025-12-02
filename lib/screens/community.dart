@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'NotificationsPage.dart';
 import 'ebook_screen.dart';
 import 'my_stories_screen.dart';
 import 'profile_screen.dart';
@@ -113,8 +114,14 @@ class _CommunityScreenState extends State<CommunityScreen> {
           IconButton(
             tooltip: 'Notifications',
             icon: const Icon(Icons.notifications_outlined, color: Colors.white),
-            onPressed: () {},
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const NotificationsPage()),
+              );
+            },
           ),
+
         ],
       ),
       body: RefreshIndicator(
