@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'speech_to_text_screen.dart';
 import 'theme.dart';
 import 'ai_image_generator_screen.dart';
@@ -14,6 +16,8 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _bodyController = TextEditingController();
   String? _storyCoverUrl;
+  bool _isSaving = false;
+  bool _isPublishing = false;
 
   int get _wordCount {
     if (_bodyController.text.trim().isEmpty) return 0;
@@ -22,18 +26,102 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
 
   double get _wordProgress => (_wordCount / 200).clamp(0.0, 1.0);
 
-  void _saveStory() {
+  Future<void> _saveStory() async {
     FocusScope.of(context).unfocus();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Story saved successfully ✅")),
-    );
+
+    final title = _titleController.text.trim();
+    final body = _bodyController.text.trim();
+
+    if (title.isEmpty && body.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please add a title or story before saving.")),
+      );
+      return;
+    }
+
+    setState(() {
+      _isSaving = true;
+    });
+
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+
+      final doc = {
+        'title': title.isNotEmpty ? title : null,
+        'body': body,
+        'coverUrl': _storyCoverUrl,
+        'wordCount': _wordCount,
+        'authorId': uid,
+        'status': 'draft',
+        'isPublish': false,
+        'createdAt': FieldValue.serverTimestamp(),
+      };
+
+      await FirebaseFirestore.instance.collection('stories').add(doc);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Story saved successfully ✅")),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Failed to save story: $e")),
+      );
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _isSaving = false;
+      });
+    }
   }
 
-  void _publishStory() {
+  Future<void> _publishStory() async {
     FocusScope.of(context).unfocus();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Your story is now live! 🚀")),
-    );
+
+    final title = _titleController.text.trim();
+    final body = _bodyController.text.trim();
+
+    if (title.isEmpty && body.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please add a title or story before publishing.")),
+      );
+      return;
+    }
+
+    setState(() {
+      _isPublishing = true;
+    });
+
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+
+      final doc = {
+        'title': title.isNotEmpty ? title : null,
+        'body': body,
+        'coverUrl': _storyCoverUrl,
+        'wordCount': _wordCount,
+        'authorId': uid,
+        'status': 'published',
+        'isPublish': true,
+        'createdAt': FieldValue.serverTimestamp(),
+      };
+
+      await FirebaseFirestore.instance.collection('stories').add(doc);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Your story is now live! 🚀")),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Failed to publish story: $e")),
+      );
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _isPublishing = false;
+      });
+    }
   }
 
   Future<void> _goToAiGenerator() async {
@@ -192,7 +280,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
                 children: [
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: _saveStory,
+                      onPressed: _isSaving ? null : _saveStory,
                       style: OutlinedButton.styleFrom(
                         foregroundColor: kAppPrimary,
                         side: const BorderSide(color: kAppPrimary, width: 2),
@@ -201,14 +289,23 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
                           borderRadius: BorderRadius.circular(14),
                         ),
                       ),
-                      icon: const Icon(Icons.save),
-                      label: const Text("Save"),
+                      icon: _isSaving
+                          ? SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation(kAppPrimary),
+                              ),
+                            )
+                          : const Icon(Icons.save),
+                      label: _isSaving ? const Text("Saving...") : const Text("Draft"),
                     ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: ElevatedButton.icon(
-                      onPressed: _publishStory,
+                      onPressed: _isPublishing ? null : _publishStory,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: kAppPrimary,
                         foregroundColor: Colors.white,
@@ -217,8 +314,17 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
                           borderRadius: BorderRadius.circular(14),
                         ),
                       ),
-                      icon: const Icon(Icons.send),
-                      label: const Text("Publish"),
+                      icon: _isPublishing
+                          ? SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation(Colors.white),
+                              ),
+                            )
+                          : const Icon(Icons.send),
+                      label: _isPublishing ? const Text("Publishing...") : const Text("Publish"),
                     ),
                   ),
                 ],
