@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:animated_text_kit/animated_text_kit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../routes.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -43,9 +44,9 @@ class _SplashScreenState extends State<SplashScreen>
 
     final prefs = await SharedPreferences.getInstance();
     final bool onboardingCompleted = prefs.getBool('onboarding_completed') ?? false;
-    final bool loggedIn = prefs.getBool('logged_in') ?? false;
 
-    if (loggedIn) {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
       Navigator.pushReplacementNamed(context, AppRoutes.community);
     } else if (onboardingCompleted) {
       Navigator.pushReplacementNamed(context, AppRoutes.login);
