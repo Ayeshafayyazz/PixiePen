@@ -44,6 +44,8 @@ dependencies:
   firebase_auth: ^6.1.1
   shared_preferences: ^2.3.2
   cloud_firestore: ^6.1.0
+  speech_to_text: ^6.6.0
+  permission_handler: ^11.3.0
 
 dev_dependencies:
   flutter_test:
