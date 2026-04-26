@@ -1,7 +1,6 @@
-// community_screen.dart
-
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+
 import 'NotificationsPage.dart';
 import 'ebook_screen.dart';
 import 'my_stories_screen.dart';
@@ -9,7 +8,93 @@ import 'profile_screen.dart';
 import 'theme.dart';
 import 'write_story_screen.dart';
 
-/// COMMENT MODEL -------------------------------------------------------------
+/// =============================================================================
+/// FIRESTORE SERVICE
+/// =============================================================================
+
+class StoryService {
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+
+  Future<void> toggleLike({
+    required String storyId,
+    required String userId,
+  }) async {
+    final ref = _db.collection('stories').doc(storyId);
+
+    await _db.runTransaction((tx) async {
+      final snap = await tx.get(ref);
+      final data = snap.data() as Map<String, dynamic>;
+
+      final List likedBy = List.from(data['likedBy'] ?? []);
+      int likes = (data['likes'] ?? 0);
+
+      if (likedBy.contains(userId)) {
+        likedBy.remove(userId);
+        likes--;
+      } else {
+        likedBy.add(userId);
+        likes++;
+      }
+
+      tx.set(ref, {
+        'likes': likes,
+        'likedBy': likedBy,
+      }, SetOptions(merge: true));
+    });
+  }
+
+  Future<void> addComment({
+    required String storyId,
+    required String userId,
+    required String userName,
+    required String text,
+  }) async {
+    final storyRef = _db.collection('stories').doc(storyId);
+    final commentRef = storyRef.collection('comments').doc();
+
+    await _db.runTransaction((tx) async {
+      tx.set(commentRef, {
+        'userId': userId,
+        'userName': userName,
+        'text': text,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      tx.set(storyRef, {
+        'comments': FieldValue.increment(1),
+      }, SetOptions(merge: true));
+    });
+  }
+
+  Future<void> deleteComment({
+    required String storyId,
+    required String commentId,
+  }) async {
+    final storyRef = _db.collection('stories').doc(storyId);
+    final commentRef = storyRef.collection('comments').doc(commentId);
+
+    await _db.runTransaction((tx) async {
+      tx.delete(commentRef);
+      tx.set(storyRef, {
+        'comments': FieldValue.increment(-1),
+      }, SetOptions(merge: true));
+    });
+  }
+
+  Stream<QuerySnapshot> getComments(String storyId) {
+    return _db
+        .collection('stories')
+        .doc(storyId)
+        .collection('comments')
+        .orderBy('createdAt', descending: true)
+        .snapshots();
+  }
+}
+
+/// =============================================================================
+/// MODELS
+/// =============================================================================
+
 class Comment {
   final String user;
   final String text;
@@ -17,7 +102,6 @@ class Comment {
   Comment({required this.user, required this.text});
 }
 
-/// STORY MODELS --------------------------------------------------------------
 class StoryPost {
   final String id;
   final String author;
@@ -28,7 +112,6 @@ class StoryPost {
   final int comments;
   final bool likedByMe;
   final Color accent;
-  final int perspectiveIndex;
   final String imageUrl;
   final List<Comment> commentList;
 
@@ -42,7 +125,6 @@ class StoryPost {
     required this.comments,
     required this.likedByMe,
     required this.accent,
-    this.perspectiveIndex = 0,
     required this.imageUrl,
     this.commentList = const [],
   });
@@ -57,78 +139,301 @@ class StoryPost {
     comments: comments,
     likedByMe: !likedByMe,
     accent: accent,
-    perspectiveIndex: perspectiveIndex,
     imageUrl: imageUrl,
     commentList: commentList,
   );
+}
 
-  StoryPost shiftPerspective(int index) {
-    final perspectives = [
-      'I was walking through the woods when the dragon appeared…',
-      'You are walking through the woods when the dragon appears…',
-      'They were walking through the woods when the dragon appeared…',
-    ];
-    return StoryPost(
-      id: id,
-      author: author,
-      handle: handle,
-      title: title,
-      excerpt: perspectives[index],
-      likes: likes,
-      comments: comments,
-      likedByMe: likedByMe,
-      accent: accent,
-      perspectiveIndex: index,
-      imageUrl: imageUrl,
-      commentList: commentList,
+/// =============================================================================
+/// CHARACTER MAPPING MODEL
+/// =============================================================================
+
+class CharacterMapping {
+  final Map<String, String> pronounMap;
+  final Map<String, String> nameMap;
+  final String label;
+
+  CharacterMapping({
+    required this.pronounMap,
+    required this.nameMap,
+    required this.label,
+  });
+
+  CharacterMapping copyWith({
+    Map<String, String>? pronounMap,
+    Map<String, String>? nameMap,
+    String? label,
+  }) {
+    return CharacterMapping(
+      pronounMap: pronounMap ?? this.pronounMap,
+      nameMap: nameMap ?? this.nameMap,
+      label: label ?? this.label,
     );
   }
 }
 
-/// DEMO DATA ----------------------------------------------------------------
-final demoPosts = <StoryPost>[
-  StoryPost(
-    id: '1',
-    author: 'Ayaan',
-    handle: 'ayaan',
-    title: 'The Midnight Library Dragon',
-    excerpt:
-    'At exactly 12:00, the books began to whisper. One shelf slid open and a tiny dragon sneezed glitter…',
-    likes: 42,
-    comments: 9,
-    likedByMe: false,
-    accent: const Color(0xFF7B1FA2),
-    imageUrl: 'https://picsum.photos/id/1015/600/300',
-  ),
-  StoryPost(
-    id: '2',
-    author: 'Hiba',
-    handle: 'hibzz',
-    title: 'My Invisible Bicycle',
-    excerpt:
-    'No one believed me until the muddy tire tracks magically curved around the garden gnome…',
-    likes: 31,
-    comments: 4,
-    likedByMe: true,
-    accent: const Color(0xFF7B1FA2),
-    imageUrl: 'https://picsum.photos/id/1018/600/300',
-  ),
-  StoryPost(
-    id: '3',
-    author: 'Omar',
-    handle: 'omar_codes',
-    title: 'Map of the Whispering Woods',
-    excerpt:
-    'Every tree had a secret. If you listened closely, the leaves told you which path was brave enough…',
-    likes: 54,
-    comments: 12,
-    likedByMe: false,
-    accent: const Color(0xFF7B1FA2),
-    imageUrl: 'https://picsum.photos/id/1025/600/300',
-  ),
-];
+/// =============================================================================
+/// PERSPECTIVE ENGINE (Business Logic)
+/// =============================================================================
 
-/// COMMUNITY SCREEN ---------------------------------------------------------
+enum PerspectiveType { firstPerson, secondPerson, thirdPerson, custom }
+
+class PerspectiveEngine {
+  static const Map<PerspectiveType, String> labels = {
+    PerspectiveType.firstPerson: 'First Person (I)',
+    PerspectiveType.secondPerson: 'Second Person (You)',
+    PerspectiveType.thirdPerson: 'Third Person (They)',
+    PerspectiveType.custom: 'Custom Characters',
+  };
+
+  /// Default character mappings
+  static CharacterMapping getDefaultMapping(int perspectiveIndex) {
+    switch (perspectiveIndex) {
+      case 0:
+        return CharacterMapping(
+          pronounMap: {
+            'you': 'I',
+            'your': 'my',
+            'yours': 'mine',
+            'they': 'I',
+            'their': 'my',
+            'them': 'me',
+          },
+          nameMap: {},
+          label: 'First Person (I)',
+        );
+      case 1:
+        return CharacterMapping(
+          pronounMap: {
+            'I': 'you',
+            'my': 'your',
+            'mine': 'yours',
+            'we': 'you',
+            'me': 'you',
+            'us': 'you',
+          },
+          nameMap: {},
+          label: 'Second Person (You)',
+        );
+      case 2:
+        return CharacterMapping(
+          pronounMap: {
+            'I': 'they',
+            'you': 'they',
+            'my': 'their',
+            'your': 'their',
+            'me': 'them',
+            'yours': 'theirs',
+            'we': 'they',
+            'us': 'them',
+          },
+          nameMap: {},
+          label: 'Third Person (They)',
+        );
+      default:
+        return CharacterMapping(
+          pronounMap: {},
+          nameMap: {},
+          label: 'Original',
+        );
+    }
+  }
+
+  /// Transform text with character mapping
+  static String transform(String text, CharacterMapping mapping) {
+    String result = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+    /// Apply name replacements first (case-sensitive)
+    mapping.nameMap.forEach((original, replacement) {
+      result = result.replaceAll(original, replacement);
+    });
+
+    /// Apply pronoun replacements (case-insensitive)
+    mapping.pronounMap.forEach((original, replacement) {
+      result = result.replaceAll(
+        RegExp(r'\b' + original + r'\b', caseSensitive: false),
+        replacement,
+      );
+    });
+
+    return result;
+  }
+}
+
+/// =============================================================================
+/// VIEW MODEL
+/// =============================================================================
+
+class StoryReaderViewModel extends ChangeNotifier {
+  final StoryPost originalPost;
+  late StoryPost displayPost;
+  int currentPerspectiveIndex = 0;
+  late CharacterMapping currentMapping;
+  bool isCustomizing = false;
+
+  StoryReaderViewModel(this.originalPost) {
+    displayPost = originalPost;
+    currentMapping = PerspectiveEngine.getDefaultMapping(0);
+  }
+
+  void setPerspective(int index) {
+    currentPerspectiveIndex = index;
+    currentMapping = PerspectiveEngine.getDefaultMapping(index);
+    _updateDisplayPost();
+  }
+
+  void updateCharacterMapping(Map<String, String> nameMap) {
+    currentMapping = currentMapping.copyWith(nameMap: nameMap);
+    _updateDisplayPost();
+  }
+  void resetPerspective() {
+    currentPerspectiveIndex = 0;
+    currentMapping = PerspectiveEngine.getDefaultMapping(0);
+    _updateDisplayPost();
+  }
+
+  void _updateDisplayPost() {
+    displayPost = StoryPost(
+      id: originalPost.id,
+      author: originalPost.author,
+      handle: originalPost.handle,
+      title: originalPost.title,
+      excerpt: PerspectiveEngine.transform(originalPost.excerpt, currentMapping),
+      likes: originalPost.likes,
+      comments: originalPost.comments,
+      likedByMe: originalPost.likedByMe,
+      accent: originalPost.accent,
+      imageUrl: originalPost.imageUrl,
+      commentList: originalPost.commentList,
+    );
+    notifyListeners();
+  }
+
+  void toggleCustomizing() {
+    isCustomizing = !isCustomizing;
+    notifyListeners();
+  }
+}
+
+/// =============================================================================
+/// CHARACTER CUSTOMIZATION DIALOG
+/// =============================================================================
+
+class CharacterCustomizationDialog extends StatefulWidget {
+  final CharacterMapping currentMapping;
+  final Function(Map<String, String>) onApply;
+
+  const CharacterCustomizationDialog({
+    super.key,
+    required this.currentMapping,
+    required this.onApply,
+  });
+
+  @override
+  State<CharacterCustomizationDialog> createState() =>
+      _CharacterCustomizationDialogState();
+}
+
+class _CharacterCustomizationDialogState
+    extends State<CharacterCustomizationDialog> {
+  late Map<String, TextEditingController> controllers;
+
+  @override
+  void initState() {
+    super.initState();
+    controllers = {
+      'protagonist': TextEditingController(
+        text: widget.currentMapping.nameMap['protagonist'] ?? 'Alex',
+      ),
+      'sidekick': TextEditingController(
+        text: widget.currentMapping.nameMap['sidekick'] ?? 'Sam',
+      ),
+      'antagonist': TextEditingController(
+        text: widget.currentMapping.nameMap['antagonist'] ?? 'Jordan',
+      ),
+    };
+  }
+
+  @override
+  void dispose() {
+    controllers.forEach((_, controller) => controller.dispose());
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Customize Character Names'),
+      contentPadding: const EdgeInsets.all(20),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Replace character names in the story:',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            const SizedBox(height: 16),
+            ..._buildCharacterFields(),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.purple,
+          ),
+          onPressed: () {
+            final nameMap = <String, String>{};
+            controllers.forEach((key, controller) {
+              if (controller.text.isNotEmpty) {
+                nameMap[key] = controller.text;
+              }
+            });
+            widget.onApply(nameMap);
+            Navigator.pop(context);
+          },
+          child: const Text('Apply', style: TextStyle(color: Colors.white)),
+        ),
+      ],
+    );
+  }
+
+  List<Widget> _buildCharacterFields() {
+    final characters = [
+      {'key': 'protagonist', 'label': 'Protagonist', 'hint': 'e.g., Alice'},
+      {'key': 'sidekick', 'label': 'Sidekick', 'hint': 'e.g., Bob'},
+      {'key': 'antagonist', 'label': 'Antagonist', 'hint': 'e.g., Carol'},
+    ];
+
+    return characters.map((char) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: TextField(
+          controller: controllers[char['key']]!,
+          decoration: InputDecoration(
+            labelText: char['label'],
+            hintText: char['hint'],
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+            prefixIcon: const Icon(Icons.person, color: Colors.purple),
+          ),
+        ),
+      );
+    }).toList();
+  }
+}
+
+/// =============================================================================
+/// COMMUNITY SCREEN
+/// =============================================================================
+
 class CommunityScreen extends StatefulWidget {
   const CommunityScreen({super.key});
 
@@ -139,16 +444,14 @@ class CommunityScreen extends StatefulWidget {
 class _CommunityScreenState extends State<CommunityScreen> {
   int _selectedIndex = 0;
   static const String _storiesCollection = 'stories';
-
-  // placeholder for search delegate
-  final List<StoryPost> _combinedPostsSnapshotPlaceholder = [];
+  final StoryService _service = StoryService();
+  final String _userId = "demoUser123";
+  final String _userName = "Demo User";
 
   @override
   Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
-
     final pages = [
-      _buildCommunityFeed(screenWidth),
+      _buildCommunityFeed(),
       const WriteStoryScreen(),
       const EbookScreen(),
       const MyStoriesScreen(),
@@ -198,26 +501,13 @@ class _CommunityScreenState extends State<CommunityScreen> {
     );
   }
 
-  Widget _buildCommunityFeed(double screenWidth) {
-    final stream = FirebaseFirestore.instance
-        .collection(_storiesCollection)
-        .orderBy('createdAt', descending: true)
-        .snapshots();
-
+  Widget _buildCommunityFeed() {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: const Color(0xFF7B1FA2),
         title: const _BrandTitle(),
         centerTitle: true,
         actions: [
-          IconButton(
-            tooltip: 'Search',
-            icon: const Icon(Icons.search, color: Colors.white),
-            onPressed: () => showSearch(
-              context: context,
-              delegate: StorySearchDelegate(_combinedPostsSnapshotPlaceholder),
-            ),
-          ),
           IconButton(
             tooltip: 'Notifications',
             icon: const Icon(
@@ -241,13 +531,29 @@ class _CommunityScreenState extends State<CommunityScreen> {
           setState(() {});
         },
         child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          stream: stream,
+          stream: FirebaseFirestore.instance
+              .collection(_storiesCollection)
+              .orderBy('createdAt', descending: true)
+              .snapshots(),
           builder: (context, snapshot) {
-            final fetched = <StoryPost>[];
-            if (snapshot.hasData && snapshot.data != null) {
-              for (final doc in snapshot.data!.docs) {
+            if (!snapshot.hasData) {
+              return const Center(child: CircularProgressIndicator());
+            }
+
+            final docs = snapshot.data!.docs;
+
+            if (docs.isEmpty) {
+              return const Center(child: Text('No stories yet'));
+            }
+
+            return ListView.builder(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              itemCount: docs.length,
+              itemBuilder: (context, index) {
+                final doc = docs[index];
                 final data = doc.data();
-                final id = doc.id;
+                final storyId = doc.id;
+
                 final title = (data['title'] as String?) ?? 'Untitled';
                 final body = (data['body'] as String?) ?? '';
                 final cover = (data['coverUrl'] as String?);
@@ -260,42 +566,37 @@ class _CommunityScreenState extends State<CommunityScreen> {
                 final comments = (data['comments'] as int?) ?? 0;
                 final imageUrl = cover != null && cover.isNotEmpty
                     ? cover
-                    : 'https://picsum.photos/seed/$id/600/300';
+                    : 'https://picsum.photos/seed/$storyId/600/300';
 
-                fetched.add(StoryPost(
-                  id: id,
+                final likedBy = (data['likedBy'] as List?) ?? [];
+                final likedByMe = likedBy.contains(_userId);
+
+                final post = StoryPost(
+                  id: storyId,
                   author: author,
                   handle: handle,
                   title: title,
                   excerpt: body,
                   likes: likes,
                   comments: comments,
-                  likedByMe: false,
+                  likedByMe: likedByMe,
                   accent: const Color(0xFF7B1FA2),
                   imageUrl: imageUrl,
-                ));
-              }
-            }
+                );
 
-            final combined = <StoryPost>[...demoPosts, ...fetched];
-            _combinedPostsSnapshotPlaceholder.clear();
-            _combinedPostsSnapshotPlaceholder.addAll(combined);
-
-            if (combined.isEmpty) {
-              return const Center(child: Text('No stories yet'));
-            }
-
-            return ListView.builder(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              itemCount: combined.length,
-              itemBuilder: (context, index) {
-                final post = combined[index];
                 return StoryCard(
                   post: post,
-                  onLike: () {},
+                  service: _service,
+                  userId: _userId,
+                  userName: _userName,
+                  onLike: () async {
+                    await _service.toggleLike(
+                      storyId: storyId,
+                      userId: _userId,
+                    );
+                  },
                   onOpen: () => _openStory(context, post),
-                  onComment: () => _openComments(context, post),
-                  onPerspective: (i) {},
+                  onComment: () => _openComments(context, storyId),
                 );
               },
             );
@@ -308,13 +609,19 @@ class _CommunityScreenState extends State<CommunityScreen> {
   void _openStory(BuildContext context, StoryPost post) {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => StoryReaderPage(post: post),
+        builder: (_) => StoryReaderPage(
+          post: post,
+          service: _service,
+          userId: _userId,
+          userName: _userName,
+        ),
       ),
     );
   }
 
-  void _openComments(BuildContext context, StoryPost post) {
-    final TextEditingController controller = TextEditingController();
+  void _openComments(BuildContext context, String storyId) {
+    final controller = TextEditingController();
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -330,90 +637,136 @@ class _CommunityScreenState extends State<CommunityScreen> {
             right: 16,
             top: 12,
           ),
-          child: StatefulBuilder(
-            builder: (context, setSheetState) {
-              return SizedBox(
-                height: MediaQuery.of(context).size.height * 0.6,
-                child: Column(
-                  children: [
-                    Container(
-                      height: 4,
-                      width: 40,
-                      margin: const EdgeInsets.only(bottom: 12),
-                      decoration: BoxDecoration(
-                        color: Colors.purple,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                    Expanded(
-                      child: post.commentList.isEmpty
-                          ? const Center(child: Text("No comments yet"))
-                          : ListView.builder(
-                        itemCount: post.commentList.length,
+          child: SizedBox(
+            height: MediaQuery.of(context).size.height * 0.6,
+            child: Column(
+              children: [
+                Container(
+                  height: 4,
+                  width: 40,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.purple,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const Text(
+                  'Comments',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: StreamBuilder<QuerySnapshot>(
+                    stream: _service.getComments(storyId),
+                    builder: (context, snapshot) {
+                      if (!snapshot.hasData) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+
+                      final docs = snapshot.data!.docs;
+
+                      if (docs.isEmpty) {
+                        return const Center(child: Text("No comments yet"));
+                      }
+
+                      return ListView.builder(
+                        itemCount: docs.length,
                         itemBuilder: (context, i) {
-                          final c = post.commentList[i];
-                          return ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: Colors.purple,
-                              child: Text(c.user[0].toUpperCase(),
-                                  style: const TextStyle(
-                                      color: Colors.white)),
+                          final data =
+                          docs[i].data() as Map<String, dynamic>;
+                          final isOwner = data['userId'] == _userId;
+
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                CircleAvatar(
+                                  backgroundColor: Colors.purple,
+                                  radius: 18,
+                                  child: Text(
+                                    (data['userName'] as String?)
+                                        ?.isNotEmpty ==
+                                        true
+                                        ? (data['userName'] as String)[0]
+                                        : '?',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                    CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        data['userName'] ?? 'Unknown',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      Text(data['text'] ?? ''),
+                                    ],
+                                  ),
+                                ),
+                                if (isOwner)
+                                  IconButton(
+                                    icon: const Icon(
+                                      Icons.delete,
+                                      color: Colors.red,
+                                      size: 18,
+                                    ),
+                                    onPressed: () async {
+                                      await _service.deleteComment(
+                                        storyId: storyId,
+                                        commentId: docs[i].id,
+                                      );
+                                    },
+                                  ),
+                              ],
                             ),
-                            title: Text(c.user),
-                            subtitle: Text(c.text),
                           );
                         },
-                      ),
-                    ),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: controller,
-                            decoration: const InputDecoration(
-                              hintText: "Write a comment...",
-                              border: OutlineInputBorder(
-                                borderRadius:
-                                BorderRadius.all(Radius.circular(20)),
-                              ),
-                              contentPadding:
-                              EdgeInsets.symmetric(horizontal: 12),
-                            ),
+                      );
+                    },
+                  ),
+                ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: controller,
+                        decoration: InputDecoration(
+                          hintText: 'Add a comment...',
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
                           ),
                         ),
-                        IconButton(
-                          icon: const Icon(Icons.send, color: Colors.purple),
-                          onPressed: () async {
-                            if (controller.text.isNotEmpty) {
-                              setSheetState(() {
-                                final newComment =
-                                Comment(user: "You", text: controller.text);
-                                post.commentList.add(newComment);
-                              });
-
-                              try {
-                                final docRef = FirebaseFirestore.instance
-                                    .collection(_storiesCollection)
-                                    .doc(post.id);
-                                final doc = await docRef.get();
-                                if (doc.exists) {
-                                  await docRef.update({
-                                    'comments': FieldValue.increment(1),
-                                  });
-                                }
-                              } catch (_) {}
-
-                              controller.clear();
-                              setState(() {});
-                            }
-                          },
-                        ),
-                      ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.send, color: Colors.purple),
+                      onPressed: () async {
+                        if (controller.text.isNotEmpty) {
+                          await _service.addComment(
+                            storyId: storyId,
+                            userId: _userId,
+                            userName: _userName,
+                            text: controller.text.trim(),
+                          );
+                          controller.clear();
+                        }
+                      },
                     ),
                   ],
                 ),
-              );
-            },
+              ],
+            ),
           ),
         );
       },
@@ -421,7 +774,10 @@ class _CommunityScreenState extends State<CommunityScreen> {
   }
 }
 
-/// BRAND TITLE --------------------------------------------------------------
+/// =============================================================================
+/// BRAND TITLE
+/// =============================================================================
+
 class _BrandTitle extends StatelessWidget {
   const _BrandTitle();
 
@@ -437,21 +793,28 @@ class _BrandTitle extends StatelessWidget {
   }
 }
 
-/// STORY CARD ---------------------------------------------------------------
+/// =============================================================================
+/// STORY CARD
+/// =============================================================================
+
 class StoryCard extends StatelessWidget {
   final StoryPost post;
+  final StoryService service;
+  final String userId;
+  final String userName;
   final VoidCallback onLike;
   final VoidCallback onOpen;
   final VoidCallback onComment;
-  final void Function(int) onPerspective;
 
   const StoryCard({
     super.key,
     required this.post,
+    required this.service,
+    required this.userId,
+    required this.userName,
     required this.onLike,
     required this.onOpen,
     required this.onComment,
-    required this.onPerspective,
   });
 
   @override
@@ -489,6 +852,13 @@ class StoryCard extends StatelessWidget {
                         fit: BoxFit.cover,
                         width: double.infinity,
                         height: 200,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Container(
+                            height: 200,
+                            color: Colors.grey[300],
+                            child: const Icon(Icons.image_not_supported),
+                          );
+                        },
                       ),
                     ),
                     Positioned(
@@ -513,60 +883,21 @@ class StoryCard extends StatelessWidget {
                                 Text(
                                   post.author,
                                   style: const TextStyle(
-                                      fontWeight: FontWeight.w700,
-                                      color: Colors.white,
-                                      overflow: TextOverflow.ellipsis),
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                                 Text(
                                   '@${post.handle}',
                                   style: const TextStyle(
-                                    color: Colors.white70,
                                     fontSize: 12,
-                                    overflow: TextOverflow.ellipsis,
+                                    color: Colors.white70,
                                   ),
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                               ],
                             ),
-                          ),
-                          PopupMenuButton<String>(
-                            icon: const Icon(Icons.more_vert,
-                                color: Colors.white),
-                            onSelected: (value) {
-                              if (value == 'save') {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text("Story saved!")),
-                                );
-                              } else if (value == 'reshare') {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                      content: Text("Story reshared!")),
-                                );
-                              }
-                            },
-                            itemBuilder: (context) => const [
-                              PopupMenuItem(
-                                value: 'save',
-                                child: Row(
-                                  children: [
-                                    Icon(Icons.bookmark_outline,
-                                        color: Color(0xFF7B1FA2)),
-                                    SizedBox(width: 8),
-                                    Text("Save"),
-                                  ],
-                                ),
-                              ),
-                              PopupMenuItem(
-                                value: 'reshare',
-                                child: Row(
-                                  children: [
-                                    Icon(Icons.share,
-                                        color: Color(0xFF7B1FA2)),
-                                    SizedBox(width: 8),
-                                    Text("Reshare"),
-                                  ],
-                                ),
-                              ),
-                            ],
                           ),
                         ],
                       ),
@@ -612,28 +943,22 @@ class StoryCard extends StatelessWidget {
                         Text("${post.likes}"),
                         const SizedBox(width: 16),
                         IconButton(
-                          icon: const Icon(Icons.chat_bubble_outline,
-                              color: Colors.purple),
+                          icon: const Icon(
+                            Icons.chat_bubble_outline,
+                            color: Colors.purple,
+                          ),
                           onPressed: onComment,
                         ),
                         Text("${post.comments}"),
-                        const SizedBox(width: 16),
-                        PopupMenuButton<int>(
-                          icon: const Icon(Icons.sync_alt, color: Colors.purple),
-                          onSelected: onPerspective,
-                          itemBuilder: (context) => const [
-                            PopupMenuItem(value: 0, child: Text("First Person")),
-                            PopupMenuItem(value: 1, child: Text("Second Person")),
-                            PopupMenuItem(value: 2, child: Text("Third Person")),
-                          ],
-                        ),
                         const Spacer(),
                         TextButton.icon(
                           style: TextButton.styleFrom(
                             backgroundColor: Colors.purple,
                             foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 8),
+                              horizontal: 16,
+                              vertical: 8,
+                            ),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(20),
                             ),
@@ -655,62 +980,206 @@ class StoryCard extends StatelessWidget {
   }
 }
 
-/// STORY READER -------------------------------------------------------------
-class StoryReaderPage extends StatelessWidget {
+/// =============================================================================
+/// STORY READER PAGE (Enhanced with Perspective Shift & Character Names)
+/// =============================================================================
+
+class StoryReaderPage extends StatefulWidget {
   final StoryPost post;
-  const StoryReaderPage({super.key, required this.post});
+  final StoryService service;
+  final String userId;
+  final String userName;
+
+  const StoryReaderPage({
+    super.key,
+    required this.post,
+    required this.service,
+    required this.userId,
+    required this.userName,
+  });
+
+  @override
+  State<StoryReaderPage> createState() => _StoryReaderPageState();
+}
+
+class _StoryReaderPageState extends State<StoryReaderPage> {
+  late StoryReaderViewModel viewModel;
+
+  @override
+  void initState() {
+    super.initState();
+    viewModel = StoryReaderViewModel(widget.post);
+  }
+
+  @override
+  void dispose() {
+    viewModel.dispose();
+    super.dispose();
+  }
+
+  void _showPerspectiveMenu() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'Choose Perspective',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+              _perspectiveButton(
+                label: 'First Person (I)',
+                index: 0,
+              ),
+              _perspectiveButton(
+                label: 'Second Person (You)',
+                index: 1,
+              ),
+              _perspectiveButton(
+                label: 'Third Person (They)',
+                index: 2,
+              ),
+              const SizedBox(height: 12),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.grey[600],
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                icon: const Icon(Icons.refresh, color: Colors.white),
+                label: const Text('Reset', style: TextStyle(color: Colors.white)),
+                onPressed: () {
+                  viewModel.resetPerspective();
+                  Navigator.pop(context);
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+
+  Widget _perspectiveButton({required String label, required int index}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: viewModel.currentPerspectiveIndex == index
+              ? Colors.purple
+              : Colors.grey[200],
+          foregroundColor: viewModel.currentPerspectiveIndex == index
+              ? Colors.white
+              : Colors.black,
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+        onPressed: () {
+          viewModel.setPerspective(index);
+          Navigator.pop(context);
+        },
+        child: Text(label),
+      ),
+    );
+  }
+
+  void _showCharacterCustomization() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return CharacterCustomizationDialog(
+          currentMapping: viewModel.currentMapping,
+          onApply: (nameMap) {
+            viewModel.updateCharacterMapping(nameMap);
+          },
+        );
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.purple,
-        title: Text(post.title, style: const TextStyle(color: Colors.white)),
-        iconTheme: const IconThemeData(color: Colors.white),
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _AuthorRow(name: post.author, handle: post.handle),
-            const SizedBox(height: 12),
-            if (post.imageUrl.isNotEmpty)
-              ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: Image.network(
-                  post.imageUrl,
-                  fit: BoxFit.cover,
-                  width: double.infinity,
-                  height: 220,
-                  errorBuilder: (context, error, stackTrace) =>
-                      Container(height: 220, color: Colors.grey[200]),
-                ),
-              ),
-            const SizedBox(height: 12),
-            Expanded(
-              child: SingleChildScrollView(
-                child: Text(
-                  _longDummyText(post.excerpt),
-                  style: Theme.of(context).textTheme.bodyLarge,
-                ),
-              ),
-            ),
-          ],
+        title: Text(
+          widget.post.title,
+          style: const TextStyle(color: Colors.white),
         ),
+        iconTheme: const IconThemeData(color: Colors.white),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.tune),
+            tooltip: 'Perspective & Characters',
+            onPressed: _showPerspectiveMenu,
+          ),
+        ],
+      ),
+      body: ListenableBuilder(
+        listenable: viewModel,
+        builder: (context, _) {
+          return Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _AuthorRow(
+                  name: viewModel.displayPost.author,
+                  handle: viewModel.displayPost.handle,
+                ),
+                const SizedBox(height: 12),
+                if (viewModel.displayPost.imageUrl.isNotEmpty)
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: Image.network(
+                      viewModel.displayPost.imageUrl,
+                      fit: BoxFit.cover,
+                      width: double.infinity,
+                      height: 220,
+                      errorBuilder: (context, error, stackTrace) =>
+                          Container(height: 220, color: Colors.grey[200]),
+                    ),
+                  ),
+                const SizedBox(height: 16),
+                Expanded(
+                  child: SingleChildScrollView(
+                    child: Text(
+                      viewModel.displayPost.excerpt,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodyLarge
+                          ?.copyWith(height: 1.6),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
 }
 
-String _longDummyText(String seed) {
-  return List<String>.generate(10, (i) => seed).join('\n\n');
-}
+/// =============================================================================
+/// AUTHOR ROW
+/// =============================================================================
 
-/// AUTHOR ROW ---------------------------------------------------------------
 class _AuthorRow extends StatelessWidget {
   final String name;
   final String handle;
+
   const _AuthorRow({required this.name, required this.handle});
 
   @override
@@ -732,72 +1201,24 @@ class _AuthorRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(name,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        overflow: TextOverflow.ellipsis)),
-                Text('@$handle',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      overflow: TextOverflow.ellipsis,
-                    )),
+                Text(
+                  name,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Text(
+                  '@$handle',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
               ],
             ),
           ),
-          const Spacer(),
         ],
       ),
-    );
-  }
-}
-
-/// SEARCH -------------------------------------------------------------------
-class StorySearchDelegate extends SearchDelegate {
-  final List<StoryPost> posts;
-  StorySearchDelegate(this.posts);
-
-  @override
-  List<Widget>? buildActions(BuildContext context) => [
-    IconButton(icon: const Icon(Icons.clear), onPressed: () => query = ''),
-  ];
-
-  @override
-  Widget? buildLeading(BuildContext context) => IconButton(
-    icon: const Icon(Icons.arrow_back),
-    onPressed: () => close(context, null),
-  );
-
-  @override
-  Widget buildResults(BuildContext context) {
-    final matches = posts.where((p) =>
-    p.title.toLowerCase().contains(query.toLowerCase()) ||
-        p.excerpt.toLowerCase().contains(query.toLowerCase()));
-    return ListView(
-      children: matches
-          .map((p) => StoryCard(
-        post: p,
-        onLike: () {},
-        onOpen: () {},
-        onComment: () {},
-        onPerspective: (_) {},
-      ))
-          .toList(),
-    );
-  }
-
-  @override
-  Widget buildSuggestions(BuildContext context) {
-    final matches = posts
-        .where((p) => p.title.toLowerCase().startsWith(query.toLowerCase()))
-        .toList();
-    return ListView(
-      children: matches
-          .map((p) => ListTile(
-        leading: const Icon(Icons.auto_stories, color: Colors.purple),
-        title: Text(p.title),
-        subtitle: Text('@${p.handle}'),
-        onTap: () => close(context, p),
-      ))
-          .toList(),
     );
   }
 }
