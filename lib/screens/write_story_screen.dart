@@ -164,13 +164,17 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
   Future<void> _goToSpeechToText() async {
     final spokenText = await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const SpeechToTextScreen()),
+      MaterialPageRoute(
+        builder: (_) => SpeechToTextScreen(
+          initialText: _bodyController.text,
+        ),
+      ),
     );
 
     if (spokenText is String && mounted) {
       final transcript = spokenText.trim();
       if (_isStoryTranscript(transcript)) {
-        _appendToBody(transcript);
+        _replaceBody(transcript);
       }
     }
   }
@@ -188,18 +192,11 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
         !text.startsWith('Error:');
   }
 
-  void _appendToBody(String text) {
-    final currentBody = _bodyController.text;
-    final separator =
-        currentBody.trim().isEmpty || RegExp(r'\s$').hasMatch(currentBody)
-            ? ''
-            : ' ';
-    final updatedBody = '$currentBody$separator$text';
-
+  void _replaceBody(String text) {
     setState(() {
       _bodyController.value = TextEditingValue(
-        text: updatedBody,
-        selection: TextSelection.collapsed(offset: updatedBody.length),
+        text: text,
+        selection: TextSelection.collapsed(offset: text.length),
       );
     });
   }
@@ -207,7 +204,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
   @override
   Widget build(BuildContext context) {
     final progressColor =
-    _wordProgress < 1.0 ? kAppPrimary : Colors.green.shade600;
+        _wordProgress < 1.0 ? kAppPrimary : Colors.green.shade600;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF9F7FF),
