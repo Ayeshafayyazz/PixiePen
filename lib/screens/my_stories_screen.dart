@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
-import 'theme.dart'; // ✅ make sure this file contains your kAppPrimary and appTheme
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'theme.dart';
+import 'community.dart';
+import 'write_story_screen.dart';
 
 class MyStoriesScreen extends StatefulWidget {
   const MyStoriesScreen({super.key});
@@ -10,61 +14,36 @@ class MyStoriesScreen extends StatefulWidget {
 
 class _MyStoriesScreenState extends State<MyStoriesScreen>
     with SingleTickerProviderStateMixin {
-  final List<Map<String, dynamic>> _stories = [
-    {
-      'id': '1',
-      'title': 'The Magical Forest',
-      'excerpt': 'Once upon a time, in a forest full of glowing trees…',
-      'selected': false,
-    },
-    {
-      'id': '2',
-      'title': 'Adventures of Pixie',
-      'excerpt': 'Pixie woke up to find her pen glowing with magic…',
-      'selected': false,
-    },
-    {
-      'id': '3',
-      'title': 'The Hidden Castle',
-      'excerpt': 'Behind the mountains, a castle shimmered under the moonlight…',
-      'selected': false,
-    },
-    {
-      'id': '4',
-      'title': 'The Enchanted River',
-      'excerpt': 'A river sparkled with colors that changed with every step…',
-      'selected': false,
-    },
-  ];
+  late TabController _tabController;
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  User? _user;
 
-  bool _selectionMode = false;
-
-  void _toggleSelect(int index) {
-    setState(() {
-      _stories[index]['selected'] = !_stories[index]['selected'];
-      _selectionMode = _stories.any((story) => story['selected']);
-    });
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+    _user = FirebaseAuth.instance.currentUser;
   }
 
-  void _convertToEbook() {
-    final selected = _stories.where((s) => s['selected']).toList();
-    if (selected.isEmpty) return;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          "📚 Converting ${selected.length} stories into an eBook...",
-          style: const TextStyle(fontSize: 16),
-        ),
-        backgroundColor: kAppPrimary,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final selectedCount = _stories.where((s) => s['selected']).length;
+    if (_user == null) {
+      return Scaffold(
+        appBar: AppBar(
+          backgroundColor: kAppPrimary,
+          title: const Text("📖 My Stories"),
+        ),
+        body: const Center(
+          child: Text("Please log in to view your stories"),
+        ),
+      );
+    }
 
     return Scaffold(
       backgroundColor: Colors.grey.shade100,
@@ -82,137 +61,239 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
           ),
         ),
         iconTheme: const IconThemeData(color: Colors.white),
+        bottom: TabBar(
+          controller: _tabController,
+          indicatorColor: Colors.white,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white70,
+          tabs: const [
+            Tab(text: 'My Stories'),
+            Tab(text: 'Drafts'),
+          ],
+        ),
       ),
-      body: ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: _stories.length,
-        itemBuilder: (context, index) {
-          final story = _stories[index];
-          final isSelected = story['selected'] as bool;
+      body: TabBarView(
+        controller: _tabController,
+        children: [
+          _buildStoriesTab(status: 'published'),
+          _buildStoriesTab(status: 'draft'),
+        ],
+      ),
+    );
+  }
 
-          return GestureDetector(
-            onLongPress: () => _toggleSelect(index),
-            onTap: () {
-              if (_selectionMode) _toggleSelect(index);
-            },
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 250),
-              margin: const EdgeInsets.only(bottom: 14),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: isSelected ? kAppPrimary : Colors.grey.shade300,
-                  width: isSelected ? 2 : 1,
+  Widget _buildStoriesTab({required String status}) {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: _db
+          .collection('stories')
+          .where('authorId', isEqualTo: _user!.uid)
+          .where('status', isEqualTo: status)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator(color: kAppPrimary));
+        }
+
+        if (snapshot.hasError) {
+          return Center(child: Text('Error: ${snapshot.error}'));
+        }
+
+        final stories = snapshot.data?.docs ?? [];
+
+        if (stories.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  status == 'published'
+                      ? Icons.edit_outlined
+                      : Icons.drafts_outlined,
+                  size: 60,
+                  color: Colors.grey,
                 ),
-                boxShadow: [
-                  BoxShadow(
-                    color: isSelected
-                        ? kAppPrimary.withOpacity(0.25)
-                        : Colors.black12,
-                    blurRadius: 6,
-                    offset: const Offset(0, 3),
+                const SizedBox(height: 16),
+                Text(
+                  status == 'published'
+                      ? "No published stories yet"
+                      : "No drafts yet",
+                  style: const TextStyle(
+                    fontSize: 18,
+                    color: Colors.grey,
+                    fontWeight: FontWeight.w500,
                   ),
-                ],
-              ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: stories.length,
+          itemBuilder: (context, index) {
+            final storyDoc = stories[index];
+            final storyId = storyDoc.id;
+            final data = storyDoc.data();
+            final post = _buildStoryPost(storyId, data);
+
+            return Card(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              elevation: 3,
+              margin: const EdgeInsets.only(bottom: 12),
               child: ListTile(
-                contentPadding:
-                const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                onTap: () => _openStory(context, post),
+                leading: data['coverUrl'] != null && data['coverUrl'] != ''
+                    ? ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.network(
+                          data['coverUrl'],
+                          width: 50,
+                          height: 50,
+                          fit: BoxFit.cover,
+                        ),
+                      )
+                    : Container(
+                        width: 50,
+                        height: 50,
+                        decoration: BoxDecoration(
+                          color: kAppPrimary,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(Icons.book, color: Colors.white),
+                      ),
                 title: Text(
-                  story['title'],
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                    color: kAppPrimary,
-                  ),
+                  data['title'] ?? 'Untitled',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
-                subtitle: Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(
-                    story['excerpt'],
-                    style: TextStyle(
-                      color: Colors.grey.shade700,
-                      height: 1.3,
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${data['wordCount'] ?? _wordCount(data['body'])} words',
+                      style: const TextStyle(fontSize: 12),
                     ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
+                    Row(
+                      children: [
+                        const Icon(Icons.favorite, size: 14, color: Colors.red),
+                        const SizedBox(width: 4),
+                        Text(
+                          '${data['likes'] ?? 0}',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
                 trailing: PopupMenuButton<String>(
-                  icon: const Icon(Icons.more_vert, color: Colors.grey),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
                   onSelected: (value) {
                     if (value == 'edit') {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text("✏️ Editing ${story['title']}")),
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => WriteStoryScreen(storyId: storyId),
+                        ),
                       );
                     } else if (value == 'delete') {
-                      setState(() => _stories.removeAt(index));
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text("🗑️ Deleted ${story['title']}")),
-                      );
-                    } else if (value == 'post') {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text("🚀 Posted ${story['title']}")),
-                      );
+                      _deleteStory(storyId, post.title);
                     }
                   },
                   itemBuilder: (context) => const [
-                    PopupMenuItem(value: 'edit', child: Text("Edit")),
-                    PopupMenuItem(value: 'delete', child: Text("Delete")),
-                    PopupMenuItem(value: 'post', child: Text("Post")),
+                    PopupMenuItem(
+                      value: 'edit',
+                      child: Text('Edit'),
+                    ),
+                    PopupMenuItem(
+                      value: 'delete',
+                      child: Text('Delete'),
+                    ),
                   ],
                 ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  StoryPost _buildStoryPost(String storyId, Map<String, dynamic> data) {
+    final title = (data['title'] as String?) ?? 'Untitled';
+    final body = (data['body'] as String?) ?? '';
+    final cover = (data['coverUrl'] as String?);
+    final authorName =
+        (data['authorName'] as String?) ?? _user?.displayName ?? 'You';
+    final handle = (data['handle'] as String?) ??
+        authorName.replaceAll(' ', '').toLowerCase();
+    final likedBy = (data['likedBy'] as List?) ?? [];
+    final imageUrl = cover != null && cover.isNotEmpty
+        ? cover
+        : 'https://picsum.photos/seed/$storyId/600/300';
+
+    return StoryPost(
+      id: storyId,
+      author: authorName,
+      handle: handle,
+      title: title,
+      excerpt: body,
+      likes: _readInt(data['likes']),
+      comments: _readInt(data['comments']),
+      likedByMe: likedBy.contains(_user?.uid),
+      accent: kAppPrimary,
+      imageUrl: imageUrl,
+    );
+  }
+
+  int _readInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value) ?? 0;
+    return 0;
+  }
+
+  int _wordCount(dynamic body) {
+    if (body is! String || body.trim().isEmpty) return 0;
+    return body.trim().split(RegExp(r'\s+')).length;
+  }
+
+  void _openStory(BuildContext context, StoryPost post) {
+    final storyService = StoryService();
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => StoryReaderPage(
+          post: post,
+          service: storyService,
+          userId: _user!.uid,
+          userName: _user!.displayName ?? _user!.email ?? 'User',
+        ),
       ),
-      bottomNavigationBar: AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
-        height: selectedCount > 0 ? 70 : 0,
-        curve: Curves.easeInOut,
-        child: selectedCount > 0
-            ? Container(
-          decoration: BoxDecoration(
-            color: kAppPrimary,
-            borderRadius:
-            const BorderRadius.vertical(top: Radius.circular(20)),
-            boxShadow: [
-              BoxShadow(
-                color: kAppPrimary.withOpacity(0.4),
-                blurRadius: 10,
-                offset: const Offset(0, -3),
-              ),
-            ],
+    );
+  }
+
+  void _deleteStory(String storyId, String title) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Delete Story?"),
+        content: Text("Delete \"$title\"?"),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Cancel"),
           ),
-          child: Center(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: ElevatedButton.icon(
-                onPressed: _convertToEbook,
-                icon: const Icon(Icons.menu_book, color: Colors.white),
-                label: Text(
-                  "Convert $selectedCount Story${selectedCount > 1 ? 'ies' : ''} to eBook",
-                  style: const TextStyle(
-                      fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.white.withOpacity(0.15),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                      vertical: 14, horizontal: 18),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-            ),
+          TextButton(
+            onPressed: () async {
+              await _db.collection('stories').doc(storyId).delete();
+              Navigator.pop(context);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text("🗑️ Deleted $title")),
+              );
+            },
+            child: const Text("Delete", style: TextStyle(color: Colors.red)),
           ),
-        )
-            : const SizedBox.shrink(),
+        ],
       ),
     );
   }

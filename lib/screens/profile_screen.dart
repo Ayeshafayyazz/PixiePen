@@ -1,7 +1,11 @@
 // profile_screen.dart
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:image_picker/image_picker.dart';
 import 'my_stories_screen.dart';
 import 'write_story_screen.dart';
 import 'community.dart';
@@ -122,7 +126,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Widget _buildHeader(BuildContext context, String? userId) {
     final String email = _user?.email ?? "no-email@example.com";
-    final String photoURL = _user?.photoURL ?? "https://i.pravatar.cc/150?img=12";
     final String handle = "@${email.split('@').first}";
 
     return Container(
@@ -147,7 +150,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           ),
           const SizedBox(height: 20),
-          CircleAvatar(radius: 50, backgroundImage: NetworkImage(photoURL)),
+          StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+            stream: userId != null
+                ? _db.collection('users').doc(userId).snapshots()
+                : const Stream.empty(),
+            builder: (context, userDocSnap) {
+              final userData = userDocSnap.data?.data();
+              return CircleAvatar(
+                radius: 50,
+                backgroundImage: NetworkImage(_profilePhotoUrl(userData)),
+              );
+            },
+          ),
           const SizedBox(height: 12),
 
           // Display name: prefer users/{uid}.username, then FirebaseAuth.displayName, then email local part
@@ -356,7 +370,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Widget _buildDrawer(BuildContext context) {
     final String email = _user?.email ?? "no-email@example.com";
-    final String photoURL = _user?.photoURL ?? "https://i.pravatar.cc/150?img=12";
 
     return Drawer(
       child: Column(
@@ -365,9 +378,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
             stream: _user != null ? _db.collection('users').doc(_user!.uid).snapshots() : const Stream.empty(),
             builder: (context, snap) {
               String displayName = _user?.displayName ?? "Guest User";
+              Map<String, dynamic>? userData;
               if (snap.hasData && snap.data!.exists) {
-                final data = snap.data!.data() ?? {};
-                final username = (data['username'] as String?)?.trim();
+                userData = snap.data!.data() ?? {};
+                final username = (userData['username'] as String?)?.trim();
                 if (username != null && username.isNotEmpty) {
                   displayName = username;
                 } else if (_user?.displayName != null && _user!.displayName!.trim().isNotEmpty) {
@@ -385,7 +399,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
               return UserAccountsDrawerHeader(
                 decoration: const BoxDecoration(color: kAppPrimary),
-                currentAccountPicture: CircleAvatar(backgroundImage: NetworkImage(photoURL)),
+                currentAccountPicture: CircleAvatar(
+                  backgroundImage: NetworkImage(_profilePhotoUrl(userData)),
+                ),
                 accountName: Text(displayName),
                 accountEmail: Text(email),
               );
@@ -439,6 +455,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
       title: Text(title),
       onTap: onTap,
     );
+  }
+
+  String _profilePhotoUrl(Map<String, dynamic>? data) {
+    final firestorePhoto =
+        (data?['photoURL'] as String?) ?? (data?['profileImageUrl'] as String?);
+    if (firestorePhoto != null && firestorePhoto.trim().isNotEmpty) {
+      return firestorePhoto.trim();
+    }
+    final authPhoto = _user?.photoURL;
+    if (authPhoto != null && authPhoto.trim().isNotEmpty) {
+      return authPhoto.trim();
+    }
+    return "https://i.pravatar.cc/150?img=12";
   }
 }
 
@@ -542,19 +571,24 @@ class EditProfileScreen extends StatefulWidget {
 class _EditProfileScreenState extends State<EditProfileScreen> {
   final User? _user = FirebaseAuth.instance.currentUser;
   final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FirebaseStorage _storage = FirebaseStorage.instance;
+  final ImagePicker _imagePicker = ImagePicker();
   late final TextEditingController _nameController;
   late final TextEditingController _handleController;
+  String? _photoUrl;
   bool _saving = false;
+  bool _photoSaving = false;
 
   @override
   void initState() {
     super.initState();
     _nameController = TextEditingController(text: _user?.displayName ?? "");
     _handleController = TextEditingController(text: _user?.email?.split('@').first ?? "");
-    _loadUsernameFromFirestore();
+    _photoUrl = _user?.photoURL;
+    _loadProfileFromFirestore();
   }
 
-  Future<void> _loadUsernameFromFirestore() async {
+  Future<void> _loadProfileFromFirestore() async {
     if (_user == null) return;
     final doc = await _db.collection('users').doc(_user!.uid).get();
     if (doc.exists) {
@@ -562,6 +596,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       final username = data['username'] as String?;
       if (username != null && username.trim().isNotEmpty) {
         _nameController.text = username;
+      }
+      final photoUrl = (data['photoURL'] as String?) ??
+          (data['profileImageUrl'] as String?);
+      if (photoUrl != null && photoUrl.trim().isNotEmpty && mounted) {
+        setState(() {
+          _photoUrl = photoUrl.trim();
+        });
       }
     }
   }
@@ -592,6 +633,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       // Update users/{uid}.username (create doc if missing)
       await _db.collection('users').doc(_user!.uid).set({
         'username': newName,
+        'photoURL': _photoUrl,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
@@ -616,6 +658,158 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
   }
 
+  Future<void> _pickAndUploadProfilePhoto() async {
+    if (_user == null || _photoSaving) return;
+
+    final image = await _imagePicker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 85,
+      maxWidth: 1200,
+    );
+    if (image == null) return;
+
+    setState(() {
+      _photoSaving = true;
+    });
+
+    try {
+      final bytes = await image.readAsBytes();
+      final ref = _profilePhotoRef();
+      final metadata = SettableMetadata(
+        contentType: image.mimeType ?? _contentTypeForPath(image.name),
+      );
+
+      await ref.putData(Uint8List.fromList(bytes), metadata);
+      final downloadUrl = await ref.getDownloadURL();
+
+      await _user!.updatePhotoURL(downloadUrl);
+      await _db.collection('users').doc(_user!.uid).set({
+        'photoURL': downloadUrl,
+        'profileImageUrl': downloadUrl,
+        'profileImagePath': ref.fullPath,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      if (!mounted) return;
+      setState(() {
+        _photoUrl = downloadUrl;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Profile image updated successfully'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error uploading profile image: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _photoSaving = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _removeProfilePhoto() async {
+    if (_user == null || _photoSaving) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove Profile Image'),
+        content: const Text('Remove your current profile image?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Remove', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    setState(() {
+      _photoSaving = true;
+    });
+
+    try {
+      final userDoc = _db.collection('users').doc(_user!.uid);
+      final snap = await userDoc.get();
+      final storagePath = snap.data()?['profileImagePath'] as String?;
+
+      if (storagePath != null && storagePath.trim().isNotEmpty) {
+        try {
+          await _storage.ref(storagePath).delete();
+        } on FirebaseException catch (e) {
+          if (e.code != 'object-not-found') rethrow;
+        }
+      }
+
+      await _user!.updatePhotoURL(null);
+      await userDoc.set({
+        'photoURL': FieldValue.delete(),
+        'profileImageUrl': FieldValue.delete(),
+        'profileImagePath': FieldValue.delete(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      if (!mounted) return;
+      setState(() {
+        _photoUrl = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Profile image removed'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error removing profile image: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _photoSaving = false;
+        });
+      }
+    }
+  }
+
+  Reference _profilePhotoRef() {
+    return _storage.ref().child('users/${_user!.uid}/profile/profile.jpg');
+  }
+
+  String _contentTypeForPath(String path) {
+    final lowerPath = path.toLowerCase();
+    if (lowerPath.endsWith('.png')) return 'image/png';
+    if (lowerPath.endsWith('.webp')) return 'image/webp';
+    return 'image/jpeg';
+  }
+
+  String get _displayPhotoUrl {
+    final photoUrl = _photoUrl;
+    if (photoUrl != null && photoUrl.trim().isNotEmpty) {
+      return photoUrl.trim();
+    }
+    return "https://i.pravatar.cc/150?img=12";
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -628,11 +822,42 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         child: Column(
           children: [
             Center(
-              child: CircleAvatar(
-                radius: 50,
-                backgroundImage: NetworkImage(
-                  _user?.photoURL ?? "https://i.pravatar.cc/150?img=12",
-                ),
+              child: Column(
+                children: [
+                  CircleAvatar(
+                    radius: 50,
+                    backgroundImage: NetworkImage(_displayPhotoUrl),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed:
+                            _photoSaving ? null : _pickAndUploadProfilePhoto,
+                        icon: _photoSaving
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.photo_camera),
+                        label: Text(_photoUrl == null ? 'Add Image' : 'Update'),
+                      ),
+                      const SizedBox(width: 12),
+                      TextButton.icon(
+                        onPressed: _photoSaving || _photoUrl == null
+                            ? null
+                            : _removeProfilePhoto,
+                        icon: const Icon(Icons.delete_outline),
+                        label: const Text('Remove'),
+                        style: TextButton.styleFrom(
+                          foregroundColor: Colors.red,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 24),
@@ -697,6 +922,8 @@ class _StoriesTab extends StatefulWidget {
 }
 
 class _StoriesTabState extends State<_StoriesTab> {
+  final StoryService _storyService = StoryService();
+
   @override
   Widget build(BuildContext context) {
     if (widget.userId == null) {
@@ -752,12 +979,14 @@ class _StoriesTabState extends State<_StoriesTab> {
           itemBuilder: (context, index) {
             final story = stories[index];
             final data = story.data() as Map<String, dynamic>;
+            final post = _buildStoryPost(story.id, data);
 
             return Card(
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               elevation: 3,
               margin: const EdgeInsets.only(bottom: 12),
               child: ListTile(
+                onTap: () => _openStory(context, post),
                 leading: data['coverUrl'] != null && data['coverUrl'] != ''
                     ? ClipRRect(
                   borderRadius: BorderRadius.circular(8),
@@ -831,6 +1060,63 @@ class _StoriesTabState extends State<_StoriesTab> {
     );
   }
 
+  StoryPost _buildStoryPost(String storyId, Map<String, dynamic> data) {
+    final title = (data['title'] as String?) ?? 'Untitled';
+    final body = (data['body'] as String?) ?? '';
+    final cover = (data['coverUrl'] as String?);
+    final authorName =
+        (data['authorName'] as String?) ??
+        FirebaseAuth.instance.currentUser?.displayName ??
+        'You';
+    final handle =
+        (data['handle'] as String?) ??
+        authorName.replaceAll(' ', '').toLowerCase();
+    final likes = _readInt(data['likes']);
+    final comments = _readInt(data['comments']);
+    final likedBy = (data['likedBy'] as List?) ?? [];
+    final likedByMe =
+        widget.userId != null && likedBy.contains(widget.userId);
+    final imageUrl = cover != null && cover.isNotEmpty
+        ? cover
+        : 'https://picsum.photos/seed/$storyId/600/300';
+
+    return StoryPost(
+      id: storyId,
+      author: authorName,
+      handle: handle,
+      title: title,
+      excerpt: body,
+      likes: likes,
+      comments: comments,
+      likedByMe: likedByMe,
+      accent: kAppPrimary,
+      imageUrl: imageUrl,
+    );
+  }
+
+  int _readInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value) ?? 0;
+    return 0;
+  }
+
+  void _openStory(BuildContext context, StoryPost post) {
+    final currentUser = FirebaseAuth.instance.currentUser;
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => StoryReaderPage(
+          post: post,
+          service: _storyService,
+          userId: widget.userId ?? currentUser?.uid ?? '',
+          userName:
+              currentUser?.displayName ?? currentUser?.email ?? 'User',
+        ),
+      ),
+    );
+  }
+
   void _showDeleteConfirmation(BuildContext context, String storyId) {
     showDialog(
       context: context,
@@ -873,7 +1159,6 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  bool _notificationsEnabled = true;
   final TextEditingController _passwordController = TextEditingController();
 
   Future<void> _changePassword() async {
@@ -948,21 +1233,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       child: const Text("Update"),
                     ),
                   ],
-                ),
-              );
-            },
-          ),
-          SwitchListTile(
-            secondary: const Icon(Icons.notifications),
-            title: const Text("Notifications"),
-            value: _notificationsEnabled,
-            onChanged: (bool value) {
-              setState(() {
-                _notificationsEnabled = value;
-              });
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(_notificationsEnabled ? "Notifications enabled" : "Notifications disabled"),
                 ),
               );
             },

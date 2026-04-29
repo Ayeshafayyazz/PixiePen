@@ -55,11 +55,17 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     FocusScope.of(context).unfocus();
     final title = _titleController.text.trim();
     final body = _bodyController.text.trim();
-    if (title.isEmpty && body.isEmpty) {
+    if (title.isEmpty || body.isEmpty) {
+      final missingFields = [
+        if (title.isEmpty) 'title',
+        if (body.isEmpty) 'story body',
+      ].join(' and ');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text(
-                publish ? "Add content before publishing." : "Add content before saving draft.")),
+          content: Text(
+            "Please add a $missingFields before ${publish ? 'publishing' : 'saving your draft'}.",
+          ),
+        ),
       );
       return;
     }
@@ -74,7 +80,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
       final authorName = user?.displayName ?? 'Unknown';
 
       final doc = {
-        'title': title.isNotEmpty ? title : null,
+        'title': title,
         'body': body,
         'coverUrl': _storyCoverUrl,
         'wordCount': _wordCount,
@@ -161,11 +167,41 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
       MaterialPageRoute(builder: (_) => const SpeechToTextScreen()),
     );
 
-    if (spokenText != null && mounted) {
-      setState(() {
-        _bodyController.text = spokenText;
-      });
+    if (spokenText is String && mounted) {
+      final transcript = spokenText.trim();
+      if (_isStoryTranscript(transcript)) {
+        _appendToBody(transcript);
+      }
     }
+  }
+
+  bool _isStoryTranscript(String text) {
+    const statusMessages = {
+      'Tap the mic and start speaking...',
+      'Listening... Speak now',
+      'Microphone permission denied',
+      'Speech recognition not available',
+    };
+
+    return text.isNotEmpty &&
+        !statusMessages.contains(text) &&
+        !text.startsWith('Error:');
+  }
+
+  void _appendToBody(String text) {
+    final currentBody = _bodyController.text;
+    final separator =
+        currentBody.trim().isEmpty || RegExp(r'\s$').hasMatch(currentBody)
+            ? ''
+            : ' ';
+    final updatedBody = '$currentBody$separator$text';
+
+    setState(() {
+      _bodyController.value = TextEditingValue(
+        text: updatedBody,
+        selection: TextSelection.collapsed(offset: updatedBody.length),
+      );
+    });
   }
 
   @override

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
-import 'NotificationsPage.dart';
 import 'ebook_screen.dart';
 import 'my_stories_screen.dart';
 import 'profile_screen.dart';
@@ -445,8 +445,42 @@ class _CommunityScreenState extends State<CommunityScreen> {
   int _selectedIndex = 0;
   static const String _storiesCollection = 'stories';
   final StoryService _service = StoryService();
-  final String _userId = "demoUser123";
-  final String _userName = "Demo User";
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  User? _user;
+  String _userId = "";
+  String _userName = "";
+
+  @override
+  void initState() {
+    super.initState();
+    _user = FirebaseAuth.instance.currentUser;
+    if (_user != null) {
+      _userId = _user!.uid;
+      // Set fallback username immediately
+      _userName = _user!.displayName ??
+          _user!.email?.split('@').first ??
+          'User';
+      // Try to fetch the actual username from Firestore
+      _fetchUserName();
+    }
+  }
+
+  Future<void> _fetchUserName() async {
+    if (_user == null) return;
+    try {
+      final snap = await _db.collection('users').doc(_user!.uid).get();
+      if (mounted) {
+        setState(() {
+          final firestoreUsername = snap.data()?['username'] as String?;
+          if (firestoreUsername != null && firestoreUsername.isNotEmpty) {
+            _userName = firestoreUsername;
+          }
+        });
+      }
+    } catch (e) {
+      print('Error fetching username: $e');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -507,21 +541,6 @@ class _CommunityScreenState extends State<CommunityScreen> {
         backgroundColor: const Color(0xFF7B1FA2),
         title: const _BrandTitle(),
         centerTitle: true,
-        actions: [
-          IconButton(
-            tooltip: 'Notifications',
-            icon: const Icon(
-              Icons.notifications_outlined,
-              color: Colors.white,
-            ),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const NotificationsPage()),
-              );
-            },
-          ),
-        ],
       ),
       body: RefreshIndicator(
         color: Colors.purple,
@@ -587,13 +606,15 @@ class _CommunityScreenState extends State<CommunityScreen> {
                 return StoryCard(
                   post: post,
                   service: _service,
-                  userId: _userId,
-                  userName: _userName,
+                  userId: _userId.isEmpty ? _user?.uid ?? '' : _userId,
+                  userName: _userName.isEmpty ? (_user?.displayName ?? 'User') : _userName,
                   onLike: () async {
-                    await _service.toggleLike(
-                      storyId: storyId,
-                      userId: _userId,
-                    );
+                    if (_userId.isNotEmpty) {
+                      await _service.toggleLike(
+                        storyId: storyId,
+                        userId: _userId,
+                      );
+                    }
                   },
                   onOpen: () => _openStory(context, post),
                   onComment: () => _openComments(context, storyId),
@@ -752,11 +773,16 @@ class _CommunityScreenState extends State<CommunityScreen> {
                     IconButton(
                       icon: const Icon(Icons.send, color: Colors.purple),
                       onPressed: () async {
-                        if (controller.text.isNotEmpty) {
+                        if (controller.text.isNotEmpty && _userId.isNotEmpty) {
+                          // Use current username, fallback if empty
+                          String commentUserName = _userName.isNotEmpty
+                            ? _userName
+                            : (_user?.displayName ?? _user?.email?.split('@').first ?? 'User');
+
                           await _service.addComment(
                             storyId: storyId,
                             userId: _userId,
-                            userName: _userName,
+                            userName: commentUserName,
                             text: controller.text.trim(),
                           );
                           controller.clear();

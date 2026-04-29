@@ -13,12 +13,6 @@ class SettingsScreen extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         children: [
           const ListTile(
-            title: Text("Notifications"),
-            subtitle: Text("Manage push and email alerts"),
-            trailing: Icon(Icons.notifications_outlined),
-          ),
-          const Divider(),
-          const ListTile(
             title: Text("Privacy"),
             subtitle: Text("Manage who can see your stories"),
             trailing: Icon(Icons.privacy_tip_outlined),
