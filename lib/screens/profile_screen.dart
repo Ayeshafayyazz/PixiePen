@@ -36,9 +36,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (_user == null) return;
     final docRef = _db.collection('users').doc(_user!.uid);
     final snap = await docRef.get();
-    final fallbackName = (_user!.displayName != null && _user!.displayName!.trim().isNotEmpty)
-        ? _user!.displayName!.trim()
-        : (_user!.email?.split('@').first ?? 'guest');
+    final fallbackName =
+        (_user!.displayName != null && _user!.displayName!.trim().isNotEmpty)
+            ? _user!.displayName!.trim()
+            : (_user!.email?.split('@').first ?? 'guest');
 
     if (!snap.exists) {
       await docRef.set({
@@ -76,7 +77,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (result == true) {
       await FirebaseAuth.instance.signOut();
       if (mounted) {
-        Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
+        Navigator.of(context)
+            .pushNamedAndRemoveUntil('/login', (route) => false);
       }
     }
   }
@@ -113,7 +115,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
             Expanded(
               child: TabBarView(
                 children: [
-                  _StoriesTab(title: "My Stories", status: "published", userId: userId),
+                  _StoriesTab(
+                      title: "My Stories", status: "published", userId: userId),
                   _StoriesTab(title: "Drafts", status: "draft", userId: userId),
                 ],
               ),
@@ -166,22 +169,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
           // Display name: prefer users/{uid}.username, then FirebaseAuth.displayName, then email local part
           StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-            stream: userId != null ? _db.collection('users').doc(userId).snapshots() : const Stream.empty(),
+            stream: userId != null
+                ? _db.collection('users').doc(userId).snapshots()
+                : const Stream.empty(),
             builder: (context, userDocSnap) {
               String displayName = "Guest User";
 
               if (userDocSnap.hasData && userDocSnap.data!.exists) {
                 final data = userDocSnap.data!.data() ?? {};
-                final dynamic usernameField = data['username'] ?? data['displayName'];
-                if (usernameField is String && usernameField.trim().isNotEmpty) {
+                final dynamic usernameField =
+                    data['username'] ?? data['displayName'];
+                if (usernameField is String &&
+                    usernameField.trim().isNotEmpty) {
                   displayName = usernameField.trim();
-                } else if (_user?.displayName != null && _user!.displayName!.trim().isNotEmpty) {
+                } else if (_user?.displayName != null &&
+                    _user!.displayName!.trim().isNotEmpty) {
                   displayName = _user!.displayName!.trim();
                 } else {
                   displayName = email.split('@').first;
                 }
               } else {
-                if (_user?.displayName != null && _user!.displayName!.trim().isNotEmpty) {
+                if (_user?.displayName != null &&
+                    _user!.displayName!.trim().isNotEmpty) {
                   displayName = _user!.displayName!.trim();
                 } else {
                   displayName = email.split('@').first;
@@ -263,11 +272,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
           final userData = userSnap.data!.data() ?? {};
           final dynamic totalLikesRaw = userData['totalLikes'];
           if (totalLikesRaw is int) {
-            return _buildStatCard(Icons.favorite, totalLikesRaw.toString(), "Likes", Colors.red);
+            return _buildStatCard(
+                Icons.favorite, totalLikesRaw.toString(), "Likes", Colors.red);
           }
           if (totalLikesRaw is String) {
             final parsed = int.tryParse(totalLikesRaw) ?? 0;
-            return _buildStatCard(Icons.favorite, parsed.toString(), "Likes", Colors.red);
+            return _buildStatCard(
+                Icons.favorite, parsed.toString(), "Likes", Colors.red);
           }
         }
 
@@ -329,7 +340,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildStatCard(IconData icon, String value, String label, Color color) {
+  Widget _buildStatCard(
+      IconData icon, String value, String label, Color color) {
     return Container(
       padding: const EdgeInsets.all(12),
       width: 95,
@@ -375,7 +387,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
       child: Column(
         children: [
           StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-            stream: _user != null ? _db.collection('users').doc(_user!.uid).snapshots() : const Stream.empty(),
+            stream: _user != null
+                ? _db.collection('users').doc(_user!.uid).snapshots()
+                : const Stream.empty(),
             builder: (context, snap) {
               String displayName = _user?.displayName ?? "Guest User";
               Map<String, dynamic>? userData;
@@ -384,13 +398,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 final username = (userData['username'] as String?)?.trim();
                 if (username != null && username.isNotEmpty) {
                   displayName = username;
-                } else if (_user?.displayName != null && _user!.displayName!.trim().isNotEmpty) {
+                } else if (_user?.displayName != null &&
+                    _user!.displayName!.trim().isNotEmpty) {
                   displayName = _user!.displayName!.trim();
                 } else {
                   displayName = email.split('@').first;
                 }
               } else {
-                if (_user?.displayName != null && _user!.displayName!.trim().isNotEmpty) {
+                if (_user?.displayName != null &&
+                    _user!.displayName!.trim().isNotEmpty) {
                   displayName = _user!.displayName!.trim();
                 } else {
                   displayName = email.split('@').first;
@@ -583,7 +599,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   void initState() {
     super.initState();
     _nameController = TextEditingController(text: _user?.displayName ?? "");
-    _handleController = TextEditingController(text: _user?.email?.split('@').first ?? "");
+    _handleController =
+        TextEditingController(text: _user?.email?.split('@').first ?? "");
     _photoUrl = _user?.photoURL;
     _loadProfileFromFirestore();
   }
@@ -597,8 +614,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (username != null && username.trim().isNotEmpty) {
         _nameController.text = username;
       }
-      final photoUrl = (data['photoURL'] as String?) ??
-          (data['profileImageUrl'] as String?);
+      final photoUrl =
+          (data['photoURL'] as String?) ?? (data['profileImageUrl'] as String?);
       if (photoUrl != null && photoUrl.trim().isNotEmpty && mounted) {
         setState(() {
           _photoUrl = photoUrl.trim();
@@ -618,7 +635,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     if (_user == null) return;
     final newName = _nameController.text.trim();
     if (newName.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Name cannot be empty')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Name cannot be empty')));
       return;
     }
 
@@ -639,14 +657,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Profile updated successfully!'), backgroundColor: Colors.green),
+          const SnackBar(
+              content: Text('Profile updated successfully!'),
+              backgroundColor: Colors.green),
         );
         Navigator.pop(context);
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error updating profile: $e'), backgroundColor: Colors.red),
+          SnackBar(
+              content: Text('Error updating profile: $e'),
+              backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -814,7 +836,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Edit Profile", style: TextStyle(color: Colors.white)),
+        title:
+            const Text("Edit Profile", style: TextStyle(color: Colors.white)),
         backgroundColor: kAppPrimary,
       ),
       body: Padding(
@@ -839,7 +862,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                             ? const SizedBox(
                                 width: 16,
                                 height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
                               )
                             : const Icon(Icons.photo_camera),
                         label: Text(_photoUrl == null ? 'Add Image' : 'Update'),
@@ -891,9 +915,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               child: _saving
                   ? const CircularProgressIndicator(color: Colors.white)
                   : const Text(
-                "Save Changes",
-                style: TextStyle(color: Colors.white, fontSize: 16),
-              ),
+                      "Save Changes",
+                      style: TextStyle(color: Colors.white, fontSize: 16),
+                    ),
             ),
           ],
         ),
@@ -982,30 +1006,31 @@ class _StoriesTabState extends State<_StoriesTab> {
             final post = _buildStoryPost(story.id, data);
 
             return Card(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
               elevation: 3,
               margin: const EdgeInsets.only(bottom: 12),
               child: ListTile(
                 onTap: () => _openStory(context, post),
                 leading: data['coverUrl'] != null && data['coverUrl'] != ''
                     ? ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: Image.network(
-                    data['coverUrl'],
-                    width: 50,
-                    height: 50,
-                    fit: BoxFit.cover,
-                  ),
-                )
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.network(
+                          data['coverUrl'],
+                          width: 50,
+                          height: 50,
+                          fit: BoxFit.cover,
+                        ),
+                      )
                     : Container(
-                  width: 50,
-                  height: 50,
-                  decoration: BoxDecoration(
-                    color: kAppPrimary,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Icon(Icons.book, color: Colors.white),
-                ),
+                        width: 50,
+                        height: 50,
+                        decoration: BoxDecoration(
+                          color: kAppPrimary,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(Icons.book, color: Colors.white),
+                      ),
                 title: Text(
                   data['title'] ?? 'Untitled',
                   maxLines: 1,
@@ -1015,10 +1040,6 @@ class _StoriesTabState extends State<_StoriesTab> {
                 subtitle: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      '${data['wordCount'] ?? 0} words',
-                      style: const TextStyle(fontSize: 12),
-                    ),
                     Row(
                       children: [
                         Icon(Icons.favorite, size: 14, color: Colors.red),
@@ -1064,18 +1085,15 @@ class _StoriesTabState extends State<_StoriesTab> {
     final title = (data['title'] as String?) ?? 'Untitled';
     final body = (data['body'] as String?) ?? '';
     final cover = (data['coverUrl'] as String?);
-    final authorName =
-        (data['authorName'] as String?) ??
+    final authorName = (data['authorName'] as String?) ??
         FirebaseAuth.instance.currentUser?.displayName ??
         'You';
-    final handle =
-        (data['handle'] as String?) ??
+    final handle = (data['handle'] as String?) ??
         authorName.replaceAll(' ', '').toLowerCase();
     final likes = _readInt(data['likes']);
     final comments = _readInt(data['comments']);
     final likedBy = (data['likedBy'] as List?) ?? [];
-    final likedByMe =
-        widget.userId != null && likedBy.contains(widget.userId);
+    final likedByMe = widget.userId != null && likedBy.contains(widget.userId);
     final imageUrl = cover != null && cover.isNotEmpty
         ? cover
         : 'https://picsum.photos/seed/$storyId/600/300';
@@ -1110,8 +1128,7 @@ class _StoriesTabState extends State<_StoriesTab> {
           post: post,
           service: _storyService,
           userId: widget.userId ?? currentUser?.uid ?? '',
-          userName:
-              currentUser?.displayName ?? currentUser?.email ?? 'User',
+          userName: currentUser?.displayName ?? currentUser?.email ?? 'User',
         ),
       ),
     );
@@ -1130,7 +1147,10 @@ class _StoriesTabState extends State<_StoriesTab> {
           ),
           TextButton(
             onPressed: () {
-              FirebaseFirestore.instance.collection('stories').doc(storyId).delete();
+              FirebaseFirestore.instance
+                  .collection('stories')
+                  .doc(storyId)
+                  .delete();
               Navigator.pop(context);
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(

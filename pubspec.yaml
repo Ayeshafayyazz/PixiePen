@@ -51,6 +51,8 @@ dependencies:
   http: ^1.2.0
   image_gallery_saver_plus: ^3.0.0
   image_picker: ^1.1.2
+  pdf: 3.11.1
+  printing: 5.13.4
 
 
 dev_dependencies:
