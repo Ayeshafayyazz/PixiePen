@@ -1,5 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'content_moderation_service.dart';
+
 class StoryService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
@@ -28,10 +30,13 @@ class StoryService {
         likes = likes + 1;
       }
 
-      tx.set(ref, {
-        'likes': likes,
-        'likedBy': likedBy,
-      }, SetOptions(merge: true));
+      tx.set(
+          ref,
+          {
+            'likes': likes,
+            'likedBy': likedBy,
+          },
+          SetOptions(merge: true));
     });
   }
 
@@ -44,6 +49,11 @@ class StoryService {
     required String userName,
     required String text,
   }) async {
+    final moderation = ContentModerationService().moderateText(text);
+    if (!moderation.isSafe) {
+      throw ArgumentError(ContentModerationService.childFriendlyWarning);
+    }
+
     final storyRef = _db.collection('stories').doc(storyId);
 
     final commentRef = storyRef.collection('comments').doc();
@@ -53,12 +63,19 @@ class StoryService {
         'userId': userId,
         'userName': userName,
         'text': text,
+        'moderation': {
+          'isSafe': true,
+          'flagReason': null,
+        },
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      tx.set(storyRef, {
-        'comments': FieldValue.increment(1),
-      }, SetOptions(merge: true));
+      tx.set(
+          storyRef,
+          {
+            'comments': FieldValue.increment(1),
+          },
+          SetOptions(merge: true));
     });
   }
 

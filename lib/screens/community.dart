@@ -7,6 +7,7 @@ import 'my_stories_screen.dart';
 import 'profile_screen.dart';
 import 'theme.dart';
 import 'write_story_screen.dart';
+import '../services/content_moderation_service.dart';
 
 /// =============================================================================
 /// FIRESTORE SERVICE
@@ -36,10 +37,13 @@ class StoryService {
         likes++;
       }
 
-      tx.set(ref, {
-        'likes': likes,
-        'likedBy': likedBy,
-      }, SetOptions(merge: true));
+      tx.set(
+          ref,
+          {
+            'likes': likes,
+            'likedBy': likedBy,
+          },
+          SetOptions(merge: true));
     });
   }
 
@@ -49,6 +53,11 @@ class StoryService {
     required String userName,
     required String text,
   }) async {
+    final moderation = ContentModerationService().moderateText(text);
+    if (!moderation.isSafe) {
+      throw ArgumentError(ContentModerationService.childFriendlyWarning);
+    }
+
     final storyRef = _db.collection('stories').doc(storyId);
     final commentRef = storyRef.collection('comments').doc();
 
@@ -57,12 +66,19 @@ class StoryService {
         'userId': userId,
         'userName': userName,
         'text': text,
+        'moderation': {
+          'isSafe': true,
+          'flagReason': null,
+        },
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      tx.set(storyRef, {
-        'comments': FieldValue.increment(1),
-      }, SetOptions(merge: true));
+      tx.set(
+          storyRef,
+          {
+            'comments': FieldValue.increment(1),
+          },
+          SetOptions(merge: true));
     });
   }
 
@@ -75,9 +91,12 @@ class StoryService {
 
     await _db.runTransaction((tx) async {
       tx.delete(commentRef);
-      tx.set(storyRef, {
-        'comments': FieldValue.increment(-1),
-      }, SetOptions(merge: true));
+      tx.set(
+          storyRef,
+          {
+            'comments': FieldValue.increment(-1),
+          },
+          SetOptions(merge: true));
     });
   }
 
@@ -130,18 +149,18 @@ class StoryPost {
   });
 
   StoryPost toggleLike() => StoryPost(
-    id: id,
-    author: author,
-    handle: handle,
-    title: title,
-    excerpt: excerpt,
-    likes: likedByMe ? likes - 1 : likes + 1,
-    comments: comments,
-    likedByMe: !likedByMe,
-    accent: accent,
-    imageUrl: imageUrl,
-    commentList: commentList,
-  );
+        id: id,
+        author: author,
+        handle: handle,
+        title: title,
+        excerpt: excerpt,
+        likes: likedByMe ? likes - 1 : likes + 1,
+        comments: comments,
+        likedByMe: !likedByMe,
+        accent: accent,
+        imageUrl: imageUrl,
+        commentList: commentList,
+      );
 }
 
 /// =============================================================================
@@ -286,6 +305,7 @@ class StoryReaderViewModel extends ChangeNotifier {
     currentMapping = currentMapping.copyWith(nameMap: nameMap);
     _updateDisplayPost();
   }
+
   void resetPerspective() {
     currentPerspectiveIndex = 0;
     currentMapping = PerspectiveEngine.getDefaultMapping(0);
@@ -298,7 +318,8 @@ class StoryReaderViewModel extends ChangeNotifier {
       author: originalPost.author,
       handle: originalPost.handle,
       title: originalPost.title,
-      excerpt: PerspectiveEngine.transform(originalPost.excerpt, currentMapping),
+      excerpt:
+          PerspectiveEngine.transform(originalPost.excerpt, currentMapping),
       likes: originalPost.likes,
       comments: originalPost.comments,
       likedByMe: originalPost.likedByMe,
@@ -445,6 +466,8 @@ class _CommunityScreenState extends State<CommunityScreen> {
   int _selectedIndex = 0;
   static const String _storiesCollection = 'stories';
   final StoryService _service = StoryService();
+  final ContentModerationService _moderationService =
+      ContentModerationService();
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   User? _user;
   String _userId = "";
@@ -457,9 +480,8 @@ class _CommunityScreenState extends State<CommunityScreen> {
     if (_user != null) {
       _userId = _user!.uid;
       // Set fallback username immediately
-      _userName = _user!.displayName ??
-          _user!.email?.split('@').first ??
-          'User';
+      _userName =
+          _user!.displayName ?? _user!.email?.split('@').first ?? 'User';
       // Try to fetch the actual username from Firestore
       _fetchUserName();
     }
@@ -607,7 +629,9 @@ class _CommunityScreenState extends State<CommunityScreen> {
                   post: post,
                   service: _service,
                   userId: _userId.isEmpty ? _user?.uid ?? '' : _userId,
-                  userName: _userName.isEmpty ? (_user?.displayName ?? 'User') : _userName,
+                  userName: _userName.isEmpty
+                      ? (_user?.displayName ?? 'User')
+                      : _userName,
                   onLike: () async {
                     if (_userId.isNotEmpty) {
                       await _service.toggleLike(
@@ -696,8 +720,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
                       return ListView.builder(
                         itemCount: docs.length,
                         itemBuilder: (context, i) {
-                          final data =
-                          docs[i].data() as Map<String, dynamic>;
+                          final data = docs[i].data() as Map<String, dynamic>;
                           final isOwner = data['userId'] == _userId;
 
                           return Padding(
@@ -709,9 +732,8 @@ class _CommunityScreenState extends State<CommunityScreen> {
                                   backgroundColor: Colors.purple,
                                   radius: 18,
                                   child: Text(
-                                    (data['userName'] as String?)
-                                        ?.isNotEmpty ==
-                                        true
+                                    (data['userName'] as String?)?.isNotEmpty ==
+                                            true
                                         ? (data['userName'] as String)[0]
                                         : '?',
                                     style: const TextStyle(
@@ -723,7 +745,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
                                 Expanded(
                                   child: Column(
                                     crossAxisAlignment:
-                                    CrossAxisAlignment.start,
+                                        CrossAxisAlignment.start,
                                     children: [
                                       Text(
                                         data['userName'] ?? 'Unknown',
@@ -773,17 +795,33 @@ class _CommunityScreenState extends State<CommunityScreen> {
                     IconButton(
                       icon: const Icon(Icons.send, color: Colors.purple),
                       onPressed: () async {
-                        if (controller.text.isNotEmpty && _userId.isNotEmpty) {
+                        final commentText = controller.text.trim();
+                        if (commentText.isNotEmpty && _userId.isNotEmpty) {
+                          final moderation =
+                              _moderationService.moderateText(commentText);
+                          if (!moderation.isSafe) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  ContentModerationService.childFriendlyWarning,
+                                ),
+                              ),
+                            );
+                            return;
+                          }
+
                           // Use current username, fallback if empty
                           String commentUserName = _userName.isNotEmpty
-                            ? _userName
-                            : (_user?.displayName ?? _user?.email?.split('@').first ?? 'User');
+                              ? _userName
+                              : (_user?.displayName ??
+                                  _user?.email?.split('@').first ??
+                                  'User');
 
                           await _service.addComment(
                             storyId: storyId,
                             userId: _userId,
                             userName: commentUserName,
-                            text: controller.text.trim(),
+                            text: commentText,
                           );
                           controller.clear();
                         }
@@ -812,9 +850,9 @@ class _BrandTitle extends StatelessWidget {
     return Text(
       'Community',
       style: Theme.of(context).textTheme.titleLarge?.copyWith(
-        fontWeight: FontWeight.w700,
-        color: Colors.white,
-      ),
+            fontWeight: FontWeight.w700,
+            color: Colors.white,
+          ),
     );
   }
 }
@@ -1081,7 +1119,8 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
                   padding: const EdgeInsets.symmetric(vertical: 12),
                 ),
                 icon: const Icon(Icons.refresh, color: Colors.white),
-                label: const Text('Reset', style: TextStyle(color: Colors.white)),
+                label:
+                    const Text('Reset', style: TextStyle(color: Colors.white)),
                 onPressed: () {
                   viewModel.resetPerspective();
                   Navigator.pop(context);
@@ -1093,7 +1132,6 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
       },
     );
   }
-
 
   Widget _perspectiveButton({required String label, required int index}) {
     return Padding(
@@ -1237,8 +1275,8 @@ class _AuthorRow extends StatelessWidget {
                 Text(
                   '@$handle',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    overflow: TextOverflow.ellipsis,
-                  ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
                 ),
               ],
             ),
