@@ -826,94 +826,102 @@ class _InfoSection {
 }
 
 class ParentApprovalsScreen extends StatelessWidget {
-  const ParentApprovalsScreen({super.key});
+  final String? highlightStoryId;
+
+  const ParentApprovalsScreen({super.key, this.highlightStoryId});
 
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
     final parentEmail = user?.email?.trim().toLowerCase();
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF9F7FF),
-      appBar: AppBar(
-        title: const Text(
-          'Parent Approvals',
-          style: TextStyle(color: Colors.white),
-        ),
-        backgroundColor: kAppPrimary,
-        iconTheme: const IconThemeData(color: Colors.white),
-        actions: [
-          if (user != null) _ParentNotificationButton(userId: user.uid),
-          IconButton(
-            tooltip: 'Logout',
-            onPressed: () async {
-              await FirebaseAuth.instance.signOut();
-              if (context.mounted) {
-                Navigator.of(context)
-                    .pushNamedAndRemoveUntil('/login', (route) => false);
-              }
-            },
-            icon: const Icon(Icons.logout, color: Colors.white),
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF9F7FF),
+        appBar: AppBar(
+          title: const Text(
+            'Parent Approvals',
+            style: TextStyle(color: Colors.white),
           ),
-        ],
-      ),
-      body: parentEmail == null
-          ? const Center(child: Text('Please log in as a parent.'))
-          : StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-              stream: FirebaseFirestore.instance
-                  .collection('stories')
-                  .where('parentEmail', isEqualTo: parentEmail)
-                  .snapshots(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(
-                    child: CircularProgressIndicator(color: kAppPrimary),
-                  );
+          backgroundColor: kAppPrimary,
+          iconTheme: const IconThemeData(color: Colors.white),
+          actions: [
+            if (user != null) _ParentNotificationButton(userId: user.uid),
+            IconButton(
+              tooltip: 'Logout',
+              onPressed: () async {
+                await FirebaseAuth.instance.signOut();
+                if (context.mounted) {
+                  Navigator.of(context)
+                      .pushNamedAndRemoveUntil('/login', (route) => false);
                 }
-
-                final pending = (snapshot.data?.docs ?? [])
-                    .where(
-                      (doc) =>
-                          doc.data()['status'] == 'pending_parent_approval',
-                    )
-                    .toList()
-                  ..sort((a, b) {
-                    final aDate = _readDate(a.data()['createdAt']);
-                    final bDate = _readDate(b.data()['createdAt']);
-                    return bDate.compareTo(aDate);
-                  });
-
-                if (pending.isEmpty) {
-                  return const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(24),
-                      child: Text(
-                        'No stories waiting for approval.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                    ),
-                  );
-                }
-
-                return ListView.separated(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: pending.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 12),
-                  itemBuilder: (context, index) {
-                    final doc = pending[index];
-                    final data = doc.data();
-                    return _ParentApprovalCard(
-                      storyId: doc.id,
-                      title: (data['title'] as String?) ?? 'Untitled',
-                      body: (data['body'] as String?) ?? '',
-                      childId: data['authorId'] as String?,
-                      childName: (data['authorName'] as String?) ?? 'Child',
-                    );
-                  },
-                );
               },
+              icon: const Icon(Icons.logout, color: Colors.white),
             ),
+          ],
+          bottom: const TabBar(
+            indicatorColor: Colors.white,
+            labelColor: Colors.white,
+            unselectedLabelColor: Colors.white70,
+            tabs: [
+              Tab(text: 'Pending'),
+              Tab(text: 'History'),
+            ],
+          ),
+        ),
+        body: parentEmail == null
+            ? const Center(child: Text('Please log in as a parent.'))
+            : StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                stream: FirebaseFirestore.instance
+                    .collection('stories')
+                    .where('parentEmail', isEqualTo: parentEmail)
+                    .snapshots(),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(
+                      child: CircularProgressIndicator(color: kAppPrimary),
+                    );
+                  }
+
+                  final stories = (snapshot.data?.docs ?? []).toList()
+                    ..sort((a, b) {
+                      final aDate = _readDate(a.data()['createdAt']);
+                      final bDate = _readDate(b.data()['createdAt']);
+                      return bDate.compareTo(aDate);
+                    });
+
+                  final pending = stories
+                      .where(
+                        (doc) =>
+                            doc.data()['status'] == 'pending_parent_approval',
+                      )
+                      .toList();
+                  final history = stories
+                      .where((doc) =>
+                          doc.data()['approvalStatus'] == 'approved' ||
+                          doc.data()['approvalStatus'] == 'rejected')
+                      .toList();
+
+                  return TabBarView(
+                    children: [
+                      _ParentApprovalList(
+                        docs: _prioritizeStory(pending, highlightStoryId),
+                        emptyText: 'No stories waiting for approval.',
+                        showActions: true,
+                        highlightStoryId: highlightStoryId,
+                      ),
+                      _ParentApprovalList(
+                        docs: history,
+                        emptyText: 'No approval history yet.',
+                        showActions: false,
+                        highlightStoryId: highlightStoryId,
+                      ),
+                    ],
+                  );
+                },
+              ),
+      ),
     );
   }
 
@@ -921,6 +929,69 @@ class ParentApprovalsScreen extends StatelessWidget {
     if (value is Timestamp) return value.toDate();
     if (value is DateTime) return value;
     return DateTime.fromMillisecondsSinceEpoch(0);
+  }
+
+  static List<QueryDocumentSnapshot<Map<String, dynamic>>> _prioritizeStory(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+    String? storyId,
+  ) {
+    if (storyId == null) return docs;
+    return docs.toList()
+      ..sort((a, b) {
+        if (a.id == storyId) return -1;
+        if (b.id == storyId) return 1;
+        return 0;
+      });
+  }
+}
+
+class _ParentApprovalList extends StatelessWidget {
+  final List<QueryDocumentSnapshot<Map<String, dynamic>>> docs;
+  final String emptyText;
+  final bool showActions;
+  final String? highlightStoryId;
+
+  const _ParentApprovalList({
+    required this.docs,
+    required this.emptyText,
+    required this.showActions,
+    required this.highlightStoryId,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (docs.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            emptyText,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ),
+      );
+    }
+
+    return ListView.separated(
+      padding: const EdgeInsets.all(16),
+      itemCount: docs.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      itemBuilder: (context, index) {
+        final doc = docs[index];
+        final data = doc.data();
+        return _ParentApprovalCard(
+          storyId: doc.id,
+          title: (data['title'] as String?) ?? 'Untitled',
+          body: (data['body'] as String?) ?? '',
+          childId: data['authorId'] as String?,
+          childName: (data['authorName'] as String?) ?? 'Child',
+          approvalStatus: (data['approvalStatus'] as String?) ?? 'pending',
+          showActions: showActions,
+          highlighted: doc.id == highlightStoryId,
+        );
+      },
+    );
   }
 }
 
@@ -949,7 +1020,18 @@ class _ParentNotificationButton extends StatelessWidget {
             Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (_) => NotificationScreen(userId: userId),
+                builder: (_) => NotificationScreen(
+                  userId: userId,
+                  onParentApprovalTap: (storyId) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            ParentApprovalsScreen(highlightStoryId: storyId),
+                      ),
+                    );
+                  },
+                ),
               ),
             );
           },
@@ -996,6 +1078,9 @@ class _ParentApprovalCard extends StatefulWidget {
   final String body;
   final String? childId;
   final String childName;
+  final String approvalStatus;
+  final bool showActions;
+  final bool highlighted;
 
   const _ParentApprovalCard({
     required this.storyId,
@@ -1003,6 +1088,9 @@ class _ParentApprovalCard extends StatefulWidget {
     required this.body,
     required this.childId,
     required this.childName,
+    required this.approvalStatus,
+    required this.showActions,
+    required this.highlighted,
   });
 
   @override
@@ -1028,6 +1116,7 @@ class _ParentApprovalCardState extends State<_ParentApprovalCard> {
           'status': approved ? 'approved' : 'rejected',
           'reviewedAt': FieldValue.serverTimestamp(),
           'reviewedBy': parent?.uid,
+          'reviewedByEmail': parent?.email?.trim().toLowerCase(),
         },
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
@@ -1074,7 +1163,10 @@ class _ParentApprovalCardState extends State<_ParentApprovalCard> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFE2D9F3)),
+        border: Border.all(
+          color: widget.highlighted ? kAppPrimary : const Color(0xFFE2D9F3),
+          width: widget.highlighted ? 2 : 1,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1092,6 +1184,8 @@ class _ParentApprovalCardState extends State<_ParentApprovalCard> {
             'by ${widget.childName}',
             style: TextStyle(color: Colors.grey.shade700),
           ),
+          const SizedBox(height: 8),
+          _ParentApprovalStatus(status: widget.approvalStatus),
           const SizedBox(height: 10),
           Text(
             widget.body,
@@ -1099,35 +1193,76 @@ class _ParentApprovalCardState extends State<_ParentApprovalCard> {
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(height: 1.35),
           ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _isSaving ? null : () => _review(approved: false),
-                  icon: const Icon(Icons.edit_note),
-                  label: const Text('Send Back'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.orange.shade800,
-                    side: BorderSide(color: Colors.orange.shade300),
+          if (widget.showActions) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed:
+                        _isSaving ? null : () => _review(approved: false),
+                    icon: const Icon(Icons.edit_note),
+                    label: const Text('Send Back'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.orange.shade800,
+                      side: BorderSide(color: Colors.orange.shade300),
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: _isSaving ? null : () => _review(approved: true),
-                  icon: const Icon(Icons.check),
-                  label: const Text('Approve'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: kAppPrimary,
-                    foregroundColor: Colors.white,
+                const SizedBox(width: 10),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _isSaving ? null : () => _review(approved: true),
+                    icon: const Icon(Icons.check),
+                    label: const Text('Approve'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: kAppPrimary,
+                      foregroundColor: Colors.white,
+                    ),
                   ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
+          ],
         ],
+      ),
+    );
+  }
+}
+
+class _ParentApprovalStatus extends StatelessWidget {
+  final String status;
+
+  const _ParentApprovalStatus({required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    final isApproved = status == 'approved';
+    final isRejected = status == 'rejected';
+    final color = isApproved
+        ? Colors.green.shade700
+        : isRejected
+            ? Colors.orange.shade800
+            : Colors.blue.shade700;
+    final label = isApproved
+        ? 'Approved'
+        : isRejected
+            ? 'Sent back'
+            : 'Waiting for review';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+        ),
       ),
     );
   }

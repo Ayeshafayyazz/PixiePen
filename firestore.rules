@@ -22,10 +22,53 @@ service cloud.firestore {
       return signedIn() && request.resource.data.authorId == request.auth.uid;
     }
 
+    function currentUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isParentAccount() {
+      return signedIn() && currentUserData().role == 'parent';
+    }
+
     function isLinkedParent() {
       return signedIn() &&
         resource.data.parentEmail is string &&
         resource.data.parentEmail == userEmail();
+    }
+
+    function changedStoryKeys() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    function authorKeepsOwnership() {
+      return request.resource.data.authorId == resource.data.authorId;
+    }
+
+    function isAuthorStoryUpdate() {
+      return isStoryAuthor() &&
+        authorKeepsOwnership() &&
+        (
+          isParentAccount() ||
+          request.resource.data.status in ['draft', 'pending_parent_approval']
+        );
+    }
+
+    function isLinkedParentApprovalUpdate() {
+      return isLinkedParent() &&
+        authorKeepsOwnership() &&
+        changedStoryKeys().hasOnly([
+          'status',
+          'isPublish',
+          'approvalStatus',
+          'parentApproval',
+          'updatedAt'
+        ]);
+    }
+
+    function isEngagementUpdate() {
+      return signedIn() &&
+        authorKeepsOwnership() &&
+        changedStoryKeys().hasOnly(['likes', 'likedBy', 'comments']);
     }
 
     match /users/{userId} {
@@ -40,9 +83,15 @@ service cloud.firestore {
         isLinkedParent()
       );
 
-      allow create: if isIncomingStoryAuthor();
+      allow create: if isIncomingStoryAuthor() &&
+        (
+          isParentAccount() ||
+          request.resource.data.status in ['draft', 'pending_parent_approval']
+        );
 
-      allow update: if signedIn();
+      allow update: if isAuthorStoryUpdate() ||
+        isLinkedParentApprovalUpdate() ||
+        isEngagementUpdate();
       allow delete: if isStoryAuthor();
 
       match /comments/{commentId} {

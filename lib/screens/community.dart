@@ -516,6 +516,8 @@ class _CommunityScreenState extends State<CommunityScreen> {
   User? _user;
   String _userId = "";
   String _userName = "";
+  String? _myStoriesInitialStatus;
+  String? _myStoriesHighlightedStoryId;
 
   @override
   void initState() {
@@ -544,7 +546,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
         });
       }
     } catch (e) {
-      print('Error fetching username: $e');
+      debugPrint('Error fetching username: $e');
     }
   }
 
@@ -554,7 +556,13 @@ class _CommunityScreenState extends State<CommunityScreen> {
       _buildCommunityFeed(),
       const WriteStoryScreen(),
       const EbookScreen(),
-      const MyStoriesScreen(),
+      MyStoriesScreen(
+        key: ValueKey(
+          '${_myStoriesInitialStatus ?? 'published'}-${_myStoriesHighlightedStoryId ?? ''}',
+        ),
+        initialStatus: _myStoriesInitialStatus,
+        highlightedStoryId: _myStoriesHighlightedStoryId,
+      ),
       const ProfileScreen(),
     ];
 
@@ -608,7 +616,10 @@ class _CommunityScreenState extends State<CommunityScreen> {
         title: const _BrandTitle(),
         centerTitle: true,
         actions: [
-          _NotificationBell(userId: _userId),
+          _NotificationBell(
+            userId: _userId,
+            onStoryNotificationTap: _handleStoryNotificationTap,
+          ),
         ],
       ),
       body: RefreshIndicator(
@@ -719,6 +730,86 @@ class _CommunityScreenState extends State<CommunityScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _handleStoryNotificationTap(
+    String storyId,
+    String type,
+  ) async {
+    if (type == 'approval_result') {
+      final snap = await _db.collection('stories').doc(storyId).get();
+      if (!mounted) return;
+      final data = snap.data() ?? {};
+      final status = data['status'] as String?;
+      final approvalStatus = data['approvalStatus'] as String?;
+      final targetStatus = approvalStatus == 'rejected'
+          ? 'rejected'
+          : status == 'published'
+              ? 'published'
+              : status == 'pending_parent_approval'
+                  ? 'pending_parent_approval'
+                  : 'draft';
+
+      setState(() {
+        _myStoriesInitialStatus = targetStatus;
+        _myStoriesHighlightedStoryId = storyId;
+        _selectedIndex = 3;
+      });
+      return;
+    }
+
+    final snap = await _db.collection('stories').doc(storyId).get();
+    if (!mounted) return;
+
+    if (!snap.exists) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Story is no longer available.')),
+      );
+      return;
+    }
+
+    final data = snap.data() ?? {};
+    final status = data['status'] as String?;
+    final authorId = data['authorId'] as String?;
+    if (status != 'published' && authorId != _userId) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Story is not available yet.')),
+      );
+      return;
+    }
+
+    final title = (data['title'] as String?) ?? 'Untitled';
+    final body = (data['body'] as String?) ?? '';
+    final author = (data['authorName'] as String?) ?? authorId ?? 'Unknown';
+    final handle =
+        (data['handle'] as String?) ?? author.replaceAll(' ', '').toLowerCase();
+    final cover = data['coverUrl'] as String?;
+    final likedBy = (data['likedBy'] as List?) ?? [];
+
+    _openStory(
+      context,
+      StoryPost(
+        id: storyId,
+        author: author,
+        handle: handle,
+        title: title,
+        excerpt: body,
+        likes: _readInt(data['likes']),
+        comments: _readInt(data['comments']),
+        likedByMe: likedBy.contains(_userId),
+        accent: kAppPrimary,
+        imageUrl: cover != null && cover.isNotEmpty
+            ? cover
+            : 'https://picsum.photos/seed/$storyId/600/300',
+      ),
+    );
+  }
+
+  int _readInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value) ?? 0;
+    return 0;
   }
 
   void _openComments(BuildContext context, String storyId) {
@@ -916,8 +1007,12 @@ class _BrandTitle extends StatelessWidget {
 
 class _NotificationBell extends StatelessWidget {
   final String userId;
+  final void Function(String storyId, String type)? onStoryNotificationTap;
 
-  const _NotificationBell({required this.userId});
+  const _NotificationBell({
+    required this.userId,
+    this.onStoryNotificationTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -948,7 +1043,10 @@ class _NotificationBell extends StatelessWidget {
             Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (_) => NotificationScreen(userId: userId),
+                builder: (_) => NotificationScreen(
+                  userId: userId,
+                  onStoryNotificationTap: onStoryNotificationTap,
+                ),
               ),
             );
           },
@@ -991,8 +1089,15 @@ class _NotificationBell extends StatelessWidget {
 
 class NotificationScreen extends StatefulWidget {
   final String userId;
+  final ValueChanged<String>? onParentApprovalTap;
+  final void Function(String storyId, String type)? onStoryNotificationTap;
 
-  const NotificationScreen({super.key, required this.userId});
+  const NotificationScreen({
+    super.key,
+    required this.userId,
+    this.onParentApprovalTap,
+    this.onStoryNotificationTap,
+  });
 
   @override
   State<NotificationScreen> createState() => _NotificationScreenState();
@@ -1083,61 +1188,87 @@ class _NotificationScreenState extends State<NotificationScreen> {
               final icon = _notificationIcon(type);
               final color = _notificationColor(type);
 
-              return Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: isRead
-                        ? const Color(0xFFE2D9F3)
-                        : kAppPrimary.withValues(alpha: 0.45),
+              final storyId = data['storyId'] as String?;
+              final canOpenApproval =
+                  type == 'parent_approval' && storyId != null;
+              final canOpenStory = storyId != null &&
+                  (type == 'like' ||
+                      type == 'comment' ||
+                      type == 'approval_result');
+
+              return InkWell(
+                onTap: canOpenApproval
+                    ? () {
+                        Navigator.pop(context);
+                        widget.onParentApprovalTap?.call(storyId);
+                      }
+                    : canOpenStory
+                        ? () {
+                            Navigator.pop(context);
+                            widget.onStoryNotificationTap?.call(storyId, type);
+                          }
+                        : null,
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: isRead
+                          ? const Color(0xFFE2D9F3)
+                          : kAppPrimary.withValues(alpha: 0.45),
+                    ),
                   ),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    CircleAvatar(
-                      backgroundColor: color,
-                      child: Icon(
-                        icon,
-                        color: Colors.white,
-                        size: 18,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            message,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w800,
-                              color: Colors.black87,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            _formatDate(data['createdAt']),
-                            style: TextStyle(
-                              color: Colors.grey.shade600,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (!isRead)
-                      Container(
-                        width: 9,
-                        height: 9,
-                        decoration: const BoxDecoration(
-                          color: kAppPrimary,
-                          shape: BoxShape.circle,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      CircleAvatar(
+                        backgroundColor: color,
+                        child: Icon(
+                          icon,
+                          color: Colors.white,
+                          size: 18,
                         ),
                       ),
-                  ],
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              message,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                color: Colors.black87,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              canOpenApproval
+                                  ? 'Tap to review'
+                                  : canOpenStory
+                                      ? 'Tap to open'
+                                      : _formatDate(data['createdAt']),
+                              style: TextStyle(
+                                color: Colors.grey.shade600,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (!isRead)
+                        Container(
+                          width: 9,
+                          height: 9,
+                          decoration: const BoxDecoration(
+                            color: kAppPrimary,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               );
             },
@@ -1216,10 +1347,10 @@ class StoryCard extends StatelessWidget {
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: Colors.grey.withOpacity(0.2)),
+            border: Border.all(color: Colors.grey.withValues(alpha: 0.2)),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.05),
+                color: Colors.black.withValues(alpha: 0.05),
                 blurRadius: 10,
                 offset: const Offset(0, 4),
               ),
@@ -1479,20 +1610,6 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
         },
         child: Text(label),
       ),
-    );
-  }
-
-  void _showCharacterCustomization() {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return CharacterCustomizationDialog(
-          currentMapping: viewModel.currentMapping,
-          onApply: (nameMap) {
-            viewModel.updateCharacterMapping(nameMap);
-          },
-        );
-      },
     );
   }
 

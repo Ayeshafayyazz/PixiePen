@@ -10,7 +10,14 @@ import 'theme.dart';
 import 'write_story_screen.dart';
 
 class MyStoriesScreen extends StatefulWidget {
-  const MyStoriesScreen({super.key});
+  final String? initialStatus;
+  final String? highlightedStoryId;
+
+  const MyStoriesScreen({
+    super.key,
+    this.initialStatus,
+    this.highlightedStoryId,
+  });
 
   @override
   State<MyStoriesScreen> createState() => _MyStoriesScreenState();
@@ -27,8 +34,19 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(
+      length: 4,
+      vsync: this,
+      initialIndex: _initialTabIndex(widget.initialStatus),
+    );
     _user = FirebaseAuth.instance.currentUser;
+  }
+
+  int _initialTabIndex(String? status) {
+    if (status == 'draft') return 1;
+    if (status == 'pending_parent_approval') return 2;
+    if (status == 'rejected') return 3;
+    return 0;
   }
 
   @override
@@ -57,6 +75,17 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
         backgroundColor: kAppPrimary,
         foregroundColor: Colors.white,
         centerTitle: true,
+        leading: IconButton(
+          tooltip: 'Back to Community',
+          onPressed: () {
+            Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(builder: (_) => const CommunityScreen()),
+              (route) => false,
+            );
+          },
+          icon: const Icon(Icons.arrow_back),
+        ),
         title: const Text(
           'My Stories',
           style: TextStyle(fontWeight: FontWeight.w800),
@@ -97,10 +126,15 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
 
           final published =
               stories.where((story) => story.status == 'published').toList();
-          final drafts =
-              stories.where((story) => story.status == 'draft').toList();
+          final drafts = stories
+              .where((story) =>
+                  story.status == 'draft' && story.approvalStatus != 'rejected')
+              .toList();
           final pending = stories
               .where((story) => story.status == 'pending_parent_approval')
+              .toList();
+          final rejected = stories
+              .where((story) => story.approvalStatus == 'rejected')
               .toList();
           final totalLikes =
               stories.fold(0, (total, story) => total + story.likes);
@@ -134,6 +168,7 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
                     Tab(text: 'Published (${published.length})'),
                     Tab(text: 'Drafts (${drafts.length})'),
                     Tab(text: 'Pending (${pending.length})'),
+                    Tab(text: 'Sent Back (${rejected.length})'),
                   ],
                 ),
               ),
@@ -149,6 +184,7 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
                       onPublish: _publishStory,
                       onMakeEbook: _openEbookCreator,
                       onDelete: _deleteStory,
+                      highlightedStoryId: widget.highlightedStoryId,
                     ),
                     _StoryList(
                       status: 'draft',
@@ -158,6 +194,7 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
                       onPublish: _publishStory,
                       onMakeEbook: _openEbookCreator,
                       onDelete: _deleteStory,
+                      highlightedStoryId: widget.highlightedStoryId,
                     ),
                     _StoryList(
                       status: 'pending_parent_approval',
@@ -167,6 +204,17 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
                       onPublish: _publishStory,
                       onMakeEbook: _openEbookCreator,
                       onDelete: _deleteStory,
+                      highlightedStoryId: widget.highlightedStoryId,
+                    ),
+                    _StoryList(
+                      status: 'rejected',
+                      stories: rejected,
+                      onOpen: _openStory,
+                      onEdit: _editStory,
+                      onPublish: _publishStory,
+                      onMakeEbook: _openEbookCreator,
+                      onDelete: _deleteStory,
+                      highlightedStoryId: widget.highlightedStoryId,
                     ),
                   ],
                 ),
@@ -208,9 +256,34 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
       return;
     }
 
+    final user = _user;
+    if (user == null) return;
+
+    final userDoc = await _db.collection('users').doc(user.uid).get();
+    final userData = userDoc.data() ?? {};
+    final role = (userData['role'] as String?) ?? 'child';
+    final isChild = role != 'parent';
+    final parentEmail =
+        (userData['parentEmail'] as String?)?.trim().toLowerCase();
+
+    if (isChild && (parentEmail == null || parentEmail.isEmpty)) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Please add your parent Gmail in Edit Profile before publishing.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final nextStatus = isChild ? 'pending_parent_approval' : 'published';
     await _db.collection('stories').doc(story.id).set({
-      'status': 'published',
-      'isPublish': true,
+      'status': nextStatus,
+      'isPublish': nextStatus == 'published',
+      'parentEmail': isChild ? parentEmail : null,
+      'approvalStatus': isChild ? 'pending' : 'approved',
       'moderation': {
         'isSafe': true,
         'flagReason': null,
@@ -218,10 +291,52 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
 
+    if (isChild) {
+      await _notifyParentForApproval(
+        storyId: story.id,
+        title: story.title,
+        authorName: story.authorName,
+        parentEmail: parentEmail!,
+      );
+    }
+
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('${story.title} published')),
+      SnackBar(
+        content: Text(
+          isChild
+              ? '${story.title} sent to your parent for approval.'
+              : '${story.title} published',
+        ),
+      ),
     );
+  }
+
+  Future<void> _notifyParentForApproval({
+    required String storyId,
+    required String title,
+    required String authorName,
+    required String parentEmail,
+  }) async {
+    final parentSnap = await _db
+        .collection('users')
+        .where('email', isEqualTo: parentEmail.trim().toLowerCase())
+        .limit(1)
+        .get();
+
+    if (parentSnap.docs.isEmpty) return;
+
+    await _db.collection('notifications').add({
+      'toUserId': parentSnap.docs.first.id,
+      'fromUserId': _user?.uid,
+      'fromUserName': authorName,
+      'type': 'parent_approval',
+      'storyId': storyId,
+      'storyTitle': title,
+      'message': '$authorName wants to publish "$title"',
+      'isRead': false,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
   }
 
   void _openStory(_StoryDashboardItem story) {
@@ -448,6 +563,7 @@ class _StoryList extends StatelessWidget {
   final ValueChanged<_StoryDashboardItem> onPublish;
   final VoidCallback onMakeEbook;
   final ValueChanged<_StoryDashboardItem> onDelete;
+  final String? highlightedStoryId;
 
   const _StoryList({
     required this.status,
@@ -457,6 +573,7 @@ class _StoryList extends StatelessWidget {
     required this.onPublish,
     required this.onMakeEbook,
     required this.onDelete,
+    required this.highlightedStoryId,
   });
 
   @override
@@ -478,6 +595,7 @@ class _StoryList extends StatelessWidget {
           onPublish: story.status == 'draft' ? () => onPublish(story) : null,
           onMakeEbook: onMakeEbook,
           onDelete: () => onDelete(story),
+          highlighted: story.id == highlightedStoryId,
         );
       },
     );
@@ -493,6 +611,7 @@ class _EmptyStoriesState extends StatelessWidget {
   Widget build(BuildContext context) {
     final isPublished = status == 'published';
     final isPending = status == 'pending_parent_approval';
+    final isRejected = status == 'rejected';
 
     return Center(
       child: Padding(
@@ -505,7 +624,9 @@ class _EmptyStoriesState extends StatelessWidget {
                   ? Icons.auto_stories
                   : isPending
                       ? Icons.hourglass_empty
-                      : Icons.edit_note,
+                      : isRejected
+                          ? Icons.assignment_return
+                          : Icons.edit_note,
               color: Colors.grey.shade500,
               size: 64,
             ),
@@ -515,7 +636,9 @@ class _EmptyStoriesState extends StatelessWidget {
                   ? 'No published stories yet'
                   : isPending
                       ? 'No stories waiting for approval'
-                      : 'No drafts yet',
+                      : isRejected
+                          ? 'No stories sent back'
+                          : 'No drafts yet',
               textAlign: TextAlign.center,
               style: const TextStyle(
                 fontSize: 18,
@@ -529,7 +652,9 @@ class _EmptyStoriesState extends StatelessWidget {
                   ? 'Published stories appear here with likes, comments, and eBook options.'
                   : isPending
                       ? 'Stories sent to your parent for approval appear here.'
-                      : 'Drafts appear here so you can edit, publish, or prepare them for an eBook.',
+                      : isRejected
+                          ? 'Stories your parent sent back for editing appear here.'
+                          : 'Drafts appear here so you can edit, publish, or prepare them for an eBook.',
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.grey.shade700, height: 1.35),
             ),
@@ -547,6 +672,7 @@ class _StoryManagementCard extends StatelessWidget {
   final VoidCallback? onPublish;
   final VoidCallback onMakeEbook;
   final VoidCallback onDelete;
+  final bool highlighted;
 
   const _StoryManagementCard({
     required this.story,
@@ -555,6 +681,7 @@ class _StoryManagementCard extends StatelessWidget {
     required this.onPublish,
     required this.onMakeEbook,
     required this.onDelete,
+    required this.highlighted,
   });
 
   @override
@@ -563,7 +690,10 @@ class _StoryManagementCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFE2D9F3)),
+        border: Border.all(
+          color: highlighted ? kAppPrimary : const Color(0xFFE2D9F3),
+          width: highlighted ? 2 : 1,
+        ),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.05),
@@ -591,7 +721,10 @@ class _StoryManagementCard extends StatelessWidget {
                       children: [
                         Row(
                           children: [
-                            _StatusChip(status: story.status),
+                            _StatusChip(
+                              status: story.status,
+                              approvalStatus: story.approvalStatus,
+                            ),
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
@@ -625,6 +758,17 @@ class _StoryManagementCard extends StatelessWidget {
                           style: TextStyle(
                             color: Colors.grey.shade700,
                             height: 1.35,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          story.approvalMessage,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: story.approvalColor,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
                       ],
@@ -726,18 +870,25 @@ class _StoryCover extends StatelessWidget {
 
 class _StatusChip extends StatelessWidget {
   final String status;
+  final String approvalStatus;
 
-  const _StatusChip({required this.status});
+  const _StatusChip({
+    required this.status,
+    required this.approvalStatus,
+  });
 
   @override
   Widget build(BuildContext context) {
     final isPublished = status == 'published';
     final isPending = status == 'pending_parent_approval';
+    final isRejected = approvalStatus == 'rejected';
     final color = isPublished
         ? Colors.green.shade700
         : isPending
             ? Colors.blue.shade700
-            : Colors.orange.shade800;
+            : isRejected
+                ? Colors.orange.shade800
+                : Colors.orange.shade800;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -750,7 +901,9 @@ class _StatusChip extends StatelessWidget {
             ? 'Published'
             : isPending
                 ? 'Pending'
-                : 'Draft',
+                : isRejected
+                    ? 'Sent Back'
+                    : 'Draft',
         style: TextStyle(
           color: color,
           fontSize: 11,
@@ -834,6 +987,7 @@ class _StoryDashboardItem {
   final String authorName;
   final String handle;
   final String status;
+  final String approvalStatus;
   final String? coverUrl;
   final int wordCount;
   final int likes;
@@ -849,6 +1003,7 @@ class _StoryDashboardItem {
     required this.authorName,
     required this.handle,
     required this.status,
+    required this.approvalStatus,
     required this.coverUrl,
     required this.wordCount,
     required this.likes,
@@ -878,6 +1033,7 @@ class _StoryDashboardItem {
       handle: (data['handle'] as String?) ??
           authorName.replaceAll(' ', '').toLowerCase(),
       status: _readStatus(data['status']),
+      approvalStatus: (data['approvalStatus'] as String?) ?? 'not_required',
       coverUrl: data['coverUrl'] as String?,
       wordCount: _readInt(data['wordCount'], fallback: _wordCount(body)),
       likes: _readInt(data['likes']),
@@ -897,6 +1053,24 @@ class _StoryDashboardItem {
   String get updatedLabel {
     final date = updatedAt;
     return '${date.month}/${date.day}/${date.year}';
+  }
+
+  String get approvalMessage {
+    if (status == 'published') return 'Published in Community';
+    if (status == 'pending_parent_approval') {
+      return 'Waiting for parent approval';
+    }
+    if (approvalStatus == 'rejected') {
+      return 'Sent back for editing';
+    }
+    return 'Draft saved';
+  }
+
+  Color get approvalColor {
+    if (status == 'published') return Colors.green.shade700;
+    if (status == 'pending_parent_approval') return Colors.blue.shade700;
+    if (approvalStatus == 'rejected') return Colors.orange.shade800;
+    return Colors.grey.shade700;
   }
 
   StoryPost toPost({required String userId}) {
