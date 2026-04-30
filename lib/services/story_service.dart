@@ -11,8 +11,10 @@ class StoryService {
   Future<void> toggleLike({
     required String storyId,
     required String userId,
+    String userName = 'User',
   }) async {
     final ref = _db.collection('stories').doc(storyId);
+    final notificationRef = _db.collection('notifications').doc();
 
     await _db.runTransaction((tx) async {
       final snap = await tx.get(ref);
@@ -21,6 +23,8 @@ class StoryService {
 
       final List likedBy = List.from(data['likedBy'] ?? []);
       int likes = (data['likes'] ?? 0);
+      final ownerId = data['authorId'] as String?;
+      final title = (data['title'] as String?) ?? 'your story';
 
       if (likedBy.contains(userId)) {
         likedBy.remove(userId);
@@ -28,6 +32,20 @@ class StoryService {
       } else {
         likedBy.add(userId);
         likes = likes + 1;
+
+        if (ownerId != null && ownerId != userId) {
+          tx.set(notificationRef, {
+            'toUserId': ownerId,
+            'fromUserId': userId,
+            'fromUserName': userName,
+            'type': 'like',
+            'storyId': storyId,
+            'storyTitle': title,
+            'message': '$userName liked "$title"',
+            'isRead': false,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+        }
       }
 
       tx.set(
@@ -57,8 +75,14 @@ class StoryService {
     final storyRef = _db.collection('stories').doc(storyId);
 
     final commentRef = storyRef.collection('comments').doc();
+    final notificationRef = _db.collection('notifications').doc();
 
     await _db.runTransaction((tx) async {
+      final storySnap = await tx.get(storyRef);
+      final storyData = storySnap.data() ?? {};
+      final ownerId = storyData['authorId'] as String?;
+      final title = (storyData['title'] as String?) ?? 'your story';
+
       tx.set(commentRef, {
         'userId': userId,
         'userName': userName,
@@ -76,6 +100,20 @@ class StoryService {
             'comments': FieldValue.increment(1),
           },
           SetOptions(merge: true));
+
+      if (ownerId != null && ownerId != userId) {
+        tx.set(notificationRef, {
+          'toUserId': ownerId,
+          'fromUserId': userId,
+          'fromUserName': userName,
+          'type': 'comment',
+          'storyId': storyId,
+          'storyTitle': title,
+          'message': '$userName commented on "$title"',
+          'isRead': false,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
     });
   }
 

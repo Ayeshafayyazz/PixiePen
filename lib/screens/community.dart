@@ -19,8 +19,10 @@ class StoryService {
   Future<void> toggleLike({
     required String storyId,
     required String userId,
+    required String userName,
   }) async {
     final ref = _db.collection('stories').doc(storyId);
+    final notificationRef = _db.collection('notifications').doc();
 
     await _db.runTransaction((tx) async {
       final snap = await tx.get(ref);
@@ -28,6 +30,8 @@ class StoryService {
 
       final List likedBy = List.from(data['likedBy'] ?? []);
       int likes = (data['likes'] ?? 0);
+      final ownerId = data['authorId'] as String?;
+      final title = (data['title'] as String?) ?? 'your story';
 
       if (likedBy.contains(userId)) {
         likedBy.remove(userId);
@@ -35,6 +39,20 @@ class StoryService {
       } else {
         likedBy.add(userId);
         likes++;
+
+        if (ownerId != null && ownerId != userId) {
+          tx.set(notificationRef, {
+            'toUserId': ownerId,
+            'fromUserId': userId,
+            'fromUserName': userName,
+            'type': 'like',
+            'storyId': storyId,
+            'storyTitle': title,
+            'message': '$userName liked "$title"',
+            'isRead': false,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+        }
       }
 
       tx.set(
@@ -60,8 +78,14 @@ class StoryService {
 
     final storyRef = _db.collection('stories').doc(storyId);
     final commentRef = storyRef.collection('comments').doc();
+    final notificationRef = _db.collection('notifications').doc();
 
     await _db.runTransaction((tx) async {
+      final storySnap = await tx.get(storyRef);
+      final storyData = storySnap.data() ?? {};
+      final ownerId = storyData['authorId'] as String?;
+      final title = (storyData['title'] as String?) ?? 'your story';
+
       tx.set(commentRef, {
         'userId': userId,
         'userName': userName,
@@ -79,6 +103,20 @@ class StoryService {
             'comments': FieldValue.increment(1),
           },
           SetOptions(merge: true));
+
+      if (ownerId != null && ownerId != userId) {
+        tx.set(notificationRef, {
+          'toUserId': ownerId,
+          'fromUserId': userId,
+          'fromUserName': userName,
+          'type': 'comment',
+          'storyId': storyId,
+          'storyTitle': title,
+          'message': '$userName commented on "$title"',
+          'isRead': false,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
     });
   }
 
@@ -563,6 +601,9 @@ class _CommunityScreenState extends State<CommunityScreen> {
         backgroundColor: const Color(0xFF7B1FA2),
         title: const _BrandTitle(),
         centerTitle: true,
+        actions: [
+          _NotificationBell(userId: _userId),
+        ],
       ),
       body: RefreshIndicator(
         color: Colors.purple,
@@ -637,6 +678,11 @@ class _CommunityScreenState extends State<CommunityScreen> {
                       await _service.toggleLike(
                         storyId: storyId,
                         userId: _userId,
+                        userName: _userName.isEmpty
+                            ? (_user?.displayName ??
+                                _user?.email?.split('@').first ??
+                                'User')
+                            : _userName,
                       );
                     }
                   },
@@ -854,6 +900,255 @@ class _BrandTitle extends StatelessWidget {
             color: Colors.white,
           ),
     );
+  }
+}
+
+class _NotificationBell extends StatelessWidget {
+  final String userId;
+
+  const _NotificationBell({required this.userId});
+
+  @override
+  Widget build(BuildContext context) {
+    if (userId.isEmpty) {
+      return const IconButton(
+        tooltip: 'Notifications',
+        onPressed: null,
+        icon: Icon(Icons.notifications_none, color: Colors.white),
+      );
+    }
+
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('notifications')
+          .where('toUserId', isEqualTo: userId)
+          .limit(50)
+          .snapshots(),
+      builder: (context, snapshot) {
+        final docs = snapshot.data?.docs ?? [];
+        final unreadCount = docs
+            .where((doc) => doc.data()['isRead'] != true)
+            .length
+            .clamp(0, 99);
+
+        return IconButton(
+          tooltip: 'Notifications',
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => NotificationScreen(userId: userId),
+              ),
+            );
+          },
+          icon: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              const Icon(Icons.notifications_none, color: Colors.white),
+              if (unreadCount > 0)
+                Positioned(
+                  right: -6,
+                  top: -6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.redAccent,
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                    constraints: const BoxConstraints(minWidth: 18),
+                    child: Text(
+                      '$unreadCount',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class NotificationScreen extends StatefulWidget {
+  final String userId;
+
+  const NotificationScreen({super.key, required this.userId});
+
+  @override
+  State<NotificationScreen> createState() => _NotificationScreenState();
+}
+
+class _NotificationScreenState extends State<NotificationScreen> {
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  bool _markedRead = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _markAllRead());
+  }
+
+  Future<void> _markAllRead() async {
+    if (_markedRead) return;
+    _markedRead = true;
+
+    final snapshot = await _db
+        .collection('notifications')
+        .where('toUserId', isEqualTo: widget.userId)
+        .get();
+
+    final batch = _db.batch();
+    var hasUpdates = false;
+
+    for (final doc in snapshot.docs) {
+      if (doc.data()['isRead'] != true) {
+        batch.update(doc.reference, {'isRead': true});
+        hasUpdates = true;
+      }
+    }
+
+    if (hasUpdates) {
+      await batch.commit();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF9F7FF),
+      appBar: AppBar(
+        backgroundColor: kAppPrimary,
+        foregroundColor: Colors.white,
+        title: const Text('Notifications'),
+      ),
+      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: _db
+            .collection('notifications')
+            .where('toUserId', isEqualTo: widget.userId)
+            .limit(50)
+            .snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(
+              child: CircularProgressIndicator(color: kAppPrimary),
+            );
+          }
+
+          final docs = (snapshot.data?.docs ?? []).toList()
+            ..sort((a, b) {
+              final aDate = _readDate(a.data()['createdAt']);
+              final bDate = _readDate(b.data()['createdAt']);
+              return bDate.compareTo(aDate);
+            });
+
+          if (docs.isEmpty) {
+            return const Center(
+              child: Text(
+                'No notifications yet',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+            );
+          }
+
+          return ListView.separated(
+            padding: const EdgeInsets.all(16),
+            itemCount: docs.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 10),
+            itemBuilder: (context, index) {
+              final data = docs[index].data();
+              final type = data['type'] as String? ?? '';
+              final isRead = data['isRead'] == true;
+              final message = data['message'] as String? ??
+                  (type == 'comment'
+                      ? 'Someone commented on your story'
+                      : 'Someone liked your story');
+
+              return Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: isRead
+                        ? const Color(0xFFE2D9F3)
+                        : kAppPrimary.withValues(alpha: 0.45),
+                  ),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    CircleAvatar(
+                      backgroundColor:
+                          type == 'comment' ? kAppPrimary : Colors.redAccent,
+                      child: Icon(
+                        type == 'comment'
+                            ? Icons.chat_bubble_outline
+                            : Icons.favorite,
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            message,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              color: Colors.black87,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            _formatDate(data['createdAt']),
+                            style: TextStyle(
+                              color: Colors.grey.shade600,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (!isRead)
+                      Container(
+                        width: 9,
+                        height: 9,
+                        decoration: const BoxDecoration(
+                          color: kAppPrimary,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  static DateTime _readDate(dynamic value) {
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    return DateTime.fromMillisecondsSinceEpoch(0);
+  }
+
+  static String _formatDate(dynamic value) {
+    final date = _readDate(value);
+    if (date.millisecondsSinceEpoch == 0) return 'Just now';
+    return '${date.month}/${date.day}/${date.year}';
   }
 }
 

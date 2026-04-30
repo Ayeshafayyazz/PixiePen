@@ -7,10 +7,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'badge_screen.dart';
-import 'my_stories_screen.dart';
 import 'write_story_screen.dart';
 import 'community.dart';
-import 'ebook_screen.dart';
 import 'theme.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -96,12 +94,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
           backgroundColor: Colors.transparent,
           elevation: 0,
           iconTheme: const IconThemeData(color: Colors.white),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.logout),
-              onPressed: _logout,
-            ),
-          ],
         ),
         extendBodyBehindAppBar: true,
         body: Column(
@@ -479,53 +471,206 @@ class _ProfileScreenState extends State<ProfileScreen> {
               );
             },
           ),
-          _buildDrawerItem(Icons.book, "My Stories", () {
-            Navigator.pop(context);
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const MyStoriesScreen()),
-            );
-          }),
-          _buildDrawerItem(Icons.edit_note, "Write Story", () {
-            Navigator.pop(context);
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const WriteStoryScreen()),
-            );
-          }),
-          _buildDrawerItem(Icons.people, "Community", () {
-            Navigator.pop(context);
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const CommunityScreen()),
-            );
-          }),
-          _buildDrawerItem(Icons.menu_book, "Ebooks", () {
-            Navigator.pop(context);
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const EbookScreen()),
-            );
-          }),
-          const Spacer(),
-          _buildDrawerItem(Icons.settings, "Settings", () {
-            Navigator.pop(context);
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const SettingsScreen()),
-            );
-          }),
+          Expanded(
+            child: ListView(
+              padding: EdgeInsets.zero,
+              children: [
+                _buildDrawerSectionTitle("Account"),
+                _buildDrawerItem(Icons.emoji_events, "Badges", () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const BadgeScreen()),
+                  );
+                }),
+                _buildDrawerItem(Icons.settings, "Settings", () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                  );
+                }),
+                _buildDrawerSectionTitle("Support"),
+                _buildDrawerItem(Icons.help_outline, "Help Guide", () {
+                  _openInfoPage(
+                    context,
+                    title: "Help Guide",
+                    icon: Icons.help_outline,
+                    sections: const [
+                      _InfoSection(
+                        title: "Write",
+                        body:
+                            "Use Write to create a story title, body, and cover image.",
+                      ),
+                      _InfoSection(
+                        title: "Publish",
+                        body:
+                            "Drafts stay private until you publish them. Published stories appear in Community.",
+                      ),
+                      _InfoSection(
+                        title: "Badges",
+                        body:
+                            "Earn badges by writing stories and collecting likes from readers.",
+                      ),
+                      _InfoSection(
+                        title: "E-Books",
+                        body:
+                            "Turn one or more published stories into an eBook from the E-Books area.",
+                      ),
+                    ],
+                  );
+                }),
+                _buildDrawerItem(Icons.family_restroom, "Parent Info", () {
+                  _openInfoPage(
+                    context,
+                    title: "Parent Info",
+                    icon: Icons.family_restroom,
+                    sections: const [
+                      _InfoSection(
+                        title: "Creative Writing",
+                        body:
+                            "PixiePen is designed to help kids practice storytelling, reading, and imagination.",
+                      ),
+                      _InfoSection(
+                        title: "Content Safety",
+                        body:
+                            "Stories and comments are checked with local rule-based moderation before saving.",
+                      ),
+                      _InfoSection(
+                        title: "Guidance",
+                        body:
+                            "Children should avoid sharing phone numbers, emails, addresses, or private details.",
+                      ),
+                    ],
+                  );
+                }),
+                _buildDrawerItem(
+                  Icons.verified_user_outlined,
+                  "Privacy & Safety",
+                  () {
+                    _openInfoPage(
+                      context,
+                      title: "Privacy & Safety",
+                      icon: Icons.verified_user_outlined,
+                      sections: const [
+                        _InfoSection(
+                          title: "Safe Words",
+                          body:
+                              "The app blocks unsafe words, bullying terms, violent terms, and drug or alcohol references.",
+                        ),
+                        _InfoSection(
+                          title: "Personal Information",
+                          body:
+                              "Phone numbers and email addresses are blocked before stories or comments are saved.",
+                        ),
+                        _InfoSection(
+                          title: "Community",
+                          body:
+                              "Published stories should be kind, age-appropriate, and safe for kids.",
+                        ),
+                      ],
+                    );
+                  },
+                ),
+                _buildDrawerItem(Icons.feedback_outlined, "Feedback", () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const FeedbackScreen()),
+                  );
+                }),
+                _buildDrawerItem(Icons.info_outline, "About PixiePen", () {
+                  _openInfoPage(
+                    context,
+                    title: "About PixiePen",
+                    icon: Icons.auto_stories,
+                    sections: const [
+                      _InfoSection(
+                        title: "PixiePen",
+                        body:
+                            "A kids storytelling app for writing, sharing, earning badges, and creating eBooks.",
+                      ),
+                      _InfoSection(
+                        title: "Version",
+                        body: "1.0.0",
+                      ),
+                    ],
+                  );
+                }),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          _buildDrawerItem(
+            Icons.logout,
+            "Logout",
+            () {
+              Navigator.pop(context);
+              _logout();
+            },
+            color: Colors.redAccent,
+          ),
           const SizedBox(height: 16),
         ],
       ),
     );
   }
 
-  Widget _buildDrawerItem(IconData icon, String title, VoidCallback onTap) {
+  Widget _buildDrawerSectionTitle(String title) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Text(
+          title,
+          style: TextStyle(
+            color: Colors.grey.shade600,
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.4,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDrawerItem(
+    IconData icon,
+    String title,
+    VoidCallback onTap, {
+    Color? color,
+  }) {
+    final itemColor = color ?? kAppPrimary;
+
     return ListTile(
-      leading: Icon(icon, color: kAppPrimary),
-      title: Text(title),
+      leading: Icon(icon, color: itemColor),
+      title: Text(
+        title,
+        style: TextStyle(
+          color: color ?? Colors.black87,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
       onTap: onTap,
+    );
+  }
+
+  void _openInfoPage(
+    BuildContext context, {
+    required String title,
+    required IconData icon,
+    required List<_InfoSection> sections,
+  }) {
+    Navigator.pop(context);
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _InfoPage(
+          title: title,
+          icon: icon,
+          sections: sections,
+        ),
+      ),
     );
   }
 
@@ -546,6 +691,301 @@ class _ProfileScreenState extends State<ProfileScreen> {
 /// =============================================================================
 /// EDIT PROFILE SCREEN (saves to both Auth and users/{uid}.username)
 /// =============================================================================
+
+class _InfoPage extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final List<_InfoSection> sections;
+
+  const _InfoPage({
+    required this.title,
+    required this.icon,
+    required this.sections,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF9F7FF),
+      appBar: AppBar(
+        title: Text(title, style: const TextStyle(color: Colors.white)),
+        backgroundColor: kAppPrimary,
+        iconTheme: const IconThemeData(color: Colors.white),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFFE2D9F3)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: kAppPrimary.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(icon, color: kAppPrimary),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
+                      color: Colors.black87,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          ...sections.map(
+            (section) => Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFE2D9F3)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    section.title,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w900,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    section.body,
+                    style: TextStyle(
+                      color: Colors.grey.shade700,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoSection {
+  final String title;
+  final String body;
+
+  const _InfoSection({
+    required this.title,
+    required this.body,
+  });
+}
+
+class FeedbackScreen extends StatefulWidget {
+  const FeedbackScreen({super.key});
+
+  @override
+  State<FeedbackScreen> createState() => _FeedbackScreenState();
+}
+
+class _FeedbackScreenState extends State<FeedbackScreen> {
+  final TextEditingController _messageController = TextEditingController();
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final List<String> _categories = const [
+    'I have an idea',
+    'Something is not working',
+    'I need help',
+    'Something feels unsafe',
+    'Other',
+  ];
+
+  String _category = 'I have an idea';
+  bool _isSubmitting = false;
+
+  @override
+  void dispose() {
+    _messageController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submitFeedback() async {
+    final message = _messageController.text.trim();
+
+    if (message.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please write your feedback first.')),
+      );
+      return;
+    }
+
+    setState(() => _isSubmitting = true);
+
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      await _db.collection('feedback').add({
+        'userId': user?.uid,
+        'userEmail': user?.email,
+        'category': _category,
+        'message': message,
+        'status': 'new',
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      if (!mounted) return;
+      _messageController.clear();
+      setState(() => _category = 'I have an idea');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Thanks! Your feedback was sent.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not send feedback: $error')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF9F7FF),
+      appBar: AppBar(
+        title: const Text('Feedback', style: TextStyle(color: Colors.white)),
+        backgroundColor: kAppPrimary,
+        iconTheme: const IconThemeData(color: Colors.white),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF7E0),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFFFFD77A)),
+            ),
+            child: const Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.family_restroom, color: Color(0xFF8A5A00)),
+                SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Ask a parent, guardian, or teacher before sending feedback.',
+                    style: TextStyle(
+                      color: Color(0xFF6B4700),
+                      fontWeight: FontWeight.w700,
+                      height: 1.3,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFFE2D9F3)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'What would you like to tell us?',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.black87,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                DropdownButtonFormField<String>(
+                  initialValue: _category,
+                  decoration: const InputDecoration(
+                    labelText: 'Category',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: _categories
+                      .map(
+                        (category) => DropdownMenuItem(
+                          value: category,
+                          child: Text(category),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: _isSubmitting
+                      ? null
+                      : (value) {
+                          if (value != null) {
+                            setState(() => _category = value);
+                          }
+                        },
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _messageController,
+                  minLines: 5,
+                  maxLines: 8,
+                  enabled: !_isSubmitting,
+                  decoration: const InputDecoration(
+                    labelText: 'Message',
+                    hintText: 'Write your feedback here...',
+                    alignLabelWithHint: true,
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _isSubmitting ? null : _submitFeedback,
+                    icon: _isSubmitting
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.send),
+                    label: Text(_isSubmitting ? 'Sending...' : 'Send Feedback'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: kAppPrimary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
