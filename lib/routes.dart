@@ -8,7 +8,6 @@ import 'auth/signup_screen.dart';
 import 'screens/community.dart';
 import 'screens/ebook_screen.dart';
 import 'screens/profile_screen.dart';
-import 'screens/write_story_screen.dart';
 
 class AppRoutes {
   static const String splash = '/';
@@ -18,6 +17,7 @@ class AppRoutes {
   static const String community = '/community';
   static const String ebook = '/ebook';
   static const String profile = '/profile';
+  static const String parentApprovals = '/parent-approvals';
   static const String rewards = '/rewards';
   static const String myStories = '/my-stories';
   static const String writeStory = '/write-story';
@@ -32,5 +32,5 @@ final Map<String, WidgetBuilder> appRoutes = {
   AppRoutes.community: (_) => const CommunityScreen(),
   AppRoutes.ebook: (_) => const EbookScreen(),
   AppRoutes.profile: (_) => const ProfileScreen(),
-
+  AppRoutes.parentApprovals: (_) => const ParentApprovalsScreen(),
 };

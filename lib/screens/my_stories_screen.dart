@@ -27,7 +27,7 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     _user = FirebaseAuth.instance.currentUser;
   }
 
@@ -99,6 +99,9 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
               stories.where((story) => story.status == 'published').toList();
           final drafts =
               stories.where((story) => story.status == 'draft').toList();
+          final pending = stories
+              .where((story) => story.status == 'pending_parent_approval')
+              .toList();
           final totalLikes =
               stories.fold(0, (total, story) => total + story.likes);
           final badges = BadgeEngine.getBadges(
@@ -130,6 +133,7 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
                   tabs: [
                     Tab(text: 'Published (${published.length})'),
                     Tab(text: 'Drafts (${drafts.length})'),
+                    Tab(text: 'Pending (${pending.length})'),
                   ],
                 ),
               ),
@@ -149,6 +153,15 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
                     _StoryList(
                       status: 'draft',
                       stories: drafts,
+                      onOpen: _openStory,
+                      onEdit: _editStory,
+                      onPublish: _publishStory,
+                      onMakeEbook: _openEbookCreator,
+                      onDelete: _deleteStory,
+                    ),
+                    _StoryList(
+                      status: 'pending_parent_approval',
+                      stories: pending,
                       onOpen: _openStory,
                       onEdit: _editStory,
                       onPublish: _publishStory,
@@ -479,6 +492,7 @@ class _EmptyStoriesState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isPublished = status == 'published';
+    final isPending = status == 'pending_parent_approval';
 
     return Center(
       child: Padding(
@@ -487,13 +501,21 @@ class _EmptyStoriesState extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
-              isPublished ? Icons.auto_stories : Icons.edit_note,
+              isPublished
+                  ? Icons.auto_stories
+                  : isPending
+                      ? Icons.hourglass_empty
+                      : Icons.edit_note,
               color: Colors.grey.shade500,
               size: 64,
             ),
             const SizedBox(height: 14),
             Text(
-              isPublished ? 'No published stories yet' : 'No drafts yet',
+              isPublished
+                  ? 'No published stories yet'
+                  : isPending
+                      ? 'No stories waiting for approval'
+                      : 'No drafts yet',
               textAlign: TextAlign.center,
               style: const TextStyle(
                 fontSize: 18,
@@ -505,7 +527,9 @@ class _EmptyStoriesState extends StatelessWidget {
             Text(
               isPublished
                   ? 'Published stories appear here with likes, comments, and eBook options.'
-                  : 'Drafts appear here so you can edit, publish, or prepare them for an eBook.',
+                  : isPending
+                      ? 'Stories sent to your parent for approval appear here.'
+                      : 'Drafts appear here so you can edit, publish, or prepare them for an eBook.',
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.grey.shade700, height: 1.35),
             ),
@@ -708,7 +732,12 @@ class _StatusChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isPublished = status == 'published';
-    final color = isPublished ? Colors.green.shade700 : Colors.orange.shade800;
+    final isPending = status == 'pending_parent_approval';
+    final color = isPublished
+        ? Colors.green.shade700
+        : isPending
+            ? Colors.blue.shade700
+            : Colors.orange.shade800;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -717,7 +746,11 @@ class _StatusChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(6),
       ),
       child: Text(
-        isPublished ? 'Published' : 'Draft',
+        isPublished
+            ? 'Published'
+            : isPending
+                ? 'Pending'
+                : 'Draft',
         style: TextStyle(
           color: color,
           fontSize: 11,
@@ -844,8 +877,7 @@ class _StoryDashboardItem {
       authorName: authorName,
       handle: (data['handle'] as String?) ??
           authorName.replaceAll(' ', '').toLowerCase(),
-      status:
-          (data['status'] as String?) == 'published' ? 'published' : 'draft',
+      status: _readStatus(data['status']),
       coverUrl: data['coverUrl'] as String?,
       wordCount: _readInt(data['wordCount'], fallback: _wordCount(body)),
       likes: _readInt(data['likes']),
@@ -903,5 +935,11 @@ class _StoryDashboardItem {
     if (value is DateTime) return value;
     if (fallback != null) return _readDate(fallback);
     return DateTime.fromMillisecondsSinceEpoch(0);
+  }
+
+  static String _readStatus(dynamic value) {
+    if (value == 'published') return 'published';
+    if (value == 'pending_parent_approval') return 'pending_parent_approval';
+    return 'draft';
   }
 }

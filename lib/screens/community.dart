@@ -9,6 +9,12 @@ import 'theme.dart';
 import 'write_story_screen.dart';
 import '../services/content_moderation_service.dart';
 
+DateTime _readTimestamp(dynamic value) {
+  if (value is Timestamp) return value.toDate();
+  if (value is DateTime) return value;
+  return DateTime.fromMillisecondsSinceEpoch(0);
+}
+
 /// =============================================================================
 /// FIRESTORE SERVICE
 /// =============================================================================
@@ -615,14 +621,19 @@ class _CommunityScreenState extends State<CommunityScreen> {
         child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
           stream: FirebaseFirestore.instance
               .collection(_storiesCollection)
-              .orderBy('createdAt', descending: true)
+              .where('status', isEqualTo: 'published')
               .snapshots(),
           builder: (context, snapshot) {
             if (!snapshot.hasData) {
               return const Center(child: CircularProgressIndicator());
             }
 
-            final docs = snapshot.data!.docs;
+            final docs = snapshot.data!.docs.toList()
+              ..sort((a, b) {
+                final aDate = _readTimestamp(a.data()['createdAt']);
+                final bDate = _readTimestamp(b.data()['createdAt']);
+                return bDate.compareTo(aDate);
+              });
 
             if (docs.isEmpty) {
               return const Center(child: Text('No stories yet'));
@@ -1067,10 +1078,10 @@ class _NotificationScreenState extends State<NotificationScreen> {
               final data = docs[index].data();
               final type = data['type'] as String? ?? '';
               final isRead = data['isRead'] == true;
-              final message = data['message'] as String? ??
-                  (type == 'comment'
-                      ? 'Someone commented on your story'
-                      : 'Someone liked your story');
+              final message =
+                  data['message'] as String? ?? _fallbackMessage(type);
+              final icon = _notificationIcon(type);
+              final color = _notificationColor(type);
 
               return Container(
                 padding: const EdgeInsets.all(14),
@@ -1087,12 +1098,9 @@ class _NotificationScreenState extends State<NotificationScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     CircleAvatar(
-                      backgroundColor:
-                          type == 'comment' ? kAppPrimary : Colors.redAccent,
+                      backgroundColor: color,
                       child: Icon(
-                        type == 'comment'
-                            ? Icons.chat_bubble_outline
-                            : Icons.favorite,
+                        icon,
                         color: Colors.white,
                         size: 18,
                       ),
@@ -1149,6 +1157,27 @@ class _NotificationScreenState extends State<NotificationScreen> {
     final date = _readDate(value);
     if (date.millisecondsSinceEpoch == 0) return 'Just now';
     return '${date.month}/${date.day}/${date.year}';
+  }
+
+  static String _fallbackMessage(String type) {
+    if (type == 'comment') return 'Someone commented on your story';
+    if (type == 'parent_approval') return 'A story is waiting for approval';
+    if (type == 'approval_result') return 'Your story approval was updated';
+    return 'Someone liked your story';
+  }
+
+  static IconData _notificationIcon(String type) {
+    if (type == 'comment') return Icons.chat_bubble_outline;
+    if (type == 'parent_approval') return Icons.fact_check_outlined;
+    if (type == 'approval_result') return Icons.verified_outlined;
+    return Icons.favorite;
+  }
+
+  static Color _notificationColor(String type) {
+    if (type == 'comment') return kAppPrimary;
+    if (type == 'parent_approval') return Colors.orange.shade800;
+    if (type == 'approval_result') return Colors.green.shade700;
+    return Colors.redAccent;
   }
 }
 

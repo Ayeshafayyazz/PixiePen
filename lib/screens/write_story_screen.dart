@@ -91,6 +91,34 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
       final user = FirebaseAuth.instance.currentUser;
       final uid = user?.uid;
       final authorName = user?.displayName ?? 'Unknown';
+      final userDoc = uid == null
+          ? null
+          : await FirebaseFirestore.instance.collection('users').doc(uid).get();
+      final userData = userDoc?.data() ?? {};
+      final role = (userData['role'] as String?) ?? 'child';
+      final parentEmail =
+          (userData['parentEmail'] as String?)?.trim().toLowerCase();
+      final isChild = role != 'parent';
+
+      if (publish && isChild && (parentEmail == null || parentEmail.isEmpty)) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Please add your parent Gmail in Edit Profile before publishing.',
+            ),
+          ),
+        );
+        return;
+      }
+
+      final needsParentApproval = publish && isChild;
+      final linkedParentEmail = parentEmail ?? '';
+      final storyStatus = needsParentApproval
+          ? 'pending_parent_approval'
+          : publish
+              ? 'published'
+              : 'draft';
 
       final doc = {
         'title': title,
@@ -102,8 +130,14 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
         'handle': authorName.replaceAll(' ', '').toLowerCase(),
         'likes': 0,
         'comments': 0,
-        'status': publish ? 'published' : 'draft',
-        'isPublish': publish,
+        'status': storyStatus,
+        'isPublish': storyStatus == 'published',
+        'parentEmail': needsParentApproval ? linkedParentEmail : null,
+        'approvalStatus': needsParentApproval
+            ? 'pending'
+            : storyStatus == 'published'
+                ? 'approved'
+                : 'not_required',
         'moderation': {
           'isSafe': true,
           'flagReason': null,
@@ -117,16 +151,35 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
             .collection('stories')
             .doc(widget.storyId)
             .update(doc);
+        if (needsParentApproval) {
+          await _notifyParentForApproval(
+            storyId: widget.storyId!,
+            title: title,
+            authorName: authorName,
+            parentEmail: linkedParentEmail,
+          );
+        }
       } else {
         // Create new story
-        await FirebaseFirestore.instance.collection('stories').add(doc);
+        final storyRef =
+            await FirebaseFirestore.instance.collection('stories').add(doc);
+        if (needsParentApproval) {
+          await _notifyParentForApproval(
+            storyId: storyRef.id,
+            title: title,
+            authorName: authorName,
+            parentEmail: linkedParentEmail,
+          );
+        }
       }
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
             content: Text(publish
-                ? "Your story is now live in Community! 🚀"
+                ? needsParentApproval
+                    ? "Sent to your parent for approval."
+                    : "Your story is now live in Community! 🚀"
                 : "Story saved to Drafts ✅")),
       );
 
@@ -151,6 +204,34 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
         });
       }
     }
+  }
+
+  Future<void> _notifyParentForApproval({
+    required String storyId,
+    required String title,
+    required String authorName,
+    required String parentEmail,
+  }) async {
+    final parentSnap = await FirebaseFirestore.instance
+        .collection('users')
+        .where('email', isEqualTo: parentEmail.trim().toLowerCase())
+        .limit(1)
+        .get();
+
+    if (parentSnap.docs.isEmpty) return;
+
+    final parentId = parentSnap.docs.first.id;
+    await FirebaseFirestore.instance.collection('notifications').add({
+      'toUserId': parentId,
+      'fromUserId': FirebaseAuth.instance.currentUser?.uid,
+      'fromUserName': authorName,
+      'type': 'parent_approval',
+      'storyId': storyId,
+      'storyTitle': title,
+      'message': '$authorName wants to publish "$title"',
+      'isRead': false,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
   }
 
   Future<void> _goToAiGenerator() async {

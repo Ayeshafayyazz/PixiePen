@@ -43,7 +43,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (!snap.exists) {
       await docRef.set({
         'username': fallbackName,
-        'email': _user!.email,
+        'email': _user!.email?.trim().toLowerCase(),
+        'role': 'child',
         'createdAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
     } else {
@@ -52,6 +53,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (username == null || username.isEmpty) {
         await docRef.set({'username': fallbackName}, SetOptions(merge: true));
       }
+      await docRef.set({
+        'email': _user!.email?.trim().toLowerCase(),
+        if (data['role'] == null) 'role': 'child',
+      }, SetOptions(merge: true));
     }
   }
 
@@ -483,6 +488,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     MaterialPageRoute(builder: (_) => const BadgeScreen()),
                   );
                 }),
+                _buildParentApprovalDrawerItem(context),
                 _buildDrawerItem(Icons.settings, "Settings", () {
                   Navigator.pop(context);
                   Navigator.push(
@@ -631,6 +637,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildParentApprovalDrawerItem(BuildContext context) {
+    final user = _user;
+    if (user == null) return const SizedBox.shrink();
+
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: _db.collection('users').doc(user.uid).snapshots(),
+      builder: (context, snapshot) {
+        final role = snapshot.data?.data()?['role'] as String?;
+        if (role != 'parent') return const SizedBox.shrink();
+
+        return _buildDrawerItem(Icons.fact_check_outlined, "Parent Approvals",
+            () {
+          Navigator.pop(context);
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const ParentApprovalsScreen(),
+            ),
+          );
+        });
+      },
     );
   }
 
@@ -793,6 +823,314 @@ class _InfoSection {
     required this.title,
     required this.body,
   });
+}
+
+class ParentApprovalsScreen extends StatelessWidget {
+  const ParentApprovalsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+    final parentEmail = user?.email?.trim().toLowerCase();
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFF9F7FF),
+      appBar: AppBar(
+        title: const Text(
+          'Parent Approvals',
+          style: TextStyle(color: Colors.white),
+        ),
+        backgroundColor: kAppPrimary,
+        iconTheme: const IconThemeData(color: Colors.white),
+        actions: [
+          if (user != null) _ParentNotificationButton(userId: user.uid),
+          IconButton(
+            tooltip: 'Logout',
+            onPressed: () async {
+              await FirebaseAuth.instance.signOut();
+              if (context.mounted) {
+                Navigator.of(context)
+                    .pushNamedAndRemoveUntil('/login', (route) => false);
+              }
+            },
+            icon: const Icon(Icons.logout, color: Colors.white),
+          ),
+        ],
+      ),
+      body: parentEmail == null
+          ? const Center(child: Text('Please log in as a parent.'))
+          : StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: FirebaseFirestore.instance
+                  .collection('stories')
+                  .where('parentEmail', isEqualTo: parentEmail)
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(
+                    child: CircularProgressIndicator(color: kAppPrimary),
+                  );
+                }
+
+                final pending = (snapshot.data?.docs ?? [])
+                    .where(
+                      (doc) =>
+                          doc.data()['status'] == 'pending_parent_approval',
+                    )
+                    .toList()
+                  ..sort((a, b) {
+                    final aDate = _readDate(a.data()['createdAt']);
+                    final bDate = _readDate(b.data()['createdAt']);
+                    return bDate.compareTo(aDate);
+                  });
+
+                if (pending.isEmpty) {
+                  return const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(24),
+                      child: Text(
+                        'No stories waiting for approval.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  );
+                }
+
+                return ListView.separated(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: pending.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 12),
+                  itemBuilder: (context, index) {
+                    final doc = pending[index];
+                    final data = doc.data();
+                    return _ParentApprovalCard(
+                      storyId: doc.id,
+                      title: (data['title'] as String?) ?? 'Untitled',
+                      body: (data['body'] as String?) ?? '',
+                      childId: data['authorId'] as String?,
+                      childName: (data['authorName'] as String?) ?? 'Child',
+                    );
+                  },
+                );
+              },
+            ),
+    );
+  }
+
+  static DateTime _readDate(dynamic value) {
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    return DateTime.fromMillisecondsSinceEpoch(0);
+  }
+}
+
+class _ParentNotificationButton extends StatelessWidget {
+  final String userId;
+
+  const _ParentNotificationButton({required this.userId});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('notifications')
+          .where('toUserId', isEqualTo: userId)
+          .limit(50)
+          .snapshots(),
+      builder: (context, snapshot) {
+        final unreadCount = (snapshot.data?.docs ?? [])
+            .where((doc) => doc.data()['isRead'] != true)
+            .length
+            .clamp(0, 99);
+
+        return IconButton(
+          tooltip: 'Notifications',
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => NotificationScreen(userId: userId),
+              ),
+            );
+          },
+          icon: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              const Icon(Icons.notifications_none, color: Colors.white),
+              if (unreadCount > 0)
+                Positioned(
+                  right: -6,
+                  top: -6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.redAccent,
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                    constraints: const BoxConstraints(minWidth: 18),
+                    child: Text(
+                      '$unreadCount',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ParentApprovalCard extends StatefulWidget {
+  final String storyId;
+  final String title;
+  final String body;
+  final String? childId;
+  final String childName;
+
+  const _ParentApprovalCard({
+    required this.storyId,
+    required this.title,
+    required this.body,
+    required this.childId,
+    required this.childName,
+  });
+
+  @override
+  State<_ParentApprovalCard> createState() => _ParentApprovalCardState();
+}
+
+class _ParentApprovalCardState extends State<_ParentApprovalCard> {
+  bool _isSaving = false;
+
+  Future<void> _review({required bool approved}) async {
+    setState(() => _isSaving = true);
+
+    try {
+      final db = FirebaseFirestore.instance;
+      final parent = FirebaseAuth.instance.currentUser;
+      final storyRef = db.collection('stories').doc(widget.storyId);
+
+      await storyRef.set({
+        'status': approved ? 'published' : 'draft',
+        'isPublish': approved,
+        'approvalStatus': approved ? 'approved' : 'rejected',
+        'parentApproval': {
+          'status': approved ? 'approved' : 'rejected',
+          'reviewedAt': FieldValue.serverTimestamp(),
+          'reviewedBy': parent?.uid,
+        },
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      final childId = widget.childId;
+      if (childId != null && childId.isNotEmpty) {
+        await db.collection('notifications').add({
+          'toUserId': childId,
+          'fromUserId': parent?.uid,
+          'fromUserName': parent?.displayName ?? 'Parent',
+          'type': 'approval_result',
+          'storyId': widget.storyId,
+          'storyTitle': widget.title,
+          'message': approved
+              ? 'Your story "${widget.title}" was approved and published.'
+              : 'Your story "${widget.title}" was sent back for editing.',
+          'isRead': false,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(approved ? 'Story approved' : 'Story sent back'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not update story: $error')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isSaving = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFE2D9F3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            widget.title,
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+              color: Colors.black87,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'by ${widget.childName}',
+            style: TextStyle(color: Colors.grey.shade700),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            widget.body,
+            maxLines: 5,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(height: 1.35),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _isSaving ? null : () => _review(approved: false),
+                  icon: const Icon(Icons.edit_note),
+                  label: const Text('Send Back'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.orange.shade800,
+                    side: BorderSide(color: Colors.orange.shade300),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: _isSaving ? null : () => _review(approved: true),
+                  icon: const Icon(Icons.check),
+                  label: const Text('Approve'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: kAppPrimary,
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class FeedbackScreen extends StatefulWidget {
@@ -1001,7 +1339,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   final ImagePicker _imagePicker = ImagePicker();
   late final TextEditingController _nameController;
   late final TextEditingController _handleController;
+  late final TextEditingController _parentEmailController;
   String? _photoUrl;
+  String _role = 'child';
   bool _saving = false;
   bool _photoSaving = false;
 
@@ -1011,6 +1351,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _nameController = TextEditingController(text: _user?.displayName ?? "");
     _handleController =
         TextEditingController(text: _user?.email?.split('@').first ?? "");
+    _parentEmailController = TextEditingController();
     _photoUrl = _user?.photoURL;
     _loadProfileFromFirestore();
   }
@@ -1023,6 +1364,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       final username = data['username'] as String?;
       if (username != null && username.trim().isNotEmpty) {
         _nameController.text = username;
+      }
+      final role = data['role'] as String?;
+      final parentEmail = data['parentEmail'] as String?;
+      if (mounted) {
+        setState(() {
+          _role = role == 'parent' ? 'parent' : 'child';
+          _parentEmailController.text = parentEmail ?? '';
+        });
       }
       final photoUrl =
           (data['photoURL'] as String?) ?? (data['profileImageUrl'] as String?);
@@ -1038,6 +1387,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   void dispose() {
     _nameController.dispose();
     _handleController.dispose();
+    _parentEmailController.dispose();
     super.dispose();
   }
 
@@ -1048,6 +1398,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('Name cannot be empty')));
       return;
+    }
+    final parentEmail = _parentEmailController.text.trim().toLowerCase();
+    if (_role == 'child' && parentEmail.isNotEmpty) {
+      final emailRegex = RegExp(r'^[\w-\.]+@gmail\.com$');
+      if (!emailRegex.hasMatch(parentEmail)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Enter a valid parent Gmail')),
+        );
+        return;
+      }
     }
 
     setState(() {
@@ -1061,6 +1421,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       // Update users/{uid}.username (create doc if missing)
       await _db.collection('users').doc(_user!.uid).set({
         'username': newName,
+        'email': _user!.email?.trim().toLowerCase(),
+        'role': _role,
+        'parentEmail': _role == 'child' && parentEmail.isNotEmpty
+            ? parentEmail
+            : FieldValue.delete(),
         'photoURL': _photoUrl,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
@@ -1315,6 +1680,39 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 ),
               ),
             ),
+            const SizedBox(height: 16),
+            SegmentedButton<String>(
+              segments: const [
+                ButtonSegment(
+                  value: 'child',
+                  icon: Icon(Icons.face),
+                  label: Text('Child'),
+                ),
+                ButtonSegment(
+                  value: 'parent',
+                  icon: Icon(Icons.family_restroom),
+                  label: Text('Parent'),
+                ),
+              ],
+              selected: {_role},
+              onSelectionChanged: (selection) {
+                setState(() => _role = selection.first);
+              },
+            ),
+            if (_role == 'child') ...[
+              const SizedBox(height: 16),
+              TextField(
+                controller: _parentEmailController,
+                keyboardType: TextInputType.emailAddress,
+                decoration: InputDecoration(
+                  labelText: "Parent Gmail",
+                  hintText: "parent@gmail.com",
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 24),
             ElevatedButton(
               onPressed: _saving ? null : _saveChanges,
