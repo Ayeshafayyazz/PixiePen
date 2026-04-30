@@ -91,7 +91,7 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
 
             final spokenWords = result.recognizedWords.trim();
             final separator =
-                _textBeforeListening.isEmpty || spokenWords.isEmpty ? '' : ' ';
+            _textBeforeListening.isEmpty || spokenWords.isEmpty ? '' : ' ';
             final updatedText = '$_textBeforeListening$separator$spokenWords';
 
             setState(() {
@@ -222,7 +222,7 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
                         textAlign: TextAlign.start,
                         decoration: InputDecoration(
                           hintText:
-                              "Tap the mic and start speaking, or type here...",
+                          "Tap the mic and start speaking, or type here...",
                           border: InputBorder.none,
                           hintStyle: textTheme.bodyLarge?.copyWith(
                             color: Colors.grey.shade500,
@@ -272,8 +272,8 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
                         boxShadow: [
                           BoxShadow(
                             color:
-                                (isListening ? Colors.redAccent : kAppPrimary)
-                                    .withOpacity(0.4),
+                            (isListening ? Colors.redAccent : kAppPrimary)
+                                .withOpacity(0.4),
                             blurRadius: 20,
                             spreadRadius: 5,
                           ),

@@ -7,6 +7,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'my_stories_screen.dart';
+import 'badge_screen.dart';
 import 'write_story_screen.dart';
 import 'community.dart';
 import 'ebook_screen.dart';
@@ -126,6 +127,43 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
     );
   }
+  Widget _buildBadgeStatCard(String? userId) {
+    if (userId == null) {
+      return _buildStatCard(Icons.emoji_events, "0", "Badges", Colors.orange);
+    }
+
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: _db.collection('users').doc(userId).snapshots(),
+      builder: (context, snapshot) {
+        int count = 0;
+
+        if (snapshot.hasData && snapshot.data!.exists) {
+          final data = snapshot.data!.data() ?? {};
+          final badges = data['badges'];
+
+          if (badges is Map<String, dynamic>) {
+            count = badges.values.where((v) => v == true).length;
+          }
+        }
+
+        return InkWell(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const BadgeScreen()),
+            );
+          },
+          borderRadius: BorderRadius.circular(16),
+          child: _buildStatCard(
+            Icons.emoji_events,
+            count.toString(),
+            "Badges",
+            Colors.orange,
+          ),
+        );
+      },
+    );
+  }
 
   Widget _buildHeader(BuildContext context, String? userId) {
     final String email = _user?.email ?? "no-email@example.com";
@@ -217,18 +255,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
 
           const SizedBox(height: 20),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              _buildLikesStatCard(userId),
-              _buildStatCardStream(
-                icon: Icons.book,
-                label: "Stories",
-                color: Colors.blue,
-                userId: userId,
-                isLikes: false,
-              ),
-            ],
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Flexible(child: _buildLikesStatCard(userId)),
+                const SizedBox(width: 10),
+
+                Flexible(
+                  child: _buildStatCardStream(
+                    icon: Icons.book,
+                    label: "Stories",
+                    color: Colors.blue,
+                    userId: userId,
+                    isLikes: false,
+                  ),
+                ),
+                const SizedBox(width: 10),
+
+                Flexible(child: _buildBadgeStatCard(userId)),
+              ],
+            ),
           ),
           const SizedBox(height: 20),
           ElevatedButton.icon(
@@ -487,91 +535,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 }
 
-/// =============================================================================
-/// BADGE SCREEN
-/// =============================================================================
-
-class BadgeScreen extends StatelessWidget {
-  const BadgeScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final badges = [
-      {"icon": Icons.star, "label": "Rookie"},
-      {"icon": Icons.bolt, "label": "Fast Writer"},
-      {"icon": Icons.favorite, "label": "Loved"},
-      {"icon": Icons.public, "label": "Explorer"},
-    ];
-
-    int unlocked = 3;
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("My Badges", style: TextStyle(color: Colors.white)),
-        backgroundColor: kAppPrimary,
-      ),
-      body: Column(
-        children: [
-          const SizedBox(height: 16),
-          Text(
-            "$unlocked / ${badges.length} Badges Unlocked 🎉",
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: LinearProgressIndicator(
-              value: unlocked / badges.length,
-              minHeight: 8,
-              backgroundColor: Colors.grey[300],
-              valueColor: const AlwaysStoppedAnimation(kAppPrimary),
-            ),
-          ),
-          Expanded(
-            child: GridView.builder(
-              padding: const EdgeInsets.all(16),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                crossAxisSpacing: 16,
-                mainAxisSpacing: 16,
-              ),
-              itemCount: badges.length,
-              itemBuilder: (context, index) {
-                final isUnlocked = index < unlocked;
-                return Opacity(
-                  opacity: isUnlocked ? 1.0 : 0.5,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: isUnlocked ? kAppPrimary : Colors.grey[300],
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          badges[index]['icon'] as IconData,
-                          size: 32,
-                          color: isUnlocked ? Colors.white : Colors.grey,
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          badges[index]['label'] as String,
-                          style: TextStyle(
-                            color: isUnlocked ? Colors.white : Colors.grey,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 /// =============================================================================
 /// EDIT PROFILE SCREEN (saves to both Auth and users/{uid}.username)
