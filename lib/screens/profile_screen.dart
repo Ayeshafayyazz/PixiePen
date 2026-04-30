@@ -6,8 +6,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
-import 'my_stories_screen.dart';
 import 'badge_screen.dart';
+import 'my_stories_screen.dart';
 import 'write_story_screen.dart';
 import 'community.dart';
 import 'ebook_screen.dart';
@@ -127,39 +127,49 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
     );
   }
+
   Widget _buildBadgeStatCard(String? userId) {
     if (userId == null) {
       return _buildStatCard(Icons.emoji_events, "0", "Badges", Colors.orange);
     }
 
-    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-      stream: _db.collection('users').doc(userId).snapshots(),
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: _db
+          .collection('stories')
+          .where('authorId', isEqualTo: userId)
+          .snapshots(),
       builder: (context, snapshot) {
-        int count = 0;
+        int storyCount = 0;
+        int totalLikes = 0;
 
-        if (snapshot.hasData && snapshot.data!.exists) {
-          final data = snapshot.data!.data() ?? {};
-          final badges = data['badges'];
+        if (snapshot.hasData) {
+          final stories = snapshot.data!.docs;
+          storyCount = stories.length;
 
-          if (badges is Map<String, dynamic>) {
-            count = badges.values.where((v) => v == true).length;
+          for (final story in stories) {
+            final data = story.data();
+            final likes = data['likes'];
+            if (likes is int) {
+              totalLikes += likes;
+            } else if (likes is num) {
+              totalLikes += likes.toInt();
+            } else if (likes is String) {
+              totalLikes += int.tryParse(likes) ?? 0;
+            }
           }
         }
 
-        return InkWell(
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const BadgeScreen()),
-            );
-          },
-          borderRadius: BorderRadius.circular(16),
-          child: _buildStatCard(
-            Icons.emoji_events,
-            count.toString(),
-            "Badges",
-            Colors.orange,
-          ),
+        final badges = BadgeEngine.getBadges(
+          storyCount: storyCount,
+          likes: totalLikes,
+        );
+        final count = badges.where((badge) => badge['unlocked'] == true).length;
+
+        return _buildStatCard(
+          Icons.emoji_events,
+          count.toString(),
+          "Badges",
+          Colors.orange,
         );
       },
     );
@@ -262,7 +272,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
               children: [
                 Flexible(child: _buildLikesStatCard(userId)),
                 const SizedBox(width: 10),
-
                 Flexible(
                   child: _buildStatCardStream(
                     icon: Icons.book,
@@ -273,7 +282,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ),
                 const SizedBox(width: 10),
-
                 Flexible(child: _buildBadgeStatCard(userId)),
               ],
             ),
@@ -534,7 +542,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return "https://i.pravatar.cc/150?img=12";
   }
 }
-
 
 /// =============================================================================
 /// EDIT PROFILE SCREEN (saves to both Auth and users/{uid}.username)
