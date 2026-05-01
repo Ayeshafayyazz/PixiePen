@@ -399,11 +399,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
       padding: const EdgeInsets.all(12),
       width: 95,
       decoration: BoxDecoration(
-        color: color.withOpacity(0.9),
+        color: color.withValues(alpha: 0.9),
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: color.withOpacity(0.4),
+            color: color.withValues(alpha: 0.4),
             blurRadius: 8,
             offset: const Offset(0, 4),
           ),
@@ -1123,19 +1123,22 @@ class _ParentApprovalCardState extends State<_ParentApprovalCard> {
 
       final childId = widget.childId;
       if (childId != null && childId.isNotEmpty) {
-        await db.collection('notifications').add({
-          'toUserId': childId,
-          'fromUserId': parent?.uid,
-          'fromUserName': parent?.displayName ?? 'Parent',
-          'type': 'approval_result',
-          'storyId': widget.storyId,
-          'storyTitle': widget.title,
-          'message': approved
-              ? 'Your story "${widget.title}" was approved and published.'
-              : 'Your story "${widget.title}" was sent back for editing.',
-          'isRead': false,
-          'createdAt': FieldValue.serverTimestamp(),
-        });
+        final childSnap = await db.collection('users').doc(childId).get();
+        if (childSnap.data()?['notificationsEnabled'] != false) {
+          await db.collection('notifications').add({
+            'toUserId': childId,
+            'fromUserId': parent?.uid,
+            'fromUserName': parent?.displayName ?? 'Parent',
+            'type': 'approval_result',
+            'storyId': widget.storyId,
+            'storyTitle': widget.title,
+            'message': approved
+                ? 'Your story "${widget.title}" was approved and published.'
+                : 'Your story "${widget.title}" was sent back for editing.',
+            'isRead': false,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+        }
       }
 
       if (!mounted) return;
@@ -1985,7 +1988,11 @@ class _StoriesTabState extends State<_StoriesTab> {
                   children: [
                     Row(
                       children: [
-                        Icon(Icons.favorite, size: 14, color: Colors.red),
+                        const Icon(
+                          Icons.favorite,
+                          size: 14,
+                          color: Colors.red,
+                        ),
                         const SizedBox(width: 4),
                         Text(
                           '${data['likes'] ?? 0}',
@@ -2123,6 +2130,8 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final TextEditingController _passwordController = TextEditingController();
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final User? _user = FirebaseAuth.instance.currentUser;
 
   Future<void> _changePassword() async {
     final newPassword = _passwordController.text.trim();
@@ -2171,6 +2180,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       body: ListView(
         children: [
+          if (_user != null)
+            StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+              stream: _db.collection('users').doc(_user!.uid).snapshots(),
+              builder: (context, snapshot) {
+                final data = snapshot.data?.data() ?? {};
+                final enabled = data['notificationsEnabled'] != false;
+
+                return SwitchListTile(
+                  secondary: const Icon(Icons.notifications_active_outlined),
+                  title: const Text("Notifications"),
+                  subtitle: const Text(
+                    "Get alerts for likes, comments, ratings, and approvals",
+                  ),
+                  value: enabled,
+                  activeThumbColor: kAppPrimary,
+                  onChanged: (value) async {
+                    await _db.collection('users').doc(_user!.uid).set({
+                      'notificationsEnabled': value,
+                      'updatedAt': FieldValue.serverTimestamp(),
+                    }, SetOptions(merge: true));
+                  },
+                );
+              },
+            ),
+          const Divider(),
           ListTile(
             leading: const Icon(Icons.lock),
             title: const Text("Change Password"),

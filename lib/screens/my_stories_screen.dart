@@ -326,6 +326,9 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
 
     if (parentSnap.docs.isEmpty) return;
 
+    final parentData = parentSnap.docs.first.data();
+    if (parentData['notificationsEnabled'] == false) return;
+
     await _db.collection('notifications').add({
       'toUserId': parentSnap.docs.first.id,
       'fromUserId': _user?.uid,
@@ -702,140 +705,136 @@ class _StoryManagementCard extends StatelessWidget {
           ),
         ],
       ),
-      child: InkWell(
-        onTap: onOpen,
-        borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _StoryCover(url: story.coverUrl, seed: story.id),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            _StatusChip(
-                              status: story.status,
-                              approvalStatus: story.approvalStatus,
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                story.updatedLabel,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: Colors.grey.shade600,
-                                  fontSize: 12,
-                                ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _StoryCover(url: story.coverUrl, seed: story.id),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          _StatusChip(
+                            status: story.status,
+                            approvalStatus: story.approvalStatus,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              story.updatedLabel,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: Colors.grey.shade600,
+                                fontSize: 12,
                               ),
                             ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          story.title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.w900,
-                            color: Colors.black87,
                           ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        story.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w900,
+                          color: Colors.black87,
                         ),
-                        const SizedBox(height: 6),
-                        Text(
-                          story.preview,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: Colors.grey.shade700,
-                            height: 1.35,
-                          ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        story.preview,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.grey.shade700,
+                          height: 1.35,
                         ),
-                        const SizedBox(height: 6),
-                        Text(
-                          story.approvalMessage,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: story.approvalColor,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                          ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        story.approvalMessage,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: story.approvalColor,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _EngagementPill(
-                    icon: Icons.notes,
-                    label: '${story.wordCount} words',
-                  ),
-                  _EngagementPill(
-                    icon: Icons.favorite,
-                    label: '${story.likes} likes',
-                  ),
-                  _EngagementPill(
-                    icon: Icons.chat_bubble,
-                    label: '${story.comments} comments',
-                  ),
-                  _EngagementPill(
-                    icon: Icons.star,
-                    label: story.ratingLabel,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _EngagementPill(
+                  icon: Icons.notes,
+                  label: '${story.wordCount} words',
+                ),
+                _EngagementPill(
+                  icon: Icons.favorite,
+                  label: '${story.likes} likes',
+                ),
+                _EngagementPill(
+                  icon: Icons.chat_bubble,
+                  label: '${story.comments} comments',
+                ),
+                _EngagementPill(
+                  icon: Icons.star,
+                  label: story.ratingLabel,
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _ActionButton(
+                  icon: Icons.edit,
+                  label: 'Edit',
+                  onPressed: onEdit,
+                ),
+                if (onPublish != null)
                   _ActionButton(
-                    icon: Icons.edit,
-                    label: 'Edit',
-                    onPressed: onEdit,
-                  ),
-                  if (onPublish != null)
-                    _ActionButton(
-                      icon: Icons.public,
-                      label: 'Publish',
-                      onPressed: onPublish!,
-                    )
-                  else
-                    _ActionButton(
-                      icon: Icons.menu_book,
-                      label: 'Read',
-                      onPressed: onOpen,
-                    ),
+                    icon: Icons.public,
+                    label: 'Publish',
+                    onPressed: onPublish!,
+                  )
+                else
                   _ActionButton(
-                    icon: Icons.auto_stories,
-                    label: 'eBook',
-                    onPressed: onMakeEbook,
+                    icon: Icons.menu_book,
+                    label: 'Read',
+                    onPressed: onOpen,
                   ),
-                  _ActionButton(
-                    icon: Icons.delete_outline,
-                    label: 'Delete',
-                    foreground: Colors.redAccent,
-                    onPressed: onDelete,
-                  ),
-                ],
-              ),
-            ],
-          ),
+                _ActionButton(
+                  icon: Icons.auto_stories,
+                  label: 'eBook',
+                  onPressed: onMakeEbook,
+                ),
+                _ActionButton(
+                  icon: Icons.delete_outline,
+                  label: 'Delete',
+                  foreground: Colors.redAccent,
+                  onPressed: onDelete,
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );

@@ -38,6 +38,10 @@ class StoryService {
       int likes = (data['likes'] ?? 0);
       final ownerId = data['authorId'] as String?;
       final title = (data['title'] as String?) ?? 'your story';
+      DocumentSnapshot<Map<String, dynamic>>? ownerSnap;
+      if (ownerId != null && ownerId != userId) {
+        ownerSnap = await tx.get(_db.collection('users').doc(ownerId));
+      }
 
       if (likedBy.contains(userId)) {
         likedBy.remove(userId);
@@ -46,7 +50,9 @@ class StoryService {
         likedBy.add(userId);
         likes++;
 
-        if (ownerId != null && ownerId != userId) {
+        if (ownerId != null &&
+            ownerId != userId &&
+            _notificationsEnabled(ownerSnap?.data())) {
           tx.set(notificationRef, {
             'toUserId': ownerId,
             'fromUserId': userId,
@@ -91,6 +97,10 @@ class StoryService {
       final storyData = storySnap.data() ?? {};
       final ownerId = storyData['authorId'] as String?;
       final title = (storyData['title'] as String?) ?? 'your story';
+      DocumentSnapshot<Map<String, dynamic>>? ownerSnap;
+      if (ownerId != null && ownerId != userId) {
+        ownerSnap = await tx.get(_db.collection('users').doc(ownerId));
+      }
 
       tx.set(commentRef, {
         'userId': userId,
@@ -110,7 +120,9 @@ class StoryService {
           },
           SetOptions(merge: true));
 
-      if (ownerId != null && ownerId != userId) {
+      if (ownerId != null &&
+          ownerId != userId &&
+          _notificationsEnabled(ownerSnap?.data())) {
         tx.set(notificationRef, {
           'toUserId': ownerId,
           'fromUserId': userId,
@@ -147,6 +159,7 @@ class StoryService {
   Future<void> rateStory({
     required String storyId,
     required String userId,
+    required String userName,
     required int rating,
   }) async {
     if (rating < 1 || rating > 5) {
@@ -155,11 +168,17 @@ class StoryService {
 
     final storyRef = _db.collection('stories').doc(storyId);
     final ratingRef = storyRef.collection('ratings').doc(userId);
+    final notificationRef = _db.collection('notifications').doc();
 
     await _db.runTransaction((tx) async {
       final storySnap = await tx.get(storyRef);
       final storyData = storySnap.data() ?? {};
       final ownerId = storyData['authorId'] as String?;
+      final title = (storyData['title'] as String?) ?? 'your story';
+      DocumentSnapshot<Map<String, dynamic>>? ownerSnap;
+      if (ownerId != null && ownerId != userId) {
+        ownerSnap = await tx.get(_db.collection('users').doc(ownerId));
+      }
 
       if (ownerId == userId) {
         throw StateError('You cannot rate your own story.');
@@ -199,6 +218,22 @@ class StoryService {
         },
         SetOptions(merge: true),
       );
+
+      if (ownerId != null &&
+          ownerId != userId &&
+          _notificationsEnabled(ownerSnap?.data())) {
+        tx.set(notificationRef, {
+          'toUserId': ownerId,
+          'fromUserId': userId,
+          'fromUserName': userName,
+          'type': 'rating',
+          'storyId': storyId,
+          'storyTitle': title,
+          'message': '$userName rated "$title" $rating stars',
+          'isRead': false,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
     });
   }
 
@@ -228,6 +263,10 @@ class StoryService {
     if (value is num) return value.toInt();
     if (value is String) return int.tryParse(value) ?? 0;
     return 0;
+  }
+
+  static bool _notificationsEnabled(Map<String, dynamic>? userData) {
+    return userData?['notificationsEnabled'] != false;
   }
 }
 
@@ -602,6 +641,9 @@ class _CommunityScreenState extends State<CommunityScreen> {
   String _userName = "";
   String _authorSearchQuery = "";
   bool _isSearchingAuthors = false;
+  String? _communityHighlightedStoryId;
+  bool _pendingCommunityHighlightScroll = false;
+  final Map<String, GlobalKey> _communityStoryKeys = {};
   String? _myStoriesInitialStatus;
   String? _myStoriesHighlightedStoryId;
 
@@ -663,7 +705,15 @@ class _CommunityScreenState extends State<CommunityScreen> {
       bottomNavigationBar: BottomNavigationBar(
         type: BottomNavigationBarType.fixed,
         currentIndex: _selectedIndex,
-        onTap: (index) => setState(() => _selectedIndex = index),
+        onTap: (index) {
+          setState(() {
+            _selectedIndex = index;
+            if (index != 0) {
+              _communityHighlightedStoryId = null;
+              _pendingCommunityHighlightScroll = false;
+            }
+          });
+        },
         selectedItemColor: kAppPrimary,
         unselectedItemColor: Colors.grey,
         showUnselectedLabels: true,
@@ -753,6 +803,13 @@ class _CommunityScreenState extends State<CommunityScreen> {
             final docs = publishedDocs
                 .where((doc) => _matchesAuthorSearch(doc.data()))
                 .toList();
+            if (_pendingCommunityHighlightScroll &&
+                _communityHighlightedStoryId != null &&
+                docs.any((doc) => doc.id == _communityHighlightedStoryId)) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                _scrollToCommunityStory(_communityHighlightedStoryId!);
+              });
+            }
 
             return Column(
               children: [
@@ -775,70 +832,85 @@ class _CommunityScreenState extends State<CommunityScreen> {
                   )
                 else
                   Expanded(
-                    child: ListView.builder(
+                    child: ListView(
                       padding: const EdgeInsets.symmetric(vertical: 12),
-                      itemCount: docs.length,
-                      itemBuilder: (context, index) {
-                        final doc = docs[index];
-                        final data = doc.data();
-                        final storyId = doc.id;
+                      children: [
+                        for (final doc in docs)
+                          Builder(builder: (context) {
+                            final data = doc.data();
+                            final storyId = doc.id;
 
-                        final title = (data['title'] as String?) ?? 'Untitled';
-                        final body = (data['body'] as String?) ?? '';
-                        final cover = (data['coverUrl'] as String?);
-                        final author = (data['authorName'] as String?) ??
-                            (data['authorId'] as String?) ??
-                            'Unknown';
-                        final handle = (data['handle'] as String?) ??
-                            (author.replaceAll(' ', '').toLowerCase());
-                        final likes = (data['likes'] as int?) ?? 0;
-                        final comments = (data['comments'] as int?) ?? 0;
-                        final imageUrl = cover != null && cover.isNotEmpty
-                            ? cover
-                            : 'https://picsum.photos/seed/$storyId/600/300';
+                            final title =
+                                (data['title'] as String?) ?? 'Untitled';
+                            final body = (data['body'] as String?) ?? '';
+                            final cover = (data['coverUrl'] as String?);
+                            final author = (data['authorName'] as String?) ??
+                                (data['authorId'] as String?) ??
+                                'Unknown';
+                            final handle = (data['handle'] as String?) ??
+                                (author.replaceAll(' ', '').toLowerCase());
+                            final likes = (data['likes'] as int?) ?? 0;
+                            final comments = (data['comments'] as int?) ?? 0;
+                            final imageUrl = cover != null && cover.isNotEmpty
+                                ? cover
+                                : 'https://picsum.photos/seed/$storyId/600/300';
 
-                        final likedBy = (data['likedBy'] as List?) ?? [];
-                        final likedByMe = likedBy.contains(_userId);
+                            final likedBy = (data['likedBy'] as List?) ?? [];
+                            final likedByMe = likedBy.contains(_userId);
 
-                        final post = StoryPost(
-                          id: storyId,
-                          author: author,
-                          handle: handle,
-                          title: title,
-                          excerpt: body,
-                          likes: likes,
-                          comments: comments,
-                          ratingCount: _readInt(data['ratingCount']),
-                          averageRating: _readDouble(data['averageRating']),
-                          likedByMe: likedByMe,
-                          accent: const Color(0xFF7B1FA2),
-                          imageUrl: imageUrl,
-                        );
+                            final post = StoryPost(
+                              id: storyId,
+                              author: author,
+                              handle: handle,
+                              title: title,
+                              excerpt: body,
+                              likes: likes,
+                              comments: comments,
+                              ratingCount: _readInt(data['ratingCount']),
+                              averageRating: _readDouble(data['averageRating']),
+                              likedByMe: likedByMe,
+                              accent: const Color(0xFF7B1FA2),
+                              imageUrl: imageUrl,
+                            );
 
-                        return StoryCard(
-                          post: post,
-                          service: _service,
-                          userId: _userId.isEmpty ? _user?.uid ?? '' : _userId,
-                          userName: _userName.isEmpty
-                              ? (_user?.displayName ?? 'User')
-                              : _userName,
-                          onLike: () async {
-                            if (_userId.isNotEmpty) {
-                              await _service.toggleLike(
-                                storyId: storyId,
-                                userId: _userId,
+                            return Container(
+                              key: _communityStoryKey(storyId),
+                              child: StoryCard(
+                                post: post,
+                                service: _service,
+                                userId: _userId.isEmpty
+                                    ? _user?.uid ?? ''
+                                    : _userId,
                                 userName: _userName.isEmpty
-                                    ? (_user?.displayName ??
-                                        _user?.email?.split('@').first ??
-                                        'User')
+                                    ? (_user?.displayName ?? 'User')
                                     : _userName,
-                              );
-                            }
-                          },
-                          onOpen: () => _openStory(context, post),
-                          onComment: () => _openComments(context, storyId),
-                        );
-                      },
+                                onLike: () async {
+                                  if (_userId.isNotEmpty) {
+                                    await _service.toggleLike(
+                                      storyId: storyId,
+                                      userId: _userId,
+                                      userName: _userName.isEmpty
+                                          ? (_user?.displayName ??
+                                              _user?.email?.split('@').first ??
+                                              'User')
+                                          : _userName,
+                                    );
+                                  }
+                                },
+                                onOpen: () {
+                                  _clearCommunityHighlight();
+                                  _openStory(context, post);
+                                },
+                                onComment: () {
+                                  _clearCommunityHighlight();
+                                  _openComments(context, storyId);
+                                },
+                                highlighted:
+                                    storyId == _communityHighlightedStoryId,
+                              ),
+                            );
+                          }),
+                      ],
                     ),
                   ),
               ],
@@ -856,6 +928,36 @@ class _CommunityScreenState extends State<CommunityScreen> {
         _authorSearchController.clear();
         _authorSearchQuery = "";
       }
+    });
+  }
+
+  GlobalKey _communityStoryKey(String storyId) {
+    return _communityStoryKeys.putIfAbsent(storyId, GlobalKey.new);
+  }
+
+  void _scrollToCommunityStory(String storyId) {
+    if (!mounted) return;
+    final context = _communityStoryKeys[storyId]?.currentContext;
+    if (context == null) return;
+
+    _pendingCommunityHighlightScroll = false;
+    Scrollable.ensureVisible(
+      context,
+      duration: const Duration(milliseconds: 450),
+      curve: Curves.easeOutCubic,
+      alignment: 0.08,
+    );
+  }
+
+  void _clearCommunityHighlight() {
+    if (_communityHighlightedStoryId == null &&
+        !_pendingCommunityHighlightScroll) {
+      return;
+    }
+
+    setState(() {
+      _communityHighlightedStoryId = null;
+      _pendingCommunityHighlightScroll = false;
     });
   }
 
@@ -886,9 +988,39 @@ class _CommunityScreenState extends State<CommunityScreen> {
     String storyId,
     String type,
   ) async {
+    if (type == 'like' || type == 'comment' || type == 'rating') {
+      final snap = await _db.collection('stories').doc(storyId).get();
+      if (!mounted) return;
+
+      if (!snap.exists || snap.data()?['status'] != 'published') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Story is not available in Community.')),
+        );
+        return;
+      }
+
+      setState(() {
+        _selectedIndex = 0;
+        _communityHighlightedStoryId = storyId;
+        _pendingCommunityHighlightScroll = true;
+        _isSearchingAuthors = false;
+        _authorSearchController.clear();
+        _authorSearchQuery = "";
+      });
+      return;
+    }
+
     if (type == 'approval_result') {
       final snap = await _db.collection('stories').doc(storyId).get();
       if (!mounted) return;
+
+      if (!snap.exists) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Story is no longer available.')),
+        );
+        return;
+      }
+
       final data = snap.data() ?? {};
       final status = data['status'] as String?;
       final approvalStatus = data['approvalStatus'] as String?;
@@ -1303,11 +1435,13 @@ class _StoryRatingPanel extends StatefulWidget {
   final StoryPost post;
   final StoryService service;
   final String userId;
+  final String userName;
 
   const _StoryRatingPanel({
     required this.post,
     required this.service,
     required this.userId,
+    required this.userName,
   });
 
   @override
@@ -1439,6 +1573,7 @@ class _StoryRatingPanelState extends State<_StoryRatingPanel> {
       await widget.service.rateStory(
         storyId: widget.post.id,
         userId: widget.userId,
+        userName: widget.userName,
         rating: rating,
       );
       if (!mounted) return;
@@ -1667,6 +1802,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
               final canOpenStory = storyId != null &&
                   (type == 'like' ||
                       type == 'comment' ||
+                      type == 'rating' ||
                       type == 'approval_result');
 
               return InkWell(
@@ -1765,6 +1901,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
   static String _fallbackMessage(String type) {
     if (type == 'comment') return 'Someone commented on your story';
+    if (type == 'rating') return 'Someone rated your story';
     if (type == 'parent_approval') return 'A story is waiting for approval';
     if (type == 'approval_result') return 'Your story approval was updated';
     return 'Someone liked your story';
@@ -1772,6 +1909,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
   static IconData _notificationIcon(String type) {
     if (type == 'comment') return Icons.chat_bubble_outline;
+    if (type == 'rating') return Icons.star_outline;
     if (type == 'parent_approval') return Icons.fact_check_outlined;
     if (type == 'approval_result') return Icons.verified_outlined;
     return Icons.favorite;
@@ -1779,6 +1917,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
   static Color _notificationColor(String type) {
     if (type == 'comment') return kAppPrimary;
+    if (type == 'rating') return Colors.amber.shade800;
     if (type == 'parent_approval') return Colors.orange.shade800;
     if (type == 'approval_result') return Colors.green.shade700;
     return Colors.redAccent;
@@ -1797,6 +1936,7 @@ class StoryCard extends StatelessWidget {
   final VoidCallback onLike;
   final VoidCallback onOpen;
   final VoidCallback onComment;
+  final bool highlighted;
 
   const StoryCard({
     super.key,
@@ -1807,170 +1947,173 @@ class StoryCard extends StatelessWidget {
     required this.onLike,
     required this.onOpen,
     required this.onComment,
+    this.highlighted = false,
   });
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      child: InkWell(
-        onTap: onOpen,
-        borderRadius: BorderRadius.circular(20),
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: Colors.grey.withValues(alpha: 0.2)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                blurRadius: 10,
-                offset: const Offset(0, 4),
-              ),
-            ],
+      child: Container(
+        decoration: BoxDecoration(
+          color: highlighted ? const Color(0xFFFFFBEB) : Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color:
+                highlighted ? kAppPrimary : Colors.grey.withValues(alpha: 0.2),
+            width: highlighted ? 2 : 1,
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (post.imageUrl.isNotEmpty)
-                Stack(
-                  children: [
-                    ClipRRect(
-                      borderRadius: const BorderRadius.vertical(
-                        top: Radius.circular(20),
-                      ),
-                      child: Image.network(
-                        post.imageUrl,
-                        fit: BoxFit.cover,
-                        width: double.infinity,
-                        height: 200,
-                        errorBuilder: (context, error, stackTrace) {
-                          return Container(
-                            height: 200,
-                            color: Colors.grey[300],
-                            child: const Icon(Icons.image_not_supported),
-                          );
-                        },
-                      ),
+          boxShadow: [
+            BoxShadow(
+              color: highlighted
+                  ? kAppPrimary.withValues(alpha: 0.18)
+                  : Colors.black.withValues(alpha: 0.05),
+              blurRadius: highlighted ? 16 : 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (post.imageUrl.isNotEmpty)
+              Stack(
+                children: [
+                  ClipRRect(
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(20),
                     ),
-                    Positioned(
-                      top: 8,
-                      left: 12,
-                      right: 12,
-                      child: Row(
-                        children: [
-                          CircleAvatar(
-                            radius: 18,
-                            backgroundColor: const Color(0xFF7B1FA2),
-                            child: Text(
-                              post.author.isNotEmpty ? post.author[0] : '?',
-                              style: const TextStyle(color: Colors.white),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  post.author,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.white,
-                                  ),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                Text(
-                                  '@${post.handle}',
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.white70,
-                                  ),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
+                    child: Image.network(
+                      post.imageUrl,
+                      fit: BoxFit.cover,
+                      width: double.infinity,
+                      height: 200,
+                      errorBuilder: (context, error, stackTrace) {
+                        return Container(
+                          height: 200,
+                          color: Colors.grey[300],
+                          child: const Icon(Icons.image_not_supported),
+                        );
+                      },
                     ),
-                  ],
-                ),
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      post.title,
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.black87,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      post.excerpt,
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey[700],
-                        height: 1.4,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    _RatingSummary(
-                      averageRating: post.averageRating,
-                      ratingCount: post.ratingCount,
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
+                  ),
+                  Positioned(
+                    top: 8,
+                    left: 12,
+                    right: 12,
+                    child: Row(
                       children: [
-                        IconButton(
-                          icon: Icon(
-                            post.likedByMe
-                                ? Icons.favorite
-                                : Icons.favorite_border,
-                            color: post.likedByMe ? Colors.red : Colors.purple,
+                        CircleAvatar(
+                          radius: 18,
+                          backgroundColor: const Color(0xFF7B1FA2),
+                          child: Text(
+                            post.author.isNotEmpty ? post.author[0] : '?',
+                            style: const TextStyle(color: Colors.white),
                           ),
-                          onPressed: onLike,
                         ),
-                        Text("${post.likes}"),
-                        const SizedBox(width: 16),
-                        IconButton(
-                          icon: const Icon(
-                            Icons.chat_bubble_outline,
-                            color: Colors.purple,
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                post.author,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              Text(
+                                '@${post.handle}',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.white70,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
                           ),
-                          onPressed: onComment,
                         ),
-                        Text("${post.comments}"),
-                        const Spacer(),
-                        TextButton.icon(
-                          style: TextButton.styleFrom(
-                            backgroundColor: Colors.purple,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 8,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                          ),
-                          onPressed: onOpen,
-                          icon: const Icon(Icons.menu_book, size: 18),
-                          label: const Text("Read"),
-                        )
                       ],
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    post.title,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    post.excerpt,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Colors.grey[700],
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  _RatingSummary(
+                    averageRating: post.averageRating,
+                    ratingCount: post.ratingCount,
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      IconButton(
+                        icon: Icon(
+                          post.likedByMe
+                              ? Icons.favorite
+                              : Icons.favorite_border,
+                          color: post.likedByMe ? Colors.red : Colors.purple,
+                        ),
+                        onPressed: onLike,
+                      ),
+                      Text("${post.likes}"),
+                      const SizedBox(width: 16),
+                      IconButton(
+                        icon: const Icon(
+                          Icons.chat_bubble_outline,
+                          color: Colors.purple,
+                        ),
+                        onPressed: onComment,
+                      ),
+                      Text("${post.comments}"),
+                      const Spacer(),
+                      TextButton.icon(
+                        style: TextButton.styleFrom(
+                          backgroundColor: Colors.purple,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                        ),
+                        onPressed: onOpen,
+                        icon: const Icon(Icons.menu_book, size: 18),
+                        label: const Text("Read"),
+                      )
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -2139,6 +2282,7 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
                   post: viewModel.displayPost,
                   service: widget.service,
                   userId: widget.userId,
+                  userName: widget.userName,
                 ),
                 const SizedBox(height: 16),
                 Expanded(

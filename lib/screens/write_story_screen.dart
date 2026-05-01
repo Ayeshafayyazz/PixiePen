@@ -223,7 +223,11 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
 
     if (parentSnap.docs.isEmpty) return;
 
-    final parentId = parentSnap.docs.first.id;
+    final parentDoc = parentSnap.docs.first;
+    final parentData = parentDoc.data();
+    if (parentData['notificationsEnabled'] == false) return;
+
+    final parentId = parentDoc.id;
     await FirebaseFirestore.instance.collection('notifications').add({
       'toUserId': parentId,
       'fromUserId': FirebaseAuth.instance.currentUser?.uid,
