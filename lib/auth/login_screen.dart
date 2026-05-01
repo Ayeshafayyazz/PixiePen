@@ -45,7 +45,7 @@ class LoginScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 110),
                 const AuthCard(isLogin: true),
-                const SizedBox(height: 120),
+                const SizedBox(height: 150),
                 GestureDetector(
                   onTap: () {
                     Navigator.pushReplacementNamed(context, AppRoutes.signup);
