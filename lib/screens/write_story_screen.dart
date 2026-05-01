@@ -22,7 +22,6 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
   String? _storyCoverUrl;
   bool _isSaving = false;
   bool _isPublishing = false;
-  bool _isLoaded = false;
 
   int get _wordCount {
     if (_bodyController.text.trim().isEmpty) return 0;
@@ -49,9 +48,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     _titleController.text = data['title'] ?? '';
     _bodyController.text = data['body'] ?? '';
     _storyCoverUrl = data['coverUrl'];
-    setState(() {
-      _isLoaded = true;
-    });
+    if (mounted) setState(() {});
   }
 
   Future<void> _saveStory({bool publish = false}) async {
@@ -128,8 +125,6 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
         'authorId': uid,
         'authorName': authorName,
         'handle': authorName.replaceAll(' ', '').toLowerCase(),
-        'likes': 0,
-        'comments': 0,
         'status': storyStatus,
         'isPublish': storyStatus == 'published',
         'parentEmail': needsParentApproval ? linkedParentEmail : null,
@@ -142,7 +137,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
           'isSafe': true,
           'flagReason': null,
         },
-        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
       };
 
       if (widget.storyId != null) {
@@ -162,7 +157,15 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
       } else {
         // Create new story
         final storyRef =
-            await FirebaseFirestore.instance.collection('stories').add(doc);
+            await FirebaseFirestore.instance.collection('stories').add({
+          ...doc,
+          'likes': 0,
+          'comments': 0,
+          'ratingTotal': 0,
+          'ratingCount': 0,
+          'averageRating': 0,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
         if (needsParentApproval) {
           await _notifyParentForApproval(
             storyId: storyRef.id,
@@ -420,7 +423,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
                         ),
                       ),
                       icon: _isSaving
-                          ? SizedBox(
+                          ? const SizedBox(
                               width: 20,
                               height: 20,
                               child: CircularProgressIndicator(
@@ -449,7 +452,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
                         ),
                       ),
                       icon: _isPublishing
-                          ? SizedBox(
+                          ? const SizedBox(
                               width: 20,
                               height: 20,
                               child: CircularProgressIndicator(
@@ -492,7 +495,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
             : Border.all(color: Colors.transparent),
         boxShadow: [
           BoxShadow(
-            color: Colors.purple.shade100.withOpacity(0.4),
+            color: Colors.purple.shade100.withValues(alpha: 0.4),
             blurRadius: 6,
             offset: const Offset(0, 3),
           ),
@@ -534,7 +537,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
               borderRadius: BorderRadius.circular(16),
               boxShadow: [
                 BoxShadow(
-                  color: color.withOpacity(0.4),
+                  color: color.withValues(alpha: 0.4),
                   blurRadius: 6,
                   offset: const Offset(0, 3),
                 ),

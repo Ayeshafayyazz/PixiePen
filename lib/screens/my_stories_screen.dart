@@ -793,6 +793,10 @@ class _StoryManagementCard extends StatelessWidget {
                     icon: Icons.chat_bubble,
                     label: '${story.comments} comments',
                   ),
+                  _EngagementPill(
+                    icon: Icons.star,
+                    label: story.ratingLabel,
+                  ),
                 ],
               ),
               const SizedBox(height: 12),
@@ -992,6 +996,8 @@ class _StoryDashboardItem {
   final int wordCount;
   final int likes;
   final int comments;
+  final int ratingCount;
+  final double averageRating;
   final List likedBy;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -1008,6 +1014,8 @@ class _StoryDashboardItem {
     required this.wordCount,
     required this.likes,
     required this.comments,
+    required this.ratingCount,
+    required this.averageRating,
     required this.likedBy,
     required this.createdAt,
     required this.updatedAt,
@@ -1038,6 +1046,8 @@ class _StoryDashboardItem {
       wordCount: _readInt(data['wordCount'], fallback: _wordCount(body)),
       likes: _readInt(data['likes']),
       comments: _readInt(data['comments']),
+      ratingCount: _readInt(data['ratingCount']),
+      averageRating: _readDouble(data['averageRating']),
       likedBy: (data['likedBy'] as List?) ?? const [],
       createdAt: _readDate(data['createdAt']),
       updatedAt: _readDate(data['updatedAt'], fallback: data['createdAt']),
@@ -1073,6 +1083,11 @@ class _StoryDashboardItem {
     return Colors.grey.shade700;
   }
 
+  String get ratingLabel {
+    if (ratingCount == 0) return 'No ratings';
+    return '${averageRating.toStringAsFixed(1)} rating';
+  }
+
   StoryPost toPost({required String userId}) {
     final imageUrl = coverUrl != null && coverUrl!.isNotEmpty
         ? coverUrl!
@@ -1096,6 +1111,13 @@ class _StoryDashboardItem {
     if (value is int) return value;
     if (value is num) return value.toInt();
     if (value is String) return int.tryParse(value) ?? fallback;
+    return fallback;
+  }
+
+  static double _readDouble(dynamic value, {double fallback = 0}) {
+    if (value is double) return value;
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value) ?? fallback;
     return fallback;
   }
 

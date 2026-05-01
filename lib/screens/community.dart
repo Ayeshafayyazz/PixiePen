@@ -144,6 +144,64 @@ class StoryService {
     });
   }
 
+  Future<void> rateStory({
+    required String storyId,
+    required String userId,
+    required int rating,
+  }) async {
+    if (rating < 1 || rating > 5) {
+      throw ArgumentError('Rating must be between 1 and 5.');
+    }
+
+    final storyRef = _db.collection('stories').doc(storyId);
+    final ratingRef = storyRef.collection('ratings').doc(userId);
+
+    await _db.runTransaction((tx) async {
+      final storySnap = await tx.get(storyRef);
+      final storyData = storySnap.data() ?? {};
+      final ownerId = storyData['authorId'] as String?;
+
+      if (ownerId == userId) {
+        throw StateError('You cannot rate your own story.');
+      }
+
+      final ratingSnap = await tx.get(ratingRef);
+      final oldRating =
+          ratingSnap.exists ? _readInt(ratingSnap.data()?['rating']) : null;
+      final currentTotal = _readInt(storyData['ratingTotal']);
+      final currentCount = _readInt(storyData['ratingCount']);
+
+      final nextTotal = oldRating == null
+          ? currentTotal + rating
+          : currentTotal - oldRating + rating;
+      final nextCount = oldRating == null ? currentCount + 1 : currentCount;
+      final nextAverage = nextCount == 0 ? 0.0 : nextTotal / nextCount;
+
+      tx.set(
+        ratingRef,
+        {
+          'userId': userId,
+          'rating': rating,
+          'createdAt': ratingSnap.exists
+              ? (ratingSnap.data()?['createdAt'])
+              : FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+
+      tx.set(
+        storyRef,
+        {
+          'ratingTotal': nextTotal,
+          'ratingCount': nextCount,
+          'averageRating': nextAverage,
+        },
+        SetOptions(merge: true),
+      );
+    });
+  }
+
   Stream<QuerySnapshot> getComments(String storyId) {
     return _db
         .collection('stories')
@@ -151,6 +209,25 @@ class StoryService {
         .collection('comments')
         .orderBy('createdAt', descending: true)
         .snapshots();
+  }
+
+  Stream<DocumentSnapshot<Map<String, dynamic>>> getUserRating({
+    required String storyId,
+    required String userId,
+  }) {
+    return _db
+        .collection('stories')
+        .doc(storyId)
+        .collection('ratings')
+        .doc(userId)
+        .snapshots();
+  }
+
+  static int _readInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value) ?? 0;
+    return 0;
   }
 }
 
@@ -173,6 +250,8 @@ class StoryPost {
   final String excerpt;
   final int likes;
   final int comments;
+  final int ratingCount;
+  final double averageRating;
   final bool likedByMe;
   final Color accent;
   final String imageUrl;
@@ -186,6 +265,8 @@ class StoryPost {
     required this.excerpt,
     required this.likes,
     required this.comments,
+    this.ratingCount = 0,
+    this.averageRating = 0,
     required this.likedByMe,
     required this.accent,
     required this.imageUrl,
@@ -200,6 +281,8 @@ class StoryPost {
         excerpt: excerpt,
         likes: likedByMe ? likes - 1 : likes + 1,
         comments: comments,
+        ratingCount: ratingCount,
+        averageRating: averageRating,
         likedByMe: !likedByMe,
         accent: accent,
         imageUrl: imageUrl,
@@ -725,6 +808,8 @@ class _CommunityScreenState extends State<CommunityScreen> {
                           excerpt: body,
                           likes: likes,
                           comments: comments,
+                          ratingCount: _readInt(data['ratingCount']),
+                          averageRating: _readDouble(data['averageRating']),
                           likedByMe: likedByMe,
                           accent: const Color(0xFF7B1FA2),
                           imageUrl: imageUrl,
@@ -861,6 +946,8 @@ class _CommunityScreenState extends State<CommunityScreen> {
         excerpt: body,
         likes: _readInt(data['likes']),
         comments: _readInt(data['comments']),
+        ratingCount: _readInt(data['ratingCount']),
+        averageRating: _readDouble(data['averageRating']),
         likedByMe: likedBy.contains(_userId),
         accent: kAppPrimary,
         imageUrl: cover != null && cover.isNotEmpty
@@ -874,6 +961,13 @@ class _CommunityScreenState extends State<CommunityScreen> {
     if (value is int) return value;
     if (value is num) return value.toInt();
     if (value is String) return int.tryParse(value) ?? 0;
+    return 0;
+  }
+
+  double _readDouble(dynamic value) {
+    if (value is double) return value;
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value) ?? 0;
     return 0;
   }
 
@@ -1169,6 +1263,218 @@ class _AuthorSearchEmptyState extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _RatingSummary extends StatelessWidget {
+  final double averageRating;
+  final int ratingCount;
+
+  const _RatingSummary({
+    required this.averageRating,
+    required this.ratingCount,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final label = ratingCount == 0
+        ? 'No ratings yet'
+        : '${averageRating.toStringAsFixed(1)} / 5 ($ratingCount)';
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(Icons.star, color: Colors.amber, size: 18),
+        const SizedBox(width: 5),
+        Text(
+          label,
+          style: TextStyle(
+            color: Colors.grey.shade700,
+            fontWeight: FontWeight.w700,
+            fontSize: 13,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _StoryRatingPanel extends StatefulWidget {
+  final StoryPost post;
+  final StoryService service;
+  final String userId;
+
+  const _StoryRatingPanel({
+    required this.post,
+    required this.service,
+    required this.userId,
+  });
+
+  @override
+  State<_StoryRatingPanel> createState() => _StoryRatingPanelState();
+}
+
+class _StoryRatingPanelState extends State<_StoryRatingPanel> {
+  int? _savingRating;
+  int? _optimisticRating;
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.userId.isEmpty) return const SizedBox.shrink();
+
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('stories')
+          .doc(widget.post.id)
+          .snapshots(),
+      builder: (context, storySnap) {
+        final storyData = storySnap.data?.data() ?? {};
+        final averageRating = _readDouble(storyData['averageRating'],
+            fallback: widget.post.averageRating);
+        final ratingCount = _readInt(storyData['ratingCount'],
+            fallback: widget.post.ratingCount);
+        final authorId = storyData['authorId'] as String?;
+        final isOwnStory = authorId == widget.userId;
+
+        return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+          stream: widget.service.getUserRating(
+            storyId: widget.post.id,
+            userId: widget.userId,
+          ),
+          builder: (context, ratingSnap) {
+            final savedRating = _readInt(ratingSnap.data?.data()?['rating']);
+            final selectedRating = _optimisticRating ?? savedRating;
+
+            return Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF7F3FF),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFE2D9F3)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      _RatingSummary(
+                        averageRating: averageRating,
+                        ratingCount: ratingCount,
+                      ),
+                      const Spacer(),
+                      if (selectedRating > 0)
+                        Text(
+                          'Your rating: $selectedRating',
+                          style: const TextStyle(
+                            color: kAppPrimary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    isOwnStory
+                        ? 'Readers can rate this story'
+                        : 'Rate this story',
+                    style: TextStyle(
+                      color: Colors.grey.shade700,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: List.generate(5, (index) {
+                      final rating = index + 1;
+                      final isFilled = rating <= selectedRating;
+                      final isSaving = _savingRating == rating;
+
+                      return IconButton(
+                        tooltip: '$rating star${rating == 1 ? '' : 's'}',
+                        onPressed: isOwnStory ||
+                                _savingRating != null ||
+                                rating == selectedRating
+                            ? null
+                            : () => _rateStory(rating, savedRating),
+                        icon: Icon(
+                          isFilled ? Icons.star : Icons.star_border,
+                          color: isOwnStory
+                              ? Colors.grey
+                              : isSaving
+                                  ? kAppPrimary
+                                  : Colors.amber.shade700,
+                        ),
+                      );
+                    }),
+                  ),
+                  if (_savingRating != null) ...[
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Saving rating...',
+                      style: TextStyle(
+                        color: kAppPrimary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _rateStory(int rating, int savedRating) async {
+    setState(() {
+      _optimisticRating = rating;
+      _savingRating = rating;
+    });
+    try {
+      await widget.service.rateStory(
+        storyId: widget.post.id,
+        userId: widget.userId,
+        rating: rating,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Thanks for rating ${widget.post.title}!')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _optimisticRating = savedRating > 0 ? savedRating : null;
+      });
+      final message = error is StateError
+          ? error.message
+          : 'Could not save rating. Please try again.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _savingRating = null);
+      }
+    }
+  }
+
+  static int _readInt(dynamic value, {int fallback = 0}) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value) ?? fallback;
+    return fallback;
+  }
+
+  static double _readDouble(dynamic value, {double fallback = 0}) {
+    if (value is double) return value;
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value) ?? fallback;
+    return fallback;
   }
 }
 
@@ -1614,6 +1920,11 @@ class StoryCard extends StatelessWidget {
                         height: 1.4,
                       ),
                     ),
+                    const SizedBox(height: 10),
+                    _RatingSummary(
+                      averageRating: post.averageRating,
+                      ratingCount: post.ratingCount,
+                    ),
                     const SizedBox(height: 12),
                     Row(
                       children: [
@@ -1823,6 +2134,12 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
                           Container(height: 220, color: Colors.grey[200]),
                     ),
                   ),
+                const SizedBox(height: 16),
+                _StoryRatingPanel(
+                  post: viewModel.displayPost,
+                  service: widget.service,
+                  userId: widget.userId,
+                ),
                 const SizedBox(height: 16),
                 Expanded(
                   child: SingleChildScrollView(

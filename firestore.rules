@@ -68,7 +68,21 @@ service cloud.firestore {
     function isEngagementUpdate() {
       return signedIn() &&
         authorKeepsOwnership() &&
-        changedStoryKeys().hasOnly(['likes', 'likedBy', 'comments']);
+        changedStoryKeys().hasOnly([
+          'likes',
+          'likedBy',
+          'comments',
+          'ratingTotal',
+          'ratingCount',
+          'averageRating'
+        ]);
+    }
+
+    function isValidRating() {
+      return request.resource.data.userId == request.auth.uid &&
+        request.resource.data.rating is int &&
+        request.resource.data.rating >= 1 &&
+        request.resource.data.rating <= 5;
     }
 
     match /users/{userId} {
@@ -98,6 +112,12 @@ service cloud.firestore {
         allow read: if signedIn();
         allow create: if signedIn();
         allow delete: if signedIn() && resource.data.userId == request.auth.uid;
+      }
+
+      match /ratings/{userId} {
+        allow read: if signedIn();
+        allow create, update: if isOwner(userId) && isValidRating();
+        allow delete: if false;
       }
     }
 
