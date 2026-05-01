@@ -512,10 +512,13 @@ class _CommunityScreenState extends State<CommunityScreen> {
   final StoryService _service = StoryService();
   final ContentModerationService _moderationService =
       ContentModerationService();
+  final TextEditingController _authorSearchController = TextEditingController();
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   User? _user;
   String _userId = "";
   String _userName = "";
+  String _authorSearchQuery = "";
+  bool _isSearchingAuthors = false;
   String? _myStoriesInitialStatus;
   String? _myStoriesHighlightedStoryId;
 
@@ -531,6 +534,12 @@ class _CommunityScreenState extends State<CommunityScreen> {
       // Try to fetch the actual username from Firestore
       _fetchUserName();
     }
+  }
+
+  @override
+  void dispose() {
+    _authorSearchController.dispose();
+    super.dispose();
   }
 
   Future<void> _fetchUserName() async {
@@ -616,6 +625,14 @@ class _CommunityScreenState extends State<CommunityScreen> {
         title: const _BrandTitle(),
         centerTitle: true,
         actions: [
+          IconButton(
+            tooltip: _isSearchingAuthors ? 'Close search' : 'Search authors',
+            onPressed: _toggleAuthorSearch,
+            icon: Icon(
+              _isSearchingAuthors ? Icons.close : Icons.search,
+              color: Colors.white,
+            ),
+          ),
           _NotificationBell(
             userId: _userId,
             onStoryNotificationTap: _handleStoryNotificationTap,
@@ -639,84 +656,132 @@ class _CommunityScreenState extends State<CommunityScreen> {
               return const Center(child: CircularProgressIndicator());
             }
 
-            final docs = snapshot.data!.docs.toList()
+            final publishedDocs = snapshot.data!.docs.toList()
               ..sort((a, b) {
                 final aDate = _readTimestamp(a.data()['createdAt']);
                 final bDate = _readTimestamp(b.data()['createdAt']);
                 return bDate.compareTo(aDate);
               });
 
-            if (docs.isEmpty) {
+            if (publishedDocs.isEmpty) {
               return const Center(child: Text('No stories yet'));
             }
 
-            return ListView.builder(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              itemCount: docs.length,
-              itemBuilder: (context, index) {
-                final doc = docs[index];
-                final data = doc.data();
-                final storyId = doc.id;
+            final docs = publishedDocs
+                .where((doc) => _matchesAuthorSearch(doc.data()))
+                .toList();
 
-                final title = (data['title'] as String?) ?? 'Untitled';
-                final body = (data['body'] as String?) ?? '';
-                final cover = (data['coverUrl'] as String?);
-                final author = (data['authorName'] as String?) ??
-                    (data['authorId'] as String?) ??
-                    'Unknown';
-                final handle = (data['handle'] as String?) ??
-                    (author.replaceAll(' ', '').toLowerCase());
-                final likes = (data['likes'] as int?) ?? 0;
-                final comments = (data['comments'] as int?) ?? 0;
-                final imageUrl = cover != null && cover.isNotEmpty
-                    ? cover
-                    : 'https://picsum.photos/seed/$storyId/600/300';
+            return Column(
+              children: [
+                if (_isSearchingAuthors)
+                  _AuthorSearchSection(
+                    controller: _authorSearchController,
+                    onChanged: (value) {
+                      setState(() => _authorSearchQuery = value);
+                    },
+                    onClear: () {
+                      setState(() {
+                        _authorSearchController.clear();
+                        _authorSearchQuery = "";
+                      });
+                    },
+                  ),
+                if (docs.isEmpty)
+                  Expanded(
+                    child: _AuthorSearchEmptyState(query: _authorSearchQuery),
+                  )
+                else
+                  Expanded(
+                    child: ListView.builder(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      itemCount: docs.length,
+                      itemBuilder: (context, index) {
+                        final doc = docs[index];
+                        final data = doc.data();
+                        final storyId = doc.id;
 
-                final likedBy = (data['likedBy'] as List?) ?? [];
-                final likedByMe = likedBy.contains(_userId);
+                        final title = (data['title'] as String?) ?? 'Untitled';
+                        final body = (data['body'] as String?) ?? '';
+                        final cover = (data['coverUrl'] as String?);
+                        final author = (data['authorName'] as String?) ??
+                            (data['authorId'] as String?) ??
+                            'Unknown';
+                        final handle = (data['handle'] as String?) ??
+                            (author.replaceAll(' ', '').toLowerCase());
+                        final likes = (data['likes'] as int?) ?? 0;
+                        final comments = (data['comments'] as int?) ?? 0;
+                        final imageUrl = cover != null && cover.isNotEmpty
+                            ? cover
+                            : 'https://picsum.photos/seed/$storyId/600/300';
 
-                final post = StoryPost(
-                  id: storyId,
-                  author: author,
-                  handle: handle,
-                  title: title,
-                  excerpt: body,
-                  likes: likes,
-                  comments: comments,
-                  likedByMe: likedByMe,
-                  accent: const Color(0xFF7B1FA2),
-                  imageUrl: imageUrl,
-                );
+                        final likedBy = (data['likedBy'] as List?) ?? [];
+                        final likedByMe = likedBy.contains(_userId);
 
-                return StoryCard(
-                  post: post,
-                  service: _service,
-                  userId: _userId.isEmpty ? _user?.uid ?? '' : _userId,
-                  userName: _userName.isEmpty
-                      ? (_user?.displayName ?? 'User')
-                      : _userName,
-                  onLike: () async {
-                    if (_userId.isNotEmpty) {
-                      await _service.toggleLike(
-                        storyId: storyId,
-                        userId: _userId,
-                        userName: _userName.isEmpty
-                            ? (_user?.displayName ??
-                                _user?.email?.split('@').first ??
-                                'User')
-                            : _userName,
-                      );
-                    }
-                  },
-                  onOpen: () => _openStory(context, post),
-                  onComment: () => _openComments(context, storyId),
-                );
-              },
+                        final post = StoryPost(
+                          id: storyId,
+                          author: author,
+                          handle: handle,
+                          title: title,
+                          excerpt: body,
+                          likes: likes,
+                          comments: comments,
+                          likedByMe: likedByMe,
+                          accent: const Color(0xFF7B1FA2),
+                          imageUrl: imageUrl,
+                        );
+
+                        return StoryCard(
+                          post: post,
+                          service: _service,
+                          userId: _userId.isEmpty ? _user?.uid ?? '' : _userId,
+                          userName: _userName.isEmpty
+                              ? (_user?.displayName ?? 'User')
+                              : _userName,
+                          onLike: () async {
+                            if (_userId.isNotEmpty) {
+                              await _service.toggleLike(
+                                storyId: storyId,
+                                userId: _userId,
+                                userName: _userName.isEmpty
+                                    ? (_user?.displayName ??
+                                        _user?.email?.split('@').first ??
+                                        'User')
+                                    : _userName,
+                              );
+                            }
+                          },
+                          onOpen: () => _openStory(context, post),
+                          onComment: () => _openComments(context, storyId),
+                        );
+                      },
+                    ),
+                  ),
+              ],
             );
           },
         ),
       ),
     );
+  }
+
+  void _toggleAuthorSearch() {
+    setState(() {
+      _isSearchingAuthors = !_isSearchingAuthors;
+      if (!_isSearchingAuthors) {
+        _authorSearchController.clear();
+        _authorSearchQuery = "";
+      }
+    });
+  }
+
+  bool _matchesAuthorSearch(Map<String, dynamic> data) {
+    final query = _authorSearchQuery.trim().toLowerCase();
+    if (query.isEmpty) return true;
+
+    final authorName = ((data['authorName'] as String?) ?? '').toLowerCase();
+    final handle = ((data['handle'] as String?) ?? '').toLowerCase();
+
+    return authorName.contains(query) || handle.contains(query);
   }
 
   void _openStory(BuildContext context, StoryPost post) {
@@ -1001,6 +1066,108 @@ class _BrandTitle extends StatelessWidget {
             fontWeight: FontWeight.w700,
             color: Colors.white,
           ),
+    );
+  }
+}
+
+class _AuthorSearchSection extends StatelessWidget {
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onClear;
+
+  const _AuthorSearchSection({
+    required this.controller,
+    required this.onChanged,
+    required this.onClear,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      child: TextField(
+        controller: controller,
+        autofocus: true,
+        textInputAction: TextInputAction.search,
+        decoration: InputDecoration(
+          hintText: 'Search by author name',
+          prefixIcon: const Icon(Icons.person_search, color: kAppPrimary),
+          suffixIcon: controller.text.trim().isEmpty
+              ? null
+              : IconButton(
+                  tooltip: 'Clear search',
+                  onPressed: onClear,
+                  icon: const Icon(Icons.close),
+                ),
+          filled: true,
+          fillColor: const Color(0xFFF7F3FF),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 12,
+          ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: const BorderSide(color: Color(0xFFE2D9F3)),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: const BorderSide(color: Color(0xFFE2D9F3)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: const BorderSide(color: kAppPrimary, width: 1.4),
+          ),
+        ),
+        onChanged: onChanged,
+      ),
+    );
+  }
+}
+
+class _AuthorSearchEmptyState extends StatelessWidget {
+  final String query;
+
+  const _AuthorSearchEmptyState({required this.query});
+
+  @override
+  Widget build(BuildContext context) {
+    final searchText = query.trim();
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.person_search,
+              size: 58,
+              color: Colors.grey.shade500,
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'No authors found',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                color: Colors.black87,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              searchText.isEmpty
+                  ? 'Try searching by an author name or handle.'
+                  : 'No published stories match "$searchText".',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.grey.shade700,
+                height: 1.35,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
