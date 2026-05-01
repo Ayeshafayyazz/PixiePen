@@ -83,7 +83,7 @@ class _EbookScreenState extends State<EbookScreen> {
               return _EbookLibraryCard(
                 ebook: ebook,
                 isExporting: _exportingEbookId == ebook.ebookId,
-                onTap: () => _openEbook(ebook),
+                onRead: () => _openEbook(ebook),
                 onDownload: () => _exportEbook(ebook, share: false),
                 onShare: () => _exportEbook(ebook, share: true),
                 onDelete: () => _confirmDeleteEbook(ebook),
@@ -185,10 +185,16 @@ class _EbookScreenState extends State<EbookScreen> {
   }
 
   Future<List<StoryBookItem>> _loadStoriesForEbook(Ebook ebook) async {
-    final docs = await Future.wait(
-      ebook.storyIds
-          .map((storyId) => _db.collection('stories').doc(storyId).get()),
-    );
+    final docs = <DocumentSnapshot<Map<String, dynamic>>>[];
+
+    for (final storyId in ebook.storyIds) {
+      try {
+        final doc = await _db.collection('stories').doc(storyId).get();
+        docs.add(doc);
+      } on FirebaseException catch (error) {
+        if (error.code != 'permission-denied') rethrow;
+      }
+    }
 
     final storiesById = {
       for (final doc in docs)
@@ -893,7 +899,7 @@ class _CreateEbookCard extends StatelessWidget {
 class _EbookLibraryCard extends StatelessWidget {
   final Ebook ebook;
   final bool isExporting;
-  final VoidCallback onTap;
+  final VoidCallback onRead;
   final VoidCallback onDownload;
   final VoidCallback onShare;
   final VoidCallback onDelete;
@@ -901,7 +907,7 @@ class _EbookLibraryCard extends StatelessWidget {
   const _EbookLibraryCard({
     required this.ebook,
     required this.isExporting,
-    required this.onTap,
+    required this.onRead,
     required this.onDownload,
     required this.onShare,
     required this.onDelete,
@@ -909,94 +915,112 @@ class _EbookLibraryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(16),
-      child: Ink(
-        decoration: BoxDecoration(
-          color: _kEbookCardBackground,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: _kEbookCardBorder, width: 1.3),
-          boxShadow: const [
-            BoxShadow(
-              color: Colors.black12,
-              blurRadius: 9,
-              offset: Offset(0, 5),
-            ),
-          ],
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              _StoryThumbnail(imageUrl: ebook.coverImage),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      ebook.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w900,
-                        color: _kEbookTitleColor,
-                      ),
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      'by ${ebook.authorName}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: _kEbookMutedText),
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      '${ebook.storyIds.length} ${ebook.storyIds.length == 1 ? 'story' : 'stories'}',
-                      style: const TextStyle(
-                        color: kAppPrimary,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Column(
+    return Container(
+      decoration: BoxDecoration(
+        color: _kEbookCardBackground,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _kEbookCardBorder, width: 1.3),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black12,
+            blurRadius: 9,
+            offset: Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            _StoryThumbnail(imageUrl: ebook.coverImage),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (isExporting)
-                    const Padding(
-                      padding: EdgeInsets.all(12),
-                      child: SizedBox(
-                        height: 22,
-                        width: 22,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    )
-                  else ...[
-                    IconButton(
-                      tooltip: 'Download PDF',
-                      onPressed: onDownload,
-                      icon: const Icon(Icons.download, color: kAppPrimary),
+                  Text(
+                    ebook.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                      color: _kEbookTitleColor,
                     ),
-                    IconButton(
-                      tooltip: 'Export PDF',
-                      onPressed: onShare,
-                      icon: const Icon(Icons.ios_share, color: kAppPrimary),
-                    ),
-                  ],
-                  IconButton(
-                    tooltip: 'Delete eBook',
-                    onPressed: onDelete,
-                    icon: const Icon(Icons.delete_outline,
-                        color: Colors.redAccent),
                   ),
-                  const Icon(Icons.menu_book, color: kAppPrimary),
+                  const SizedBox(height: 5),
+                  Text(
+                    'by ${ebook.authorName}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: _kEbookMutedText),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    '${ebook.storyIds.length} ${ebook.storyIds.length == 1 ? 'story' : 'stories'}',
+                    style: const TextStyle(
+                      color: kAppPrimary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed: onRead,
+                        icon: const Icon(Icons.menu_book, size: 18),
+                        label: const Text('Read'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: kAppPrimary,
+                          foregroundColor: Colors.white,
+                          minimumSize: const Size(0, 38),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
-            ],
-          ),
+            ),
+            Column(
+              children: [
+                if (isExporting)
+                  const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: SizedBox(
+                      height: 22,
+                      width: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                else ...[
+                  IconButton(
+                    tooltip: 'Download PDF',
+                    onPressed: onDownload,
+                    icon: const Icon(Icons.download, color: kAppPrimary),
+                  ),
+                  IconButton(
+                    tooltip: 'Export PDF',
+                    onPressed: onShare,
+                    icon: const Icon(Icons.ios_share, color: kAppPrimary),
+                  ),
+                ],
+                IconButton(
+                  tooltip: 'Delete eBook',
+                  onPressed: onDelete,
+                  icon: const Icon(
+                    Icons.delete_outline,
+                    color: Colors.redAccent,
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );
