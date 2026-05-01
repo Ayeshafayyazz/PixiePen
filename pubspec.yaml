@@ -37,6 +37,7 @@ dependencies:
   google_fonts: ^6.1.0
   flutter_custom_clippers: ^2.0.4
   animated_text_kit: ^4.2.2
+  lottie: ^3.1.2
   smooth_page_indicator: ^1.1.0
   confetti: ^0.7.0
   share_plus: ^10.0.2
@@ -84,6 +85,8 @@ flutter:
     - assets/lottie/magic.json
     - assets/lottie/Magic Crystal Ball.json
     - assets/lottie/Celebrations.json
+    - assets/lottie/BOOK WALKING.json
+    - assets/lottie/#0101MT_MIU_01.json
   #   - images/a_dot_burr.jpeg
   #   - images/a_dot_ham.jpeg
 
