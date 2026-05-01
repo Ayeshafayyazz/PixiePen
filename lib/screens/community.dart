@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 
 import 'ebook_screen.dart';
 import 'my_stories_screen.dart';
@@ -2144,17 +2145,260 @@ class StoryReaderPage extends StatefulWidget {
 
 class _StoryReaderPageState extends State<StoryReaderPage> {
   late StoryReaderViewModel viewModel;
+  final FlutterTts _tts = FlutterTts();
+  final ScrollController _storyScrollController = ScrollController();
+  final List<GlobalKey> _paragraphKeys = [];
+  List<String> _paragraphs = [];
+  bool _isSpeaking = false;
+  bool _isPreparingSpeech = false;
+  bool _isPaused = false;
+  int? _activeParagraphIndex;
+  int _speechSession = 0;
 
   @override
   void initState() {
     super.initState();
     viewModel = StoryReaderViewModel(widget.post);
+    _syncParagraphs();
+    viewModel.addListener(_syncParagraphs);
+    _configureTts();
   }
 
   @override
   void dispose() {
+    _speechSession++;
+    _tts.stop();
+    viewModel.removeListener(_syncParagraphs);
+    _storyScrollController.dispose();
     viewModel.dispose();
     super.dispose();
+  }
+
+  void _syncParagraphs() {
+    final nextParagraphs = _buildParagraphs(viewModel.displayPost.excerpt);
+    _paragraphKeys
+      ..clear()
+      ..addAll(List.generate(nextParagraphs.length, (_) => GlobalKey()));
+
+    if (!mounted) {
+      _paragraphs = nextParagraphs;
+      return;
+    }
+
+    setState(() {
+      _paragraphs = nextParagraphs;
+      if (!_isSpeaking && !_isPreparingSpeech && !_isPaused) {
+        _activeParagraphIndex = null;
+      }
+    });
+  }
+
+  Future<void> _configureTts() async {
+    await _tts.setSpeechRate(0.45);
+    await _tts.setPitch(1.0);
+    await _tts.setVolume(1.0);
+    await _tts.awaitSpeakCompletion(true);
+    _tts.setCancelHandler(() {
+      if (!mounted) return;
+      setState(() {
+        _isSpeaking = false;
+        _isPreparingSpeech = false;
+      });
+    });
+    _tts.setErrorHandler((message) {
+      if (!mounted) return;
+      setState(() {
+        _isSpeaking = false;
+        _isPreparingSpeech = false;
+      });
+      if (message.toLowerCase().contains('interrupted')) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Reading paused.')),
+        );
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not read story aloud: $message')),
+      );
+    });
+  }
+
+  Future<void> _toggleReadAloud() async {
+    if (_isSpeaking || _isPreparingSpeech) {
+      await _pauseReadAloud();
+      return;
+    }
+    await _startReadAloud(startIndex: _isPaused ? _activeParagraphIndex : null);
+  }
+
+  Future<void> _startReadAloud({int? startIndex}) async {
+    final text = viewModel.displayPost.excerpt.trim();
+    if (text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No story text to read.')),
+      );
+      return;
+    }
+
+    final session = ++_speechSession;
+    final firstIndex = (startIndex ?? 0).clamp(0, _paragraphs.length - 1);
+    setState(() {
+      _isPreparingSpeech = true;
+      _isSpeaking = false;
+      _isPaused = false;
+      _activeParagraphIndex = firstIndex;
+    });
+
+    try {
+      final language = await _selectTtsLanguage(text);
+      if (session != _speechSession) return;
+      await _tts.setLanguage(language);
+
+      if (mounted) {
+        setState(() {
+          _isPreparingSpeech = false;
+          _isSpeaking = true;
+        });
+      }
+
+      for (var i = firstIndex; i < _paragraphs.length; i++) {
+        final paragraph = _paragraphs[i];
+        if (session != _speechSession) return;
+        setState(() => _activeParagraphIndex = i);
+        _scrollParagraphIntoView(i);
+
+        for (final part in _splitForSpeech(paragraph)) {
+          if (session != _speechSession) return;
+          await _tts.speak(part);
+        }
+      }
+
+      if (mounted && session == _speechSession) {
+        setState(() {
+          _isSpeaking = false;
+          _isPaused = false;
+          _activeParagraphIndex = null;
+        });
+      }
+    } catch (error) {
+      if (!mounted || session != _speechSession) return;
+      setState(() {
+        _isSpeaking = false;
+        _isPreparingSpeech = false;
+        _isPaused = false;
+        _activeParagraphIndex = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not start read aloud: $error')),
+      );
+    }
+  }
+
+  Future<void> _pauseReadAloud() async {
+    _speechSession++;
+    await _tts.stop();
+    if (!mounted) return;
+    setState(() {
+      _isSpeaking = false;
+      _isPreparingSpeech = false;
+      _isPaused = _activeParagraphIndex != null;
+    });
+  }
+
+  Future<void> _stopReadAloud() async {
+    _speechSession++;
+    await _tts.stop();
+    if (!mounted) return;
+    setState(() {
+      _isSpeaking = false;
+      _isPreparingSpeech = false;
+      _isPaused = false;
+      _activeParagraphIndex = null;
+    });
+  }
+
+  Future<String> _selectTtsLanguage(String text) async {
+    final preferredLanguages = _looksLikeUrdu(text)
+        ? const ['ur-PK', 'ur-IN', 'en-US']
+        : const ['en-US', 'en-GB'];
+
+    for (final language in preferredLanguages) {
+      try {
+        final available = await _tts.isLanguageAvailable(language);
+        if (available == true || available == 1) {
+          return language;
+        }
+      } catch (_) {
+        return language;
+      }
+    }
+
+    if (_looksLikeUrdu(text) && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Urdu voice is not available on this device.'),
+        ),
+      );
+    }
+    return preferredLanguages.first;
+  }
+
+  bool _looksLikeUrdu(String text) {
+    return RegExp(r'[\u0600-\u06FF]').hasMatch(text);
+  }
+
+  List<String> _splitForSpeech(String text) {
+    const maxLength = 3500;
+    final words = text.split(RegExp(r'\s+')).where((word) => word.isNotEmpty);
+    final chunks = <String>[];
+    final buffer = StringBuffer();
+
+    for (final word in words) {
+      if (buffer.length + word.length + 1 > maxLength) {
+        chunks.add(buffer.toString().trim());
+        buffer.clear();
+      }
+      if (buffer.isNotEmpty) buffer.write(' ');
+      buffer.write(word);
+    }
+
+    if (buffer.isNotEmpty) chunks.add(buffer.toString().trim());
+    return chunks;
+  }
+
+  List<String> _buildParagraphs(String text) {
+    final normalized = text.trim();
+    if (normalized.isEmpty) return const [];
+
+    final paragraphBreaks = normalized
+        .split(RegExp(r'\n\s*\n+'))
+        .map((part) => part.trim())
+        .where((part) => part.isNotEmpty)
+        .toList();
+
+    if (paragraphBreaks.length > 1) return paragraphBreaks;
+
+    return normalized
+        .split(RegExp(r'(?<=[.!?۔؟])\s+'))
+        .map((part) => part.trim())
+        .where((part) => part.isNotEmpty)
+        .toList();
+  }
+
+  void _scrollParagraphIntoView(int index) {
+    if (index < 0 || index >= _paragraphKeys.length) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final context = _paragraphKeys[index].currentContext;
+      if (context == null) return;
+      Scrollable.ensureVisible(
+        context,
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeOutCubic,
+        alignment: 0.18,
+      );
+    });
   }
 
   void _showPerspectiveMenu() {
@@ -2198,6 +2442,7 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
                 label:
                     const Text('Reset', style: TextStyle(color: Colors.white)),
                 onPressed: () {
+                  _stopReadAloud();
                   viewModel.resetPerspective();
                   Navigator.pop(context);
                 },
@@ -2226,6 +2471,7 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
           ),
         ),
         onPressed: () {
+          _stopReadAloud();
           viewModel.setPerspective(index);
           Navigator.pop(context);
         },
@@ -2249,6 +2495,19 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
             icon: const Icon(Icons.tune),
             tooltip: 'Perspective & Characters',
             onPressed: _showPerspectiveMenu,
+          ),
+          IconButton(
+            icon: Icon(
+              _isSpeaking || _isPreparingSpeech
+                  ? Icons.pause_circle_outline
+                  : Icons.play_circle_outline,
+            ),
+            tooltip: _isSpeaking || _isPreparingSpeech
+                ? 'Pause reading'
+                : _isPaused
+                    ? 'Resume reading'
+                    : 'Read aloud',
+            onPressed: _toggleReadAloud,
           ),
         ],
       ),
@@ -2284,15 +2543,29 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
                   userId: widget.userId,
                   userName: widget.userName,
                 ),
+                const SizedBox(height: 12),
+                _ReadAloudBar(
+                  isSpeaking: _isSpeaking,
+                  isPreparing: _isPreparingSpeech,
+                  isPaused: _isPaused,
+                  onPressed: _toggleReadAloud,
+                  onStop: _isPaused || _isSpeaking || _isPreparingSpeech
+                      ? _stopReadAloud
+                      : null,
+                ),
                 const SizedBox(height: 16),
                 Expanded(
                   child: SingleChildScrollView(
-                    child: Text(
-                      viewModel.displayPost.excerpt,
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodyLarge
-                          ?.copyWith(height: 1.6),
+                    controller: _storyScrollController,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: List.generate(_paragraphs.length, (index) {
+                        return _TrackedStoryParagraph(
+                          key: _paragraphKeys[index],
+                          text: _paragraphs[index],
+                          highlighted: index == _activeParagraphIndex,
+                        );
+                      }),
                     ),
                   ),
                 ),
@@ -2301,6 +2574,119 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
           );
         },
       ),
+    );
+  }
+}
+
+/// =============================================================================
+/// TRACKED STORY PARAGRAPH
+/// =============================================================================
+
+class _TrackedStoryParagraph extends StatelessWidget {
+  final String text;
+  final bool highlighted;
+
+  const _TrackedStoryParagraph({
+    super.key,
+    required this.text,
+    required this.highlighted,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final textStyle = Theme.of(context).textTheme.bodyLarge?.copyWith(
+          height: 1.6,
+          color: highlighted ? const Color(0xFF4A148C) : Colors.black87,
+          fontWeight: highlighted ? FontWeight.w600 : FontWeight.normal,
+        );
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: highlighted ? const Color(0xFFFFF8D8) : Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+        border: highlighted
+            ? Border.all(color: const Color(0xFFE3C54B))
+            : Border.all(color: Colors.transparent),
+      ),
+      child: Text(text, style: textStyle),
+    );
+  }
+}
+
+/// =============================================================================
+/// READ ALOUD BAR
+/// =============================================================================
+
+class _ReadAloudBar extends StatelessWidget {
+  final bool isSpeaking;
+  final bool isPreparing;
+  final bool isPaused;
+  final VoidCallback onPressed;
+  final VoidCallback? onStop;
+
+  const _ReadAloudBar({
+    required this.isSpeaking,
+    required this.isPreparing,
+    required this.isPaused,
+    required this.onPressed,
+    required this.onStop,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final active = isSpeaking || isPreparing;
+    final label = isPreparing
+        ? 'Preparing voice...'
+        : active
+            ? 'Pause reading'
+            : isPaused
+                ? 'Resume reading'
+                : 'Read aloud';
+
+    return Row(
+      children: [
+        Expanded(
+          child: OutlinedButton.icon(
+            onPressed: onPressed,
+            icon: isPreparing
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Icon(active
+                    ? Icons.pause_circle_outline
+                    : isPaused
+                        ? Icons.play_circle_outline
+                        : Icons.volume_up),
+            label: Text(label),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: active ? Colors.orange.shade800 : Colors.purple,
+              side: BorderSide(
+                color:
+                    active ? Colors.orange.shade200 : const Color(0xFFE0C6F2),
+              ),
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+        ),
+        if (onStop != null) ...[
+          const SizedBox(width: 8),
+          IconButton.filledTonal(
+            onPressed: onStop,
+            tooltip: 'Stop and reset',
+            icon: const Icon(Icons.stop),
+          ),
+        ],
+      ],
     );
   }
 }
