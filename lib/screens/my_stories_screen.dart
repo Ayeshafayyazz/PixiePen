@@ -156,20 +156,53 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
                 unlockedBadges: unlockedBadges,
                 nextBadge: nextBadge,
               ),
-              Material(
-                color: Colors.white,
-                child: TabBar(
-                  controller: _tabController,
-                  indicatorColor: kAppPrimary,
-                  labelColor: kAppPrimary,
-                  unselectedLabelColor: Colors.grey.shade600,
-                  labelStyle: const TextStyle(fontWeight: FontWeight.w800),
-                  tabs: [
-                    Tab(text: 'Published (${published.length})'),
-                    Tab(text: 'Drafts (${drafts.length})'),
-                    Tab(text: 'Pending (${pending.length})'),
-                    Tab(text: 'Sent Back (${rejected.length})'),
-                  ],
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Material(
+                  color: Colors.white,
+                  child: TabBar(
+                    controller: _tabController,
+                    isScrollable: false,
+                    padding: EdgeInsets.zero,
+                    labelPadding: EdgeInsets.zero,
+                    indicatorColor: kAppPrimary,
+                    labelColor: kAppPrimary,
+                    unselectedLabelColor: Colors.grey.shade600,
+                    labelStyle: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
+                    unselectedLabelStyle: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    tabs: [
+                      Tab(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text('Published (${published.length})'),
+                        ),
+                      ),
+                      Tab(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text('Drafts (${drafts.length})'),
+                        ),
+                      ),
+                      Tab(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text('Pending (${pending.length})'),
+                        ),
+                      ),
+                      Tab(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text('Sent Back (${rejected.length})'),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
               Expanded(
