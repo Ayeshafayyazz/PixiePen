@@ -11,6 +11,523 @@ import 'write_story_screen.dart';
 import 'community.dart';
 import 'theme.dart';
 
+const List<_AvatarChoice> _avatarChoices = [
+  _AvatarChoice(
+    id: 'cartoon_girl_buns',
+    color: Color(0xFFAD1457),
+    background: Color(0xFFFFE4F1),
+    cartoonStyle: _CartoonAvatarStyle(
+      skin: Color(0xFFFFD7B5),
+      hair: Color(0xFF4E2A1E),
+      shirt: Color(0xFFE91E63),
+      cheek: Color(0xFFFF8A80),
+      hairStyle: _CartoonHairStyle.buns,
+    ),
+  ),
+  _AvatarChoice(
+    id: 'cartoon_boy_cap',
+    color: Color(0xFF1565C0),
+    background: Color(0xFFE1F5FE),
+    cartoonStyle: _CartoonAvatarStyle(
+      skin: Color(0xFFFFC89D),
+      hair: Color(0xFF263238),
+      shirt: Color(0xFF1E88E5),
+      cheek: Color(0xFFFFAB91),
+      hairStyle: _CartoonHairStyle.cap,
+      accessory: Icons.star,
+      accessoryColor: Color(0xFFFFD54F),
+    ),
+  ),
+  _AvatarChoice(
+    id: 'cartoon_girl_bob',
+    color: Color(0xFF6A1B9A),
+    background: Color(0xFFF3E5F5),
+    cartoonStyle: _CartoonAvatarStyle(
+      skin: Color(0xFFF6C19A),
+      hair: Color(0xFF5D4037),
+      shirt: Color(0xFF8E24AA),
+      cheek: Color(0xFFF48FB1),
+      hairStyle: _CartoonHairStyle.bob,
+      accessory: Icons.favorite,
+      accessoryColor: Color(0xFFFF80AB),
+    ),
+  ),
+  _AvatarChoice(
+    id: 'cartoon_boy_curls',
+    color: Color(0xFF00897B),
+    background: Color(0xFFE0F2F1),
+    cartoonStyle: _CartoonAvatarStyle(
+      skin: Color(0xFFB97855),
+      hair: Color(0xFF2E1A12),
+      shirt: Color(0xFF00ACC1),
+      cheek: Color(0xFFD98B73),
+      hairStyle: _CartoonHairStyle.curls,
+    ),
+  ),
+  _AvatarChoice(
+    id: 'cartoon_girl_puffs',
+    color: Color(0xFFD81B60),
+    background: Color(0xFFFFF1F7),
+    cartoonStyle: _CartoonAvatarStyle(
+      skin: Color(0xFF8D5524),
+      hair: Color(0xFF21120D),
+      shirt: Color(0xFFFF7043),
+      cheek: Color(0xFFC66C4A),
+      hairStyle: _CartoonHairStyle.puffs,
+      accessory: Icons.auto_awesome,
+      accessoryColor: Color(0xFFFFD54F),
+    ),
+  ),
+  _AvatarChoice(
+    id: 'cartoon_boy_swoop',
+    color: Color(0xFF2E7D32),
+    background: Color(0xFFE8F5E9),
+    cartoonStyle: _CartoonAvatarStyle(
+      skin: Color(0xFFFFDAB9),
+      hair: Color(0xFFD84315),
+      shirt: Color(0xFF43A047),
+      cheek: Color(0xFFFFAB91),
+      hairStyle: _CartoonHairStyle.swoop,
+    ),
+  ),
+  _AvatarChoice(
+    id: 'cartoon_girl_headband',
+    color: Color(0xFFEF6C00),
+    background: Color(0xFFFFF3E0),
+    cartoonStyle: _CartoonAvatarStyle(
+      skin: Color(0xFFE0AC69),
+      hair: Color(0xFF3E2723),
+      shirt: Color(0xFFFFB300),
+      cheek: Color(0xFFE59675),
+      hairStyle: _CartoonHairStyle.headband,
+      accessory: Icons.local_florist,
+      accessoryColor: Color(0xFFFF7043),
+    ),
+  ),
+  _AvatarChoice(
+    id: 'cartoon_boy_side_part',
+    color: Color(0xFF3949AB),
+    background: Color(0xFFE8EAF6),
+    cartoonStyle: _CartoonAvatarStyle(
+      skin: Color(0xFFDEB887),
+      hair: Color(0xFF6D4C41),
+      shirt: Color(0xFF5C6BC0),
+      cheek: Color(0xFFE6A57E),
+      hairStyle: _CartoonHairStyle.sidePart,
+    ),
+  ),
+  _AvatarChoice(
+    id: 'star_reader',
+    icon: Icons.auto_stories,
+    color: Color(0xFF7B1FA2),
+    background: Color(0xFFF3E5F5),
+  ),
+  _AvatarChoice(
+    id: 'magic_pen',
+    icon: Icons.edit,
+    color: Color(0xFF1565C0),
+    background: Color(0xFFE3F2FD),
+  ),
+  _AvatarChoice(
+    id: 'bright_idea',
+    icon: Icons.lightbulb,
+    color: Color(0xFFF57C00),
+    background: Color(0xFFFFF3E0),
+  ),
+  _AvatarChoice(
+    id: 'kind_heart',
+    icon: Icons.favorite,
+    color: Color(0xFFC2185B),
+    background: Color(0xFFFCE4EC),
+  ),
+  _AvatarChoice(
+    id: 'book_hero',
+    icon: Icons.local_library,
+    color: Color(0xFF2E7D32),
+    background: Color(0xFFE8F5E9),
+  ),
+  _AvatarChoice(
+    id: 'space_writer',
+    icon: Icons.rocket_launch,
+    color: Color(0xFF4527A0),
+    background: Color(0xFFEDE7F6),
+  ),
+];
+
+class _AvatarChoice {
+  final String id;
+  final IconData? icon;
+  final Color color;
+  final Color background;
+  final _CartoonAvatarStyle? cartoonStyle;
+
+  const _AvatarChoice({
+    required this.id,
+    this.icon,
+    required this.color,
+    required this.background,
+    this.cartoonStyle,
+  });
+}
+
+enum _CartoonHairStyle {
+  bob,
+  buns,
+  cap,
+  curls,
+  headband,
+  puffs,
+  sidePart,
+  swoop,
+}
+
+class _CartoonAvatarStyle {
+  final Color skin;
+  final Color hair;
+  final Color shirt;
+  final Color cheek;
+  final _CartoonHairStyle hairStyle;
+  final IconData? accessory;
+  final Color? accessoryColor;
+
+  const _CartoonAvatarStyle({
+    required this.skin,
+    required this.hair,
+    required this.shirt,
+    required this.cheek,
+    required this.hairStyle,
+    this.accessory,
+    this.accessoryColor,
+  });
+}
+
+_AvatarChoice _avatarChoiceFor(String? id) {
+  return _avatarChoices.firstWhere(
+    (avatar) => avatar.id == id,
+    orElse: () => _avatarChoices.first,
+  );
+}
+
+String? _cleanString(dynamic value) {
+  if (value is! String) return null;
+  final trimmed = value.trim();
+  return trimmed.isEmpty ? null : trimmed;
+}
+
+class _AvatarArt extends StatelessWidget {
+  final _AvatarChoice avatar;
+  final double radius;
+
+  const _AvatarArt({
+    required this.avatar,
+    required this.radius,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cartoonStyle = avatar.cartoonStyle;
+    if (cartoonStyle != null) {
+      return ClipOval(
+        child: CustomPaint(
+          size: Size.square(radius * 2),
+          painter: _CartoonAvatarPainter(
+            background: avatar.background,
+            style: cartoonStyle,
+          ),
+          child: SizedBox.square(
+            dimension: radius * 2,
+            child: cartoonStyle.accessory == null
+                ? null
+                : Align(
+                    alignment: const Alignment(0.58, -0.62),
+                    child: Icon(
+                      cartoonStyle.accessory,
+                      color: cartoonStyle.accessoryColor ?? avatar.color,
+                      size: radius * 0.34,
+                    ),
+                  ),
+          ),
+        ),
+      );
+    }
+
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: avatar.background,
+      child: Icon(
+        avatar.icon ?? Icons.face,
+        color: avatar.color,
+        size: radius,
+      ),
+    );
+  }
+}
+
+class _CartoonAvatarPainter extends CustomPainter {
+  final Color background;
+  final _CartoonAvatarStyle style;
+
+  const _CartoonAvatarPainter({
+    required this.background,
+    required this.style,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final width = size.width;
+    final center = Offset(width / 2, size.height / 2);
+    final scale = width / 100;
+    final bgPaint = Paint()..color = background;
+    final hairPaint = Paint()..color = style.hair;
+    final skinPaint = Paint()..color = style.skin;
+    final shirtPaint = Paint()..color = style.shirt;
+    final cheekPaint = Paint()..color = style.cheek.withValues(alpha: 0.75);
+    final eyePaint = Paint()..color = const Color(0xFF263238);
+    final mouthPaint = Paint()
+      ..color = const Color(0xFF5D4037)
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = 2.2 * scale;
+
+    canvas.drawCircle(center, width / 2, bgPaint);
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: Offset(50 * scale, 105 * scale),
+        width: 78 * scale,
+        height: 48 * scale,
+      ),
+      shirtPaint,
+    );
+    _paintHairBack(canvas, scale, hairPaint);
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: Offset(50 * scale, 54 * scale),
+        width: 50 * scale,
+        height: 56 * scale,
+      ),
+      skinPaint,
+    );
+    _paintHairFront(canvas, scale, hairPaint, shirtPaint);
+
+    canvas.drawCircle(Offset(39 * scale, 56 * scale), 3 * scale, eyePaint);
+    canvas.drawCircle(Offset(61 * scale, 56 * scale), 3 * scale, eyePaint);
+    canvas.drawCircle(Offset(35 * scale, 65 * scale), 5 * scale, cheekPaint);
+    canvas.drawCircle(Offset(65 * scale, 65 * scale), 5 * scale, cheekPaint);
+    canvas.drawArc(
+      Rect.fromCenter(
+        center: Offset(50 * scale, 65 * scale),
+        width: 18 * scale,
+        height: 14 * scale,
+      ),
+      0.18,
+      2.78,
+      false,
+      mouthPaint,
+    );
+  }
+
+  void _paintHairBack(Canvas canvas, double scale, Paint hairPaint) {
+    switch (style.hairStyle) {
+      case _CartoonHairStyle.buns:
+        canvas.drawCircle(Offset(25 * scale, 36 * scale), 14 * scale, hairPaint);
+        canvas.drawCircle(Offset(75 * scale, 36 * scale), 14 * scale, hairPaint);
+        canvas.drawOval(
+          Rect.fromCenter(
+            center: Offset(50 * scale, 42 * scale),
+            width: 56 * scale,
+            height: 42 * scale,
+          ),
+          hairPaint,
+        );
+        break;
+      case _CartoonHairStyle.bob:
+      case _CartoonHairStyle.headband:
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromLTWH(24 * scale, 25 * scale, 52 * scale, 65 * scale),
+            Radius.circular(22 * scale),
+          ),
+          hairPaint,
+        );
+        break;
+      case _CartoonHairStyle.puffs:
+        canvas.drawCircle(Offset(24 * scale, 42 * scale), 15 * scale, hairPaint);
+        canvas.drawCircle(Offset(76 * scale, 42 * scale), 15 * scale, hairPaint);
+        break;
+      case _CartoonHairStyle.cap:
+      case _CartoonHairStyle.curls:
+      case _CartoonHairStyle.sidePart:
+      case _CartoonHairStyle.swoop:
+        canvas.drawOval(
+          Rect.fromCenter(
+            center: Offset(50 * scale, 38 * scale),
+            width: 52 * scale,
+            height: 36 * scale,
+          ),
+          hairPaint,
+        );
+        break;
+    }
+  }
+
+  void _paintHairFront(
+    Canvas canvas,
+    double scale,
+    Paint hairPaint,
+    Paint shirtPaint,
+  ) {
+    switch (style.hairStyle) {
+      case _CartoonHairStyle.buns:
+        canvas.drawOval(
+          Rect.fromCenter(
+            center: Offset(50 * scale, 33 * scale),
+            width: 48 * scale,
+            height: 28 * scale,
+          ),
+          hairPaint,
+        );
+        break;
+      case _CartoonHairStyle.bob:
+        canvas.drawOval(
+          Rect.fromCenter(
+            center: Offset(50 * scale, 33 * scale),
+            width: 52 * scale,
+            height: 30 * scale,
+          ),
+          hairPaint,
+        );
+        break;
+      case _CartoonHairStyle.cap:
+        canvas.drawOval(
+          Rect.fromCenter(
+            center: Offset(50 * scale, 35 * scale),
+            width: 54 * scale,
+            height: 28 * scale,
+          ),
+          shirtPaint,
+        );
+        canvas.drawOval(
+          Rect.fromCenter(
+            center: Offset(66 * scale, 43 * scale),
+            width: 32 * scale,
+            height: 10 * scale,
+          ),
+          shirtPaint,
+        );
+        break;
+      case _CartoonHairStyle.curls:
+        for (final offset in const [
+          Offset(31, 35),
+          Offset(41, 30),
+          Offset(51, 31),
+          Offset(61, 33),
+          Offset(69, 40),
+        ]) {
+          canvas.drawCircle(offset * scale, 8 * scale, hairPaint);
+        }
+        break;
+      case _CartoonHairStyle.headband:
+        canvas.drawOval(
+          Rect.fromCenter(
+            center: Offset(50 * scale, 33 * scale),
+            width: 52 * scale,
+            height: 30 * scale,
+          ),
+          hairPaint,
+        );
+        final bandPaint = Paint()
+          ..color = shirtPaint.color
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 4 * scale
+          ..strokeCap = StrokeCap.round;
+        canvas.drawArc(
+          Rect.fromLTWH(28 * scale, 27 * scale, 44 * scale, 28 * scale),
+          3.25,
+          3.0,
+          false,
+          bandPaint,
+        );
+        break;
+      case _CartoonHairStyle.puffs:
+        canvas.drawOval(
+          Rect.fromCenter(
+            center: Offset(50 * scale, 35 * scale),
+            width: 44 * scale,
+            height: 28 * scale,
+          ),
+          hairPaint,
+        );
+        break;
+      case _CartoonHairStyle.sidePart:
+        final path = Path()
+          ..moveTo(25 * scale, 45 * scale)
+          ..quadraticBezierTo(
+            40 * scale,
+            18 * scale,
+            73 * scale,
+            36 * scale,
+          )
+          ..quadraticBezierTo(
+            62 * scale,
+            47 * scale,
+            25 * scale,
+            45 * scale,
+          );
+        canvas.drawPath(path, hairPaint);
+        break;
+      case _CartoonHairStyle.swoop:
+        final path = Path()
+          ..moveTo(25 * scale, 43 * scale)
+          ..quadraticBezierTo(
+            54 * scale,
+            14 * scale,
+            76 * scale,
+            44 * scale,
+          )
+          ..quadraticBezierTo(
+            55 * scale,
+            37 * scale,
+            25 * scale,
+            43 * scale,
+          );
+        canvas.drawPath(path, hairPaint);
+        break;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _CartoonAvatarPainter oldDelegate) {
+    return oldDelegate.background != background || oldDelegate.style != style;
+  }
+}
+
+class _ProfileAvatar extends StatelessWidget {
+  final String? photoUrl;
+  final String? avatarId;
+  final double radius;
+
+  const _ProfileAvatar({
+    required this.photoUrl,
+    required this.avatarId,
+    required this.radius,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cleanPhotoUrl = _cleanString(photoUrl);
+    if (cleanPhotoUrl != null) {
+      return CircleAvatar(
+        radius: radius,
+        backgroundColor: const Color(0xFFF3E5F5),
+        backgroundImage: NetworkImage(cleanPhotoUrl),
+      );
+    }
+
+    final avatar = _avatarChoiceFor(avatarId);
+    return _AvatarArt(avatar: avatar, radius: radius);
+  }
+}
+
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
 
@@ -45,6 +562,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         'username': fallbackName,
         'email': _user!.email?.trim().toLowerCase(),
         'role': 'child',
+        'avatarId': _avatarChoices.first.id,
         'createdAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
     } else {
@@ -56,6 +574,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       await docRef.set({
         'email': _user!.email?.trim().toLowerCase(),
         if (data['role'] == null) 'role': 'child',
+        if (data['avatarId'] == null) 'avatarId': _avatarChoices.first.id,
       }, SetOptions(merge: true));
     }
   }
@@ -204,9 +723,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 : const Stream.empty(),
             builder: (context, userDocSnap) {
               final userData = userDocSnap.data?.data();
-              return CircleAvatar(
+              return _ProfileAvatar(
+                photoUrl: _profilePhotoUrl(userData),
+                avatarId: _profileAvatarId(userData),
                 radius: 50,
-                backgroundImage: NetworkImage(_profilePhotoUrl(userData)),
               );
             },
           ),
@@ -468,8 +988,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
               return UserAccountsDrawerHeader(
                 decoration: const BoxDecoration(color: kAppPrimary),
-                currentAccountPicture: CircleAvatar(
-                  backgroundImage: NetworkImage(_profilePhotoUrl(userData)),
+                currentAccountPicture: _ProfileAvatar(
+                  photoUrl: _profilePhotoUrl(userData),
+                  avatarId: _profileAvatarId(userData),
+                  radius: 36,
                 ),
                 accountName: Text(displayName),
                 accountEmail: Text(email),
@@ -714,7 +1236,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (authPhoto != null && authPhoto.trim().isNotEmpty) {
       return authPhoto.trim();
     }
-    return "https://i.pravatar.cc/150?img=12";
+    return '';
+  }
+
+  String? _profileAvatarId(Map<String, dynamic>? data) {
+    return _cleanString(data?['avatarId']);
   }
 }
 
@@ -1479,6 +2005,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   late final TextEditingController _handleController;
   late final TextEditingController _parentEmailController;
   String? _photoUrl;
+  String? _avatarId;
   String _role = 'child';
   bool _saving = false;
   bool _photoSaving = false;
@@ -1513,9 +2040,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       }
       final photoUrl =
           (data['photoURL'] as String?) ?? (data['profileImageUrl'] as String?);
-      if (photoUrl != null && photoUrl.trim().isNotEmpty && mounted) {
+      final avatarId = _cleanString(data['avatarId']);
+      if (mounted) {
         setState(() {
-          _photoUrl = photoUrl.trim();
+          _avatarId = avatarId;
+          if (photoUrl != null && photoUrl.trim().isNotEmpty) {
+            _photoUrl = photoUrl.trim();
+          }
         });
       }
     }
@@ -1565,6 +2096,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             ? parentEmail
             : FieldValue.delete(),
         'photoURL': _photoUrl,
+        'avatarId': _avatarId ?? _avatarChoices.first.id,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
@@ -1622,6 +2154,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         'photoURL': downloadUrl,
         'profileImageUrl': downloadUrl,
         'profileImagePath': ref.fullPath,
+        'profileImageType': 'upload',
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
@@ -1696,6 +2229,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         'photoURL': FieldValue.delete(),
         'profileImageUrl': FieldValue.delete(),
         'profileImagePath': FieldValue.delete(),
+        'profileImageType': 'avatar',
+        'avatarId': _avatarId ?? _avatarChoices.first.id,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
@@ -1726,6 +2261,124 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
   }
 
+  Future<void> _selectAvatar(String avatarId) async {
+    if (_user == null || _photoSaving) return;
+
+    setState(() {
+      _avatarId = avatarId;
+      _photoSaving = true;
+    });
+
+    try {
+      await _user!.updatePhotoURL(null);
+      await _db.collection('users').doc(_user!.uid).set({
+        'avatarId': avatarId,
+        'photoURL': FieldValue.delete(),
+        'profileImageUrl': FieldValue.delete(),
+        'profileImagePath': FieldValue.delete(),
+        'profileImageType': 'avatar',
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      if (!mounted) return;
+      setState(() {
+        _photoUrl = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Avatar updated successfully'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error updating avatar: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _photoSaving = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _showAvatarPicker() async {
+    final selectedAvatarId = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Choose Avatar',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.sizeOf(context).height * 0.55,
+                  ),
+                  child: GridView.builder(
+                    shrinkWrap: true,
+                    itemCount: _avatarChoices.length,
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 3,
+                      mainAxisSpacing: 12,
+                      crossAxisSpacing: 12,
+                    ),
+                    itemBuilder: (context, index) {
+                      final avatar = _avatarChoices[index];
+                      final isSelected = avatar.id == _avatarId;
+                      return InkWell(
+                        borderRadius: BorderRadius.circular(14),
+                        onTap: () => Navigator.pop(context, avatar.id),
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: isSelected
+                                ? kAppPrimary.withValues(alpha: 0.08)
+                                : Colors.white,
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: isSelected
+                                  ? kAppPrimary
+                                  : const Color(0xFFE3D8EF),
+                              width: isSelected ? 2 : 1,
+                            ),
+                          ),
+                          child: Center(
+                            child: _AvatarArt(avatar: avatar, radius: 30),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (selectedAvatarId != null) {
+      await _selectAvatar(selectedAvatarId);
+    }
+  }
+
   Reference _profilePhotoRef() {
     return _storage.ref().child('users/${_user!.uid}/profile/profile.jpg');
   }
@@ -1735,14 +2388,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     if (lowerPath.endsWith('.png')) return 'image/png';
     if (lowerPath.endsWith('.webp')) return 'image/webp';
     return 'image/jpeg';
-  }
-
-  String get _displayPhotoUrl {
-    final photoUrl = _photoUrl;
-    if (photoUrl != null && photoUrl.trim().isNotEmpty) {
-      return photoUrl.trim();
-    }
-    return "https://i.pravatar.cc/150?img=12";
   }
 
   @override
@@ -1760,14 +2405,22 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             Center(
               child: Column(
                 children: [
-                  CircleAvatar(
+                  _ProfileAvatar(
                     radius: 50,
-                    backgroundImage: NetworkImage(_displayPhotoUrl),
+                    photoUrl: _photoUrl,
+                    avatarId: _avatarId,
                   ),
                   const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 12,
+                    runSpacing: 8,
                     children: [
+                      OutlinedButton.icon(
+                        onPressed: _photoSaving ? null : _showAvatarPicker,
+                        icon: const Icon(Icons.face),
+                        label: const Text('Choose Avatar'),
+                      ),
                       OutlinedButton.icon(
                         onPressed:
                             _photoSaving ? null : _pickAndUploadProfilePhoto,
@@ -1779,19 +2432,19 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                     CircularProgressIndicator(strokeWidth: 2),
                               )
                             : const Icon(Icons.photo_camera),
-                        label: Text(_photoUrl == null ? 'Add Image' : 'Update'),
+                        label:
+                            Text(_photoUrl == null ? 'Upload Photo' : 'Update'),
                       ),
-                      const SizedBox(width: 12),
-                      TextButton.icon(
-                        onPressed: _photoSaving || _photoUrl == null
-                            ? null
-                            : _removeProfilePhoto,
-                        icon: const Icon(Icons.delete_outline),
-                        label: const Text('Remove'),
-                        style: TextButton.styleFrom(
-                          foregroundColor: Colors.red,
+                      if (_photoUrl != null)
+                        TextButton.icon(
+                          onPressed:
+                              _photoSaving ? null : _removeProfilePhoto,
+                          icon: const Icon(Icons.delete_outline),
+                          label: const Text('Remove Photo'),
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.red,
+                          ),
                         ),
-                      ),
                     ],
                   ),
                 ],
