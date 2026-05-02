@@ -157,6 +157,151 @@ class StoryService {
     });
   }
 
+  Future<void> addCommentReply({
+    required String storyId,
+    required String commentId,
+    required String userId,
+    required String userName,
+    required String text,
+  }) async {
+    final moderation = ContentModerationService().moderateText(text);
+    if (!moderation.isSafe) {
+      throw ArgumentError(ContentModerationService.childFriendlyWarning);
+    }
+
+    final storyRef = _db.collection('stories').doc(storyId);
+    final commentRef = storyRef.collection('comments').doc(commentId);
+    final notificationRef = _db.collection('notifications').doc();
+    final replyData = {
+      'id': _db.collection('replyIds').doc().id,
+      'userId': userId,
+      'userName': userName,
+      'text': text,
+      'createdAt': Timestamp.now(),
+    };
+
+    await _db.runTransaction((tx) async {
+      final storySnap = await tx.get(storyRef);
+      final commentSnap = await tx.get(commentRef);
+      final storyData = storySnap.data() ?? {};
+      final commentData = commentSnap.data() ?? {};
+      final commentOwnerId = commentData['userId'] as String?;
+      final title = (storyData['title'] as String?) ?? 'your story';
+      DocumentSnapshot<Map<String, dynamic>>? ownerSnap;
+      if (commentOwnerId != null && commentOwnerId != userId) {
+        ownerSnap = await tx.get(_db.collection('users').doc(commentOwnerId));
+      }
+
+      tx.set(
+        commentRef,
+        {
+          'replies': FieldValue.arrayUnion([replyData]),
+          'replyCount': FieldValue.increment(1),
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+
+      if (commentOwnerId != null &&
+          commentOwnerId != userId &&
+          _notificationsEnabled(ownerSnap?.data())) {
+        tx.set(notificationRef, {
+          'toUserId': commentOwnerId,
+          'fromUserId': userId,
+          'fromUserName': userName,
+          'type': 'comment_reply',
+          'storyId': storyId,
+          'storyTitle': title,
+          'commentId': commentId,
+          'message': '$userName replied to your comment on "$title"',
+          'isRead': false,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
+    });
+  }
+
+  Future<void> toggleCommentReaction({
+    required String storyId,
+    required String commentId,
+    required String userId,
+    required String userName,
+    required String emoji,
+  }) async {
+    final storyRef = _db.collection('stories').doc(storyId);
+    final commentRef = storyRef.collection('comments').doc(commentId);
+    final reactionRef = _db
+        .collection('stories')
+        .doc(storyId)
+        .collection('comments')
+        .doc(commentId)
+        .collection('reactions')
+        .doc(userId);
+    final notificationRef = _db.collection('notifications').doc();
+
+    await _db.runTransaction((tx) async {
+      final storySnap = await tx.get(storyRef);
+      final commentSnap = await tx.get(commentRef);
+      final reactionSnap = await tx.get(reactionRef);
+      final storyData = storySnap.data() ?? {};
+      final commentData = commentSnap.data() ?? {};
+      final commentOwnerId = commentData['userId'] as String?;
+      final title = (storyData['title'] as String?) ?? 'your story';
+      final previousEmoji = reactionSnap.data()?['emoji'] as String?;
+      DocumentSnapshot<Map<String, dynamic>>? ownerSnap;
+      if (commentOwnerId != null && commentOwnerId != userId) {
+        ownerSnap = await tx.get(_db.collection('users').doc(commentOwnerId));
+      }
+
+      if (reactionSnap.exists && previousEmoji == emoji) {
+        tx.delete(reactionRef);
+        return;
+      }
+
+      tx.set(
+        reactionRef,
+        {
+          'userId': userId,
+          'emoji': emoji,
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+
+      if (commentOwnerId != null &&
+          commentOwnerId != userId &&
+          previousEmoji != emoji &&
+          _notificationsEnabled(ownerSnap?.data())) {
+        tx.set(notificationRef, {
+          'toUserId': commentOwnerId,
+          'fromUserId': userId,
+          'fromUserName': userName,
+          'type': 'comment_reaction',
+          'storyId': storyId,
+          'storyTitle': title,
+          'commentId': commentId,
+          'emoji': emoji,
+          'message': '$userName reacted $emoji to your comment on "$title"',
+          'isRead': false,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
+    });
+  }
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> getCommentReactions({
+    required String storyId,
+    required String commentId,
+  }) {
+    return _db
+        .collection('stories')
+        .doc(storyId)
+        .collection('comments')
+        .doc(commentId)
+        .collection('reactions')
+        .snapshots();
+  }
+
   Future<void> rateStory({
     required String storyId,
     required String userId,
@@ -264,6 +409,49 @@ class StoryService {
     if (value is num) return value.toInt();
     if (value is String) return int.tryParse(value) ?? 0;
     return 0;
+  }
+
+  static Map<String, dynamic> _readDynamicMap(dynamic value) {
+    if (value is Map) {
+      return value.map((key, mapValue) => MapEntry(key.toString(), mapValue));
+    }
+    return <String, dynamic>{};
+  }
+
+  static Map<String, String> _readStringMap(dynamic value) {
+    if (value is Map) {
+      final result = <String, String>{};
+      for (final entry in value.entries) {
+        final mapValue = entry.value;
+        if (mapValue is String && mapValue.isNotEmpty) {
+          result[entry.key.toString()] = mapValue;
+        }
+      }
+      return result;
+    }
+    return <String, String>{};
+  }
+
+  static List<Map<String, dynamic>> _readCommentReactions(
+    Map<String, dynamic> data,
+  ) {
+    final reactionList = data['commentReactions'];
+    if (reactionList is List) {
+      return reactionList
+          .whereType<Map>()
+          .map((reaction) => Map<String, dynamic>.from(reaction))
+          .where((reaction) =>
+              reaction['userId'] is String && reaction['emoji'] is String)
+          .toList();
+    }
+
+    final reactionsByUser = _readStringMap(data['reactionsByUser']);
+    return reactionsByUser.entries
+        .map((entry) => {
+              'userId': entry.key,
+              'emoji': entry.value,
+            })
+        .toList();
   }
 
   static bool _notificationsEnabled(Map<String, dynamic>? userData) {
@@ -989,7 +1177,11 @@ class _CommunityScreenState extends State<CommunityScreen> {
     String storyId,
     String type,
   ) async {
-    if (type == 'like' || type == 'comment' || type == 'rating') {
+    if (type == 'like' ||
+        type == 'comment' ||
+        type == 'comment_reply' ||
+        type == 'comment_reaction' ||
+        type == 'rating') {
       final snap = await _db.collection('stories').doc(storyId).get();
       if (!mounted) return;
 
@@ -1104,8 +1296,319 @@ class _CommunityScreenState extends State<CommunityScreen> {
     return 0;
   }
 
+  String _currentCommentUserName() {
+    return _userName.isNotEmpty
+        ? _userName
+        : (_user?.displayName ?? _user?.email?.split('@').first ?? 'User');
+  }
+
+  Future<void> _showReactionPicker({
+    required BuildContext context,
+    required String storyId,
+    required String commentId,
+  }) async {
+    const emojis = ['❤️', '😂', '👏', '😍', '👍'];
+    final selectedEmoji = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: emojis
+                  .map(
+                    (emoji) => InkWell(
+                      borderRadius: BorderRadius.circular(24),
+                      onTap: () => Navigator.pop(context, emoji),
+                      child: Padding(
+                        padding: const EdgeInsets.all(10),
+                        child: Text(
+                          emoji,
+                          style: const TextStyle(fontSize: 28),
+                        ),
+                      ),
+                    ),
+                  )
+                  .toList(),
+            ),
+          ),
+        );
+      },
+    );
+
+    if (selectedEmoji == null || _userId.isEmpty) return;
+    await _toggleCommentReactionSafely(
+      context: context,
+      storyId: storyId,
+      commentId: commentId,
+      emoji: selectedEmoji,
+    );
+  }
+
+  Future<void> _toggleCommentReactionSafely({
+    required BuildContext context,
+    required String storyId,
+    required String commentId,
+    required String emoji,
+  }) async {
+    if (_userId.isEmpty) return;
+
+    try {
+      await _service.toggleCommentReaction(
+        storyId: storyId,
+        commentId: commentId,
+        userId: _userId,
+        userName: _currentCommentUserName(),
+        emoji: emoji,
+      );
+    } on FirebaseException catch (e) {
+      if (!context.mounted) return;
+      final message = e.code == 'permission-denied'
+          ? 'Reactions need updated Firestore rules.'
+          : 'Could not update reaction: ${e.message ?? e.code}';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not update reaction: $e')),
+      );
+    }
+  }
+
+  Widget _buildCommentReactionBar({
+    required String storyId,
+    required String commentId,
+  }) {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: _service.getCommentReactions(
+        storyId: storyId,
+        commentId: commentId,
+      ),
+      builder: (context, snapshot) {
+        final reactionCounts = <String, int>{};
+        String? selectedReaction;
+
+        for (final doc in snapshot.data?.docs ?? const []) {
+          final data = doc.data();
+          final emoji = data['emoji'];
+          if (emoji is! String || emoji.isEmpty) continue;
+          reactionCounts[emoji] = (reactionCounts[emoji] ?? 0) + 1;
+          if (doc.id == _userId) selectedReaction = emoji;
+        }
+
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (reactionCounts.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: Text(
+                  reactionCounts.entries
+                      .map((entry) => '${entry.key} ${entry.value}')
+                      .join(' '),
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ),
+            IconButton(
+              tooltip:
+                  selectedReaction == '❤️' ? 'Remove reaction' : 'React',
+              onPressed: _userId.isEmpty
+                  ? null
+                  : () {
+                      _toggleCommentReactionSafely(
+                        context: context,
+                        storyId: storyId,
+                        commentId: commentId,
+                        emoji: '❤️',
+                      );
+                    },
+              icon: Icon(
+                selectedReaction == '❤️'
+                    ? Icons.favorite
+                    : Icons.favorite_border,
+                color: selectedReaction == '❤️'
+                    ? Colors.redAccent
+                    : Colors.grey.shade700,
+                size: 20,
+              ),
+              visualDensity: VisualDensity.compact,
+            ),
+            IconButton(
+              tooltip: 'Choose reaction',
+              onPressed: _userId.isEmpty
+                  ? null
+                  : () => _showReactionPicker(
+                        context: context,
+                        storyId: storyId,
+                        commentId: commentId,
+                      ),
+              icon: Icon(
+                Icons.add_reaction_outlined,
+                color: selectedReaction == null
+                    ? Colors.grey.shade700
+                    : kAppPrimary,
+                size: 20,
+              ),
+              visualDensity: VisualDensity.compact,
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildReactionSummary(Map<String, dynamic> data) {
+    final reactionCounts = <String, int>{};
+    for (final reaction in StoryService._readCommentReactions(data)) {
+      final emoji = reaction['emoji'] as String;
+      reactionCounts[emoji] = (reactionCounts[emoji] ?? 0) + 1;
+    }
+    if (reactionCounts.isEmpty) {
+      for (final entry
+          in StoryService._readDynamicMap(data['reactionCounts']).entries) {
+        final count = _readInt(entry.value);
+        if (count > 0) reactionCounts[entry.key] = count;
+      }
+    }
+
+    return _buildReactionSummaryFromCounts(reactionCounts);
+  }
+
+  Widget _buildReactionSummaryFromCounts(Map<String, int> reactionCounts) {
+    final entries = reactionCounts.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    if (entries.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 4,
+        children: entries.map((entry) {
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF3E5F5),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Text(
+              '${entry.key} ${entry.value}',
+              style: const TextStyle(fontSize: 12),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  String? _currentUserCommentReaction(Map<String, dynamic> data) {
+    final reactions = StoryService._readCommentReactions(data);
+    for (final reaction in reactions) {
+      if (reaction['userId'] == _userId) {
+        final emoji = reaction['emoji'];
+        if (emoji is String && emoji.isNotEmpty) return emoji;
+      }
+    }
+
+    final reactionsByUser = StoryService._readStringMap(data['reactionsByUser']);
+    final legacyReaction = reactionsByUser[_userId];
+    return legacyReaction is String && legacyReaction.isNotEmpty
+        ? legacyReaction
+        : null;
+  }
+
+  Widget _buildCommentReplies({
+    required List<dynamic> replies,
+  }) {
+    final replyMaps = replies
+        .whereType<Map>()
+        .map((reply) => Map<String, dynamic>.from(reply))
+        .toList()
+      ..sort((a, b) {
+        final aDate = _readTimestamp(a['createdAt']);
+        final bDate = _readTimestamp(b['createdAt']);
+        return aDate.compareTo(bDate);
+      });
+
+    if (replyMaps.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.only(top: 8, left: 4),
+      padding: const EdgeInsets.only(left: 12),
+      decoration: const BoxDecoration(
+        border: Border(
+          left: BorderSide(color: Color(0xFFE2D9F3), width: 2),
+        ),
+      ),
+      child: Column(
+        children: replyMaps.map((data) {
+          final name = (data['userName'] as String?) ?? 'Unknown';
+          return Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                CircleAvatar(
+                  radius: 13,
+                  backgroundColor: const Color(0xFFE1BEE7),
+                  child: Text(
+                    name.isNotEmpty ? name[0] : '?',
+                    style: const TextStyle(
+                      color: kAppPrimary,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFAF8FD),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          name,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          (data['text'] as String?) ?? '',
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
   void _openComments(BuildContext context, String storyId) {
     final controller = TextEditingController();
+    final focusNode = FocusNode();
+    final expandedReplyCommentIds = <String>{};
+    _CommentReplyTarget? replyTarget;
+    bool isSending = false;
 
     showModalBottomSheet(
       context: context,
@@ -1114,168 +1617,403 @@ class _CommunityScreenState extends State<CommunityScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) {
-        return Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom,
-            left: 16,
-            right: 16,
-            top: 12,
-          ),
-          child: SizedBox(
-            height: MediaQuery.of(context).size.height * 0.6,
-            child: Column(
-              children: [
-                Container(
-                  height: 4,
-                  width: 40,
-                  margin: const EdgeInsets.only(bottom: 12),
-                  decoration: BoxDecoration(
-                    color: Colors.purple,
-                    borderRadius: BorderRadius.circular(2),
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setModalState) {
+            Future<void> submitText() async {
+              if (isSending) return;
+              final text = controller.text.trim();
+              if (text.isEmpty || _userId.isEmpty) return;
+
+              final moderation = _moderationService.moderateText(text);
+              if (!moderation.isSafe) {
+                ScaffoldMessenger.of(sheetContext).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      ContentModerationService.childFriendlyWarning,
+                    ),
                   ),
-                ),
-                const Text(
-                  'Comments',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Expanded(
-                  child: StreamBuilder<QuerySnapshot>(
-                    stream: _service.getComments(storyId),
-                    builder: (context, snapshot) {
-                      if (!snapshot.hasData) {
-                        return const Center(child: CircularProgressIndicator());
-                      }
+                );
+                return;
+              }
 
-                      final docs = snapshot.data!.docs;
+              final target = replyTarget;
+              setModalState(() => isSending = true);
+              try {
+                if (target == null) {
+                  await _service.addComment(
+                    storyId: storyId,
+                    userId: _userId,
+                    userName: _currentCommentUserName(),
+                    text: text,
+                  );
+                } else {
+                  await _service.addCommentReply(
+                    storyId: storyId,
+                    commentId: target.commentId,
+                    userId: _userId,
+                    userName: _currentCommentUserName(),
+                    text: text,
+                  );
+                  expandedReplyCommentIds.add(target.commentId);
+                }
+              } catch (e) {
+                if (!sheetContext.mounted) return;
+                ScaffoldMessenger.of(sheetContext).showSnackBar(
+                  SnackBar(content: Text('Could not send: $e')),
+                );
+                return;
+              } finally {
+                if (sheetContext.mounted) {
+                  setModalState(() => isSending = false);
+                }
+              }
 
-                      if (docs.isEmpty) {
-                        return const Center(child: Text("No comments yet"));
-                      }
+              controller.clear();
+              if (!sheetContext.mounted) return;
+              setModalState(() => replyTarget = null);
+            }
 
-                      return ListView.builder(
-                        itemCount: docs.length,
-                        itemBuilder: (context, i) {
-                          final data = docs[i].data() as Map<String, dynamic>;
-                          final isOwner = data['userId'] == _userId;
+            void startReply(String commentId, String userName) {
+              setModalState(() {
+                replyTarget = _CommentReplyTarget(
+                  commentId: commentId,
+                  userName: userName,
+                );
+              });
+              focusNode.requestFocus();
+            }
 
-                          return Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 8),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                CircleAvatar(
-                                  backgroundColor: Colors.purple,
-                                  radius: 18,
-                                  child: Text(
-                                    (data['userName'] as String?)?.isNotEmpty ==
-                                            true
-                                        ? (data['userName'] as String)[0]
-                                        : '?',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        data['userName'] ?? 'Unknown',
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                      Text(data['text'] ?? ''),
-                                    ],
-                                  ),
-                                ),
-                                if (isOwner)
-                                  IconButton(
-                                    icon: const Icon(
-                                      Icons.delete,
-                                      color: Colors.red,
-                                      size: 18,
-                                    ),
-                                    onPressed: () async {
-                                      await _service.deleteComment(
-                                        storyId: storyId,
-                                        commentId: docs[i].id,
-                                      );
-                                    },
-                                  ),
-                              ],
-                            ),
-                          );
-                        },
-                      );
-                    },
-                  ),
-                ),
-                Row(
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(sheetContext).viewInsets.bottom,
+                left: 16,
+                right: 16,
+                top: 12,
+              ),
+              child: SizedBox(
+                height: MediaQuery.of(sheetContext).size.height * 0.72,
+                child: Column(
                   children: [
-                    Expanded(
-                      child: TextField(
-                        controller: controller,
-                        decoration: InputDecoration(
-                          hintText: 'Add a comment...',
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
+                    Container(
+                      height: 4,
+                      width: 40,
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.purple,
+                        borderRadius: BorderRadius.circular(2),
                       ),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.send, color: Colors.purple),
-                      onPressed: () async {
-                        final commentText = controller.text.trim();
-                        if (commentText.isNotEmpty && _userId.isNotEmpty) {
-                          final moderation =
-                              _moderationService.moderateText(commentText);
-                          if (!moderation.isSafe) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  ContentModerationService.childFriendlyWarning,
-                                ),
-                              ),
+                    const Text(
+                      'Comments',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Expanded(
+                      child: StreamBuilder<QuerySnapshot>(
+                        stream: _service.getComments(storyId),
+                        builder: (context, snapshot) {
+                          if (!snapshot.hasData) {
+                            return const Center(
+                              child: CircularProgressIndicator(),
                             );
-                            return;
                           }
 
-                          // Use current username, fallback if empty
-                          String commentUserName = _userName.isNotEmpty
-                              ? _userName
-                              : (_user?.displayName ??
-                                  _user?.email?.split('@').first ??
-                                  'User');
+                          final docs = snapshot.data!.docs;
 
-                          await _service.addComment(
-                            storyId: storyId,
-                            userId: _userId,
-                            userName: commentUserName,
-                            text: commentText,
+                          if (docs.isEmpty) {
+                            return const Center(
+                              child: Text("No comments yet"),
+                            );
+                          }
+
+                          return ListView.separated(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            itemCount: docs.length,
+                            separatorBuilder: (_, __) => const Divider(
+                              height: 24,
+                              color: Color(0xFFF1ECF7),
+                            ),
+                            itemBuilder: (context, i) {
+                              final commentId = docs[i].id;
+                              final data =
+                                  docs[i].data() as Map<String, dynamic>;
+                              final isOwner = data['userId'] == _userId;
+                              final commentUserName =
+                                  (data['userName'] as String?) ?? 'Unknown';
+                              final replies =
+                                  (data['replies'] as List?) ?? const [];
+                              final replyCount = replies.isNotEmpty
+                                  ? replies.length
+                                  : _readInt(data['replyCount']);
+                              final repliesExpanded =
+                                  expandedReplyCommentIds.contains(commentId);
+
+                              return Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  CircleAvatar(
+                                    backgroundColor: Colors.purple,
+                                    radius: 18,
+                                    child: Text(
+                                      commentUserName.isNotEmpty
+                                          ? commentUserName[0]
+                                          : '?',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Container(
+                                          width: double.infinity,
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 12,
+                                            vertical: 10,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFFAF8FD),
+                                            borderRadius:
+                                                BorderRadius.circular(12),
+                                          ),
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                commentUserName,
+                                                style: const TextStyle(
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 3),
+                                              Text(data['text'] ?? ''),
+                                            ],
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Row(
+                                          children: [
+                                            TextButton(
+                                              onPressed: _userId.isEmpty
+                                                  ? null
+                                                  : () => startReply(
+                                                        commentId,
+                                                        commentUserName,
+                                                      ),
+                                              style: TextButton.styleFrom(
+                                                foregroundColor:
+                                                    Colors.grey.shade700,
+                                                minimumSize: Size.zero,
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                  horizontal: 8,
+                                                  vertical: 4,
+                                                ),
+                                                tapTargetSize:
+                                                    MaterialTapTargetSize
+                                                        .shrinkWrap,
+                                              ),
+                                              child: const Text('Reply'),
+                                            ),
+                                            _buildCommentReactionBar(
+                                              storyId: storyId,
+                                              commentId: commentId,
+                                            ),
+                                            const Spacer(),
+                                            if (isOwner)
+                                              IconButton(
+                                                tooltip: 'Delete comment',
+                                                icon: const Icon(
+                                                  Icons.delete_outline,
+                                                  color: Colors.red,
+                                                  size: 19,
+                                                ),
+                                                visualDensity:
+                                                    VisualDensity.compact,
+                                                onPressed: () async {
+                                                  await _service.deleteComment(
+                                                    storyId: storyId,
+                                                    commentId: commentId,
+                                                  );
+                                                },
+                                              ),
+                                          ],
+                                        ),
+                                        if (replyCount > 0)
+                                          Align(
+                                            alignment: Alignment.centerLeft,
+                                            child: TextButton(
+                                              onPressed: () {
+                                                setModalState(() {
+                                                  if (repliesExpanded) {
+                                                    expandedReplyCommentIds
+                                                        .remove(commentId);
+                                                  } else {
+                                                    expandedReplyCommentIds
+                                                        .add(commentId);
+                                                  }
+                                                });
+                                              },
+                                              style: TextButton.styleFrom(
+                                                foregroundColor: kAppPrimary,
+                                                minimumSize: Size.zero,
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                  horizontal: 4,
+                                                  vertical: 2,
+                                                ),
+                                                tapTargetSize:
+                                                    MaterialTapTargetSize
+                                                        .shrinkWrap,
+                                              ),
+                                              child: Text(
+                                                repliesExpanded
+                                                    ? 'Hide replies'
+                                                    : 'View $replyCount ${replyCount == 1 ? 'reply' : 'replies'}',
+                                                style: const TextStyle(
+                                                  fontWeight: FontWeight.w700,
+                                                  fontSize: 12,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        AnimatedSwitcher(
+                                          duration:
+                                              const Duration(milliseconds: 180),
+                                          child: repliesExpanded
+                                              ? _buildCommentReplies(
+                                                  replies: replies,
+                                                )
+                                              : const SizedBox.shrink(),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              );
+                            },
                           );
-                          controller.clear();
-                        }
-                      },
+                        },
+                      ),
+                    ),
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 180),
+                      child: replyTarget == null
+                          ? const SizedBox.shrink()
+                          : Container(
+                              key: ValueKey(replyTarget!.commentId),
+                              width: double.infinity,
+                              margin: const EdgeInsets.only(bottom: 8),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF7F3FF),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      'Replying to ${replyTarget!.userName}',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: kAppPrimary,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                                  IconButton(
+                                    tooltip: 'Cancel reply',
+                                    onPressed: () => setModalState(
+                                      () => replyTarget = null,
+                                    ),
+                                    icon: const Icon(Icons.close, size: 18),
+                                    visualDensity: VisualDensity.compact,
+                                  ),
+                                ],
+                              ),
+                            ),
+                    ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: controller,
+                            focusNode: focusNode,
+                            minLines: 1,
+                            maxLines: 4,
+                            textInputAction: TextInputAction.send,
+                            onSubmitted: (_) {
+                              submitText();
+                            },
+                            decoration: InputDecoration(
+                              hintText: replyTarget == null
+                                  ? 'Add a comment...'
+                                  : 'Write a reply...',
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 10,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton.filled(
+                          icon: isSending
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Icon(Icons.send),
+                          onPressed: isSending ? null : submitText,
+                          style: IconButton.styleFrom(
+                            backgroundColor: Colors.purple,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         );
       },
-    );
+    ).whenComplete(() {
+      controller.dispose();
+      focusNode.dispose();
+    });
   }
+}
+
+class _CommentReplyTarget {
+  final String commentId;
+  final String userName;
+
+  const _CommentReplyTarget({
+    required this.commentId,
+    required this.userName,
+  });
 }
 
 /// =============================================================================
@@ -1746,6 +2484,16 @@ class _NotificationScreenState extends State<NotificationScreen> {
     }
   }
 
+  Future<void> _deleteNotification(
+    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+  ) async {
+    await doc.reference.delete();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Notification deleted')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1803,81 +2551,106 @@ class _NotificationScreenState extends State<NotificationScreen> {
               final canOpenStory = storyId != null &&
                   (type == 'like' ||
                       type == 'comment' ||
+                      type == 'comment_reply' ||
+                      type == 'comment_reaction' ||
                       type == 'rating' ||
                       type == 'approval_result');
 
-              return InkWell(
-                onTap: canOpenApproval
-                    ? () {
-                        Navigator.pop(context);
-                        widget.onParentApprovalTap?.call(storyId);
-                      }
-                    : canOpenStory
-                        ? () {
-                            Navigator.pop(context);
-                            widget.onStoryNotificationTap?.call(storyId, type);
-                          }
-                        : null,
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
-                  padding: const EdgeInsets.all(14),
+              return Dismissible(
+                key: ValueKey(docs[index].id),
+                direction: DismissDirection.endToStart,
+                background: Container(
+                  alignment: Alignment.centerRight,
+                  padding: const EdgeInsets.only(right: 18),
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: Colors.red.shade600,
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: isRead
-                          ? const Color(0xFFE2D9F3)
-                          : kAppPrimary.withValues(alpha: 0.45),
-                    ),
                   ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      CircleAvatar(
-                        backgroundColor: color,
-                        child: Icon(
-                          icon,
-                          color: Colors.white,
-                          size: 18,
-                        ),
+                  child: const Icon(Icons.delete_outline, color: Colors.white),
+                ),
+                onDismissed: (_) => _deleteNotification(docs[index]),
+                child: InkWell(
+                  onTap: canOpenApproval
+                      ? () {
+                          Navigator.pop(context);
+                          widget.onParentApprovalTap?.call(storyId);
+                        }
+                      : canOpenStory
+                          ? () {
+                              Navigator.pop(context);
+                              widget.onStoryNotificationTap
+                                  ?.call(storyId, type);
+                            }
+                          : null,
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: isRead
+                            ? const Color(0xFFE2D9F3)
+                            : kAppPrimary.withValues(alpha: 0.45),
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              message,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w800,
-                                color: Colors.black87,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              canOpenApproval
-                                  ? 'Tap to review'
-                                  : canOpenStory
-                                      ? 'Tap to open'
-                                      : _formatDate(data['createdAt']),
-                              style: TextStyle(
-                                color: Colors.grey.shade600,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (!isRead)
-                        Container(
-                          width: 9,
-                          height: 9,
-                          decoration: const BoxDecoration(
-                            color: kAppPrimary,
-                            shape: BoxShape.circle,
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        CircleAvatar(
+                          backgroundColor: color,
+                          child: Icon(
+                            icon,
+                            color: Colors.white,
+                            size: 18,
                           ),
                         ),
-                    ],
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                message,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.black87,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                canOpenApproval
+                                    ? 'Tap to review'
+                                    : canOpenStory
+                                        ? 'Tap to open'
+                                        : _formatDate(data['createdAt']),
+                                style: TextStyle(
+                                  color: Colors.grey.shade600,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Delete notification',
+                          onPressed: () => _deleteNotification(docs[index]),
+                          icon: const Icon(Icons.delete_outline, size: 20),
+                          color: Colors.grey.shade600,
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        if (!isRead)
+                          Container(
+                            width: 9,
+                            height: 9,
+                            margin: const EdgeInsets.only(top: 12),
+                            decoration: const BoxDecoration(
+                              color: kAppPrimary,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
                 ),
               );
@@ -1902,6 +2675,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
   static String _fallbackMessage(String type) {
     if (type == 'comment') return 'Someone commented on your story';
+    if (type == 'comment_reply') return 'Someone replied to your comment';
+    if (type == 'comment_reaction') return 'Someone reacted to your comment';
     if (type == 'rating') return 'Someone rated your story';
     if (type == 'parent_approval') return 'A story is waiting for approval';
     if (type == 'approval_result') return 'Your story approval was updated';
@@ -1910,6 +2685,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
   static IconData _notificationIcon(String type) {
     if (type == 'comment') return Icons.chat_bubble_outline;
+    if (type == 'comment_reply') return Icons.reply;
+    if (type == 'comment_reaction') return Icons.add_reaction_outlined;
     if (type == 'rating') return Icons.star_outline;
     if (type == 'parent_approval') return Icons.fact_check_outlined;
     if (type == 'approval_result') return Icons.verified_outlined;
@@ -1918,6 +2695,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
   static Color _notificationColor(String type) {
     if (type == 'comment') return kAppPrimary;
+    if (type == 'comment_reply') return kAppPrimary;
+    if (type == 'comment_reaction') return kAppPrimary;
     if (type == 'rating') return Colors.amber.shade800;
     if (type == 'parent_approval') return Colors.orange.shade800;
     if (type == 'approval_result') return Colors.green.shade700;
