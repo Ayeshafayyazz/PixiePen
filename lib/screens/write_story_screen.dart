@@ -39,7 +39,6 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
   String? _storyCoverUrl;
   bool _isSaving = false;
   bool _isPublishing = false;
-  bool _useUrduStoryEditor = false;
 
   int get _wordCount {
     if (_bodyController.text.trim().isEmpty) return 0;
@@ -53,15 +52,6 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     super.initState();
 
     _bodyController.addListener(_scrollBodyToFollowCaret);
-
-    _bodyFocusNode.addListener(() {
-      if (!_bodyFocusNode.hasFocus &&
-          _useUrduStoryEditor &&
-          !_containsUrdu(_bodyController.text)) {
-        _useUrduStoryEditor = false;
-      }
-      if (mounted) setState(() {});
-    });
 
     if (widget.storyId != null) {
       _loadExistingStory();
@@ -116,7 +106,6 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     final data = doc.data()!;
     _titleController.text = data['title'] ?? '';
     _bodyController.text = data['body'] ?? '';
-    _useUrduStoryEditor = _containsUrdu(_bodyController.text);
     _storyCoverUrl = data['coverUrl'];
     if (mounted) setState(() {});
   }
@@ -377,7 +366,6 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
 
   void _replaceBody(String text) {
     setState(() {
-      _useUrduStoryEditor = _containsUrdu(text);
       _bodyController.value = TextEditingValue(
         text: text,
         selection: TextSelection.collapsed(offset: text.length),
@@ -396,15 +384,10 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     Navigator.maybePop(context);
   }
 
-  void _handleBodyChanged(String value) {
-    final containsUrdu = _containsUrdu(value);
-    if (containsUrdu && !_useUrduStoryEditor) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || !_containsUrdu(_bodyController.text)) return;
-        setState(() => _useUrduStoryEditor = true);
-        _scrollToBottom();
-      });
-    }
+  void _handleBodyChanged(String _) {
+    // Rebuild so [textDirection] / [textAlign] follow current script (English
+    // → left, Urdu → right). No "RTL latch" — that kept English right-aligned.
+    setState(() {});
   }
 
   @override
@@ -634,6 +617,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
             decoration: InputDecoration(
               prefixIcon: Icon(icon, color: kAppPrimary),
               hintText: hint,
+              hintTextDirection: direction,
               border: InputBorder.none,
               contentPadding: const EdgeInsets.symmetric(vertical: 12),
             ),
@@ -656,9 +640,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     required ValueChanged<String> onChanged,
   }) {
     final borderRadius = BorderRadius.circular(14);
-    final direction = _useUrduStoryEditor
-        ? TextDirection.rtl
-        : _textDirectionFor(controller.text);
+    final direction = _textDirectionFor(controller.text);
     final textAlign = _textAlignFor(direction);
     final isRtl = direction == TextDirection.rtl;
 
@@ -738,8 +720,17 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     ).hasMatch(value);
   }
 
+  /// English / Latin letters (mixed stories should stay left-aligned).
+  bool _containsLatinLetters(String value) {
+    return RegExp(r'[A-Za-z]').hasMatch(value);
+  }
+
+  /// Urdu-only → RTL / right. English-only or **mixed** English+Urdu → LTR /
+  /// left; Urdu runs still render RTL inside the line via Unicode bidi.
   TextDirection _textDirectionFor(String value) {
-    return _containsUrdu(value) ? TextDirection.rtl : TextDirection.ltr;
+    if (!_containsUrdu(value)) return TextDirection.ltr;
+    if (_containsLatinLetters(value)) return TextDirection.ltr;
+    return TextDirection.rtl;
   }
 
   TextAlign _textAlignFor(TextDirection direction) {
