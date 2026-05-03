@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../services/content_moderation_service.dart';
+import '../services/story_image_generation_service.dart';
+
 class AiImageGeneratorScreen extends StatefulWidget {
   final String? initialPrompt;
   const AiImageGeneratorScreen({super.key, this.initialPrompt});
@@ -10,6 +13,9 @@ class AiImageGeneratorScreen extends StatefulWidget {
 
 class _AiImageGeneratorScreenState extends State<AiImageGeneratorScreen> {
   final TextEditingController _promptController = TextEditingController();
+  final StoryImageGenerationService _imageGen = StoryImageGenerationService();
+  final ContentModerationService _moderation = ContentModerationService();
+
   bool _isLoading = false;
   final List<String> _generatedImageUrls = [];
 
@@ -23,28 +29,50 @@ class _AiImageGeneratorScreenState extends State<AiImageGeneratorScreen> {
     }
   }
 
+  @override
+  void dispose() {
+    _promptController.dispose();
+    super.dispose();
+  }
+
   Future<void> _generateImages() async {
     final prompt = _promptController.text.trim();
     if (prompt.isEmpty) return;
+
+    final mod = _moderation.moderateText(prompt);
+    if (!mod.isSafe) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(ContentModerationService.childFriendlyWarning)),
+      );
+      return;
+    }
 
     setState(() {
       _isLoading = true;
       _generatedImageUrls.clear();
     });
 
-    // Simulate AI generation delay
-    await Future.delayed(const Duration(seconds: 2));
-
-    // Generate placeholder images based on prompt hash
-    setState(() {
-      _generatedImageUrls.addAll([
-        'https://picsum.photos/seed/${prompt.hashCode + 1}/512',
-        'https://picsum.photos/seed/${prompt.hashCode + 2}/512',
-        'https://picsum.photos/seed/${prompt.hashCode + 3}/512',
-        'https://picsum.photos/seed/${prompt.hashCode + 4}/512',
-      ]);
-      _isLoading = false;
-    });
+    try {
+      final urls = await _imageGen.generateImageUrls(prompt, count: 4);
+      if (!mounted) return;
+      setState(() {
+        _generatedImageUrls.addAll(urls);
+        _isLoading = false;
+      });
+    } on ImageGenerationException catch (e) {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message)),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not generate images: $e')),
+      );
+    }
   }
 
   void _selectImageAsCover(String imageUrl) {

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -21,6 +23,13 @@ class WriteStoryScreen extends StatefulWidget {
 }
 
 class _WriteStoryScreenState extends State<WriteStoryScreen> {
+  /// Urdu/Nastaliq needs a tall enough box; keyboard + bottom bar used to
+  /// shrink [Expanded] to a few pixels. Editor height is at least this.
+  static const double _kStoryEditorMinHeight = 248;
+
+  /// Progress row + action chips + draft/publish row + spacing (below editor).
+  static const double _kReservedBelowStoryEditor = 212;
+
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _bodyController = TextEditingController();
   final ScrollController _bodyScrollController = ScrollController();
@@ -43,8 +52,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
   void initState() {
     super.initState();
 
-    // ✅ Auto-scroll listener for both English and Urdu
-    _bodyController.addListener(_autoScroll);
+    _bodyController.addListener(_scrollBodyToFollowCaret);
 
     _bodyFocusNode.addListener(() {
       if (!_bodyFocusNode.hasFocus &&
@@ -60,15 +68,32 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     }
   }
 
-  // ✅ Auto scroll to bottom on every keystroke — works for both English and Urdu
-  void _autoScroll() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+  /// Keeps the line you are typing (caret at end) in view. Uses two post-frame
+  /// passes so Urdu / IME composition layout finishes before scrolling — a
+  /// single immediate [jumpTo] often left RTL composing text off-screen.
+  void _scrollBodyToFollowCaret() {
+    if (!_bodyFocusNode.hasFocus) return;
+
+    void scrollAfterLayout() {
       if (!mounted) return;
       if (!_bodyScrollController.hasClients) return;
-      final maxExtent = _bodyScrollController.position.maxScrollExtent;
-      if (_bodyScrollController.offset < maxExtent) {
-        _bodyScrollController.jumpTo(maxExtent);
+
+      final value = _bodyController.value;
+      final text = value.text;
+      final sel = value.selection;
+      // When editing earlier text, do not yank scroll to bottom.
+      if (!sel.isValid || sel.extentOffset != text.length) return;
+
+      final pos = _bodyScrollController.position;
+      final maxExtent = pos.maxScrollExtent;
+      if (pos.pixels < maxExtent - 1) {
+        pos.jumpTo(maxExtent);
       }
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) => scrollAfterLayout());
     });
   }
 
@@ -384,7 +409,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
 
   @override
   void dispose() {
-    _bodyController.removeListener(_autoScroll); // ✅ Clean up listener
+    _bodyController.removeListener(_scrollBodyToFollowCaret);
     _titleController.dispose();
     _bodyController.dispose();
     _bodyScrollController.dispose();
@@ -395,6 +420,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       backgroundColor: const Color(0xFFF9F7FF),
       appBar: AppBar(
         backgroundColor: kAppPrimary,
@@ -411,151 +437,168 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
         iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            children: [
-              _buildTextField(
-                controller: _titleController,
-                hint: "Enter story title...",
-                icon: Icons.title,
-                maxLines: 1,
-                onChanged: (_) => setState(() {}),
-              ),
-              if (_storyCoverUrl != null) ...[
-                const SizedBox(height: 10),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Image.network(
-                    _storyCoverUrl!,
-                    height: 100,
-                    width: double.infinity,
-                    fit: BoxFit.cover,
-                  ),
-                ),
-              ],
-              const SizedBox(height: 16),
-              Expanded(
-                child: _buildStoryEditor(
-                  controller: _bodyController,
-                  hint: "Start writing your magical story here...",
-                  onChanged: _handleBodyChanged,
-                ),
-              ),
-              const SizedBox(height: 12),
-              ValueListenableBuilder<TextEditingValue>(
-                valueListenable: _bodyController,
-                builder: (context, _, __) {
-                  final progressColor =
-                      _wordProgress < 1.0 ? kAppPrimary : Colors.green.shade600;
-
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      LinearProgressIndicator(
-                        value: _wordProgress,
-                        color: progressColor,
-                        backgroundColor: Colors.grey.shade300,
-                        minHeight: 8,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+            return SingleChildScrollView(
+              keyboardDismissBehavior:
+                  ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + bottomInset),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _buildTextField(
+                      controller: _titleController,
+                      hint: "Enter story title...",
+                      icon: Icons.title,
+                      maxLines: 1,
+                      onChanged: (_) => setState(() {}),
+                    ),
+                    if (_storyCoverUrl != null) ...[
+                      const SizedBox(height: 10),
+                      ClipRRect(
                         borderRadius: BorderRadius.circular(10),
-                      ),
-                      const SizedBox(height: 6),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: Text(
-                          "Word count: $_wordCount / 1000",
-                          style: TextStyle(
-                            color: progressColor,
-                            fontWeight: FontWeight.w600,
-                          ),
+                        child: Image.network(
+                          _storyCoverUrl!,
+                          height: 100,
+                          width: double.infinity,
+                          fit: BoxFit.cover,
                         ),
                       ),
                     ],
-                  );
-                },
-              ),
-              const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  _buildActionButton(
-                    icon: Icons.image,
-                    label: "To Picture",
-                    onTap: _goToAiGenerator,
-                    color: kAppPrimary,
-                  ),
-                  _buildActionButton(
-                    icon: Icons.mic,
-                    label: "Speak",
-                    onTap: _goToSpeechToText,
-                    color: kAppPrimary,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed:
-                          _isSaving ? null : () => _saveStory(publish: false),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: kAppPrimary,
-                        side: const BorderSide(color: kAppPrimary, width: 2),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      height: _storyEditorBoxHeight(constraints.maxHeight),
+                      child: _buildStoryEditor(
+                        controller: _bodyController,
+                        hint: "Start writing your magical story here...",
+                        onChanged: _handleBodyChanged,
                       ),
-                      icon: _isSaving
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation(kAppPrimary),
-                              ),
-                            )
-                          : const Icon(Icons.save),
-                      label: _isSaving
-                          ? const Text("Saving...")
-                          : const Text("Draft"),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: _isPublishing
-                          ? null
-                          : () => _saveStory(publish: true),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: kAppPrimary,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
+                    const SizedBox(height: 12),
+                    ValueListenableBuilder<TextEditingValue>(
+                      valueListenable: _bodyController,
+                      builder: (context, _, __) {
+                        final progressColor = _wordProgress < 1.0
+                            ? kAppPrimary
+                            : Colors.green.shade600;
+
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            LinearProgressIndicator(
+                              value: _wordProgress,
+                              color: progressColor,
+                              backgroundColor: Colors.grey.shade300,
+                              minHeight: 8,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            const SizedBox(height: 6),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: Text(
+                                "Word count: $_wordCount / 1000",
+                                style: TextStyle(
+                                  color: progressColor,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        _buildActionButton(
+                          icon: Icons.image,
+                          label: "To Picture",
+                          onTap: _goToAiGenerator,
+                          color: kAppPrimary,
                         ),
-                      ),
-                      icon: _isPublishing
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor:
-                                    AlwaysStoppedAnimation(Colors.white),
-                              ),
-                            )
-                          : const Icon(Icons.send),
-                      label: _isPublishing
-                          ? const Text("Publishing...")
-                          : const Text("Publish"),
+                        _buildActionButton(
+                          icon: Icons.mic,
+                          label: "Speak",
+                          onTap: _goToSpeechToText,
+                          color: kAppPrimary,
+                        ),
+                      ],
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _isSaving
+                                ? null
+                                : () => _saveStory(publish: false),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: kAppPrimary,
+                              side: const BorderSide(color: kAppPrimary, width: 2),
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                            icon: _isSaving
+                                ? const SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor: AlwaysStoppedAnimation(
+                                          kAppPrimary),
+                                    ),
+                                  )
+                                : const Icon(Icons.save),
+                            label: _isSaving
+                                ? const Text("Saving...")
+                                : const Text("Draft"),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: _isPublishing
+                                ? null
+                                : () => _saveStory(publish: true),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: kAppPrimary,
+                              foregroundColor: Colors.white,
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                            icon: _isPublishing
+                                ? const SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor: AlwaysStoppedAnimation(
+                                          Colors.white),
+                                    ),
+                                  )
+                                : const Icon(Icons.send),
+                            label: _isPublishing
+                                ? const Text("Publishing...")
+                                : const Text("Publish"),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
-            ],
-          ),
+            );
+          },
         ),
       ),
     );
@@ -600,6 +643,13 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     );
   }
 
+  /// Tall enough to read Urdu glyphs; when the keyboard steals space, the
+  /// page scrolls instead of crushing the field to a few pixels.
+  double _storyEditorBoxHeight(double bodyViewportMax) {
+    final fromLayout = bodyViewportMax - _kReservedBelowStoryEditor;
+    return math.max(_kStoryEditorMinHeight, fromLayout);
+  }
+
   Widget _buildStoryEditor({
     required TextEditingController controller,
     required String hint,
@@ -610,57 +660,17 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
         ? TextDirection.rtl
         : _textDirectionFor(controller.text);
     final textAlign = _textAlignFor(direction);
+    final isRtl = direction == TextDirection.rtl;
 
-    if (_useUrduStoryEditor) {
-      return Container(
-        margin: const EdgeInsets.symmetric(vertical: 6),
-        decoration: _fieldDecoration(outlined: true),
-        clipBehavior: Clip.antiAlias,
-        child: ClipRRect(
-          borderRadius: borderRadius,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
-            child: Scrollbar(
-              controller: _bodyScrollController,
-              thumbVisibility: true,
-              child: TextField(
-                controller: controller,
-                focusNode: _bodyFocusNode,
-                scrollController: _bodyScrollController,
-                onChanged: onChanged,
-                onTapOutside: (_) =>
-                    FocusManager.instance.primaryFocus?.unfocus(),
-                expands: true,
-                minLines: null,
-                maxLines: null,
-                keyboardType: TextInputType.multiline,
-                textInputAction: TextInputAction.newline,
-                textDirection: TextDirection.rtl,
-                textAlign: TextAlign.right,
-                textAlignVertical: TextAlignVertical.top,
-                scrollPadding: const EdgeInsets.fromLTRB(0, 48, 0, 20),
-                scrollPhysics: const ClampingScrollPhysics(),
-                decoration: InputDecoration(
-                  hintText: hint,
-                  border: InputBorder.none,
-                  isCollapsed: true,
-                  contentPadding: const EdgeInsets.only(
-                    top: 2,
-                    right: 10,
-                    bottom: 2,
-                  ),
-                ),
-                style: const TextStyle(
-                  color: Colors.black87,
-                  fontSize: 16,
-                  height: 1.5,
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-    }
+    final viewInsets = MediaQuery.viewInsetsOf(context);
+    // Extra bottom room so the IME can scroll the active line(s) above the
+    // keyboard; 20px was too small and Urdu composition often stayed hidden.
+    final scrollPadding = EdgeInsets.fromLTRB(
+      12,
+      72,
+      12,
+      viewInsets.bottom + 160,
+    );
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 6),
@@ -669,7 +679,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
       child: ClipRRect(
         borderRadius: borderRadius,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+          padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
           child: Scrollbar(
             controller: _bodyScrollController,
             thumbVisibility: true,
@@ -688,27 +698,33 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
               textDirection: direction,
               textAlign: textAlign,
               textAlignVertical: TextAlignVertical.top,
-              scrollPadding: const EdgeInsets.fromLTRB(0, 48, 0, 20),
+              scrollPadding: scrollPadding,
               scrollPhysics: const ClampingScrollPhysics(),
               decoration: InputDecoration(
-                prefixIcon: const Padding(
-                  padding: EdgeInsets.only(right: 8),
-                  child: Icon(Icons.menu_book, color: kAppPrimary),
-                ),
-                prefixIconConstraints: const BoxConstraints(
-                  minWidth: 32,
-                  minHeight: 32,
-                ),
+                // LTR only: RTL keeps full width so Urdu lines are not squeezed.
+                prefixIcon: direction == TextDirection.ltr
+                    ? const Padding(
+                        padding: EdgeInsets.only(right: 4),
+                        child: Icon(Icons.menu_book, color: kAppPrimary),
+                      )
+                    : null,
+                prefixIconConstraints: direction == TextDirection.ltr
+                    ? const BoxConstraints(minWidth: 40, minHeight: 40)
+                    : null,
                 hintText: hint,
+                hintTextDirection: direction,
                 border: InputBorder.none,
                 isCollapsed: true,
-                contentPadding: const EdgeInsets.only(
-                  top: 2,
-                  right: 10,
-                  bottom: 2,
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: isRtl ? 12 : 8,
+                  vertical: isRtl ? 14 : 12,
                 ),
               ),
-              style: const TextStyle(height: 1.45),
+              style: TextStyle(
+                color: Colors.black87,
+                fontSize: isRtl ? 17 : 16,
+                height: isRtl ? 1.65 : 1.55,
+              ),
             ),
           ),
         ),
