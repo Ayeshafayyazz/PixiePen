@@ -35,7 +35,7 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
   void initState() {
     super.initState();
     _tabController = TabController(
-      length: 4,
+      length: 3,
       vsync: this,
       initialIndex: _initialTabIndex(widget.initialStatus),
     );
@@ -43,9 +43,8 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
   }
 
   int _initialTabIndex(String? status) {
-    if (status == 'draft') return 1;
-    if (status == 'pending_parent_approval') return 2;
-    if (status == 'rejected') return 3;
+    if (status == 'pending_parent_approval') return 1;
+    if (status == 'rejected') return 2;
     return 0;
   }
 
@@ -126,10 +125,6 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
 
           final published =
               stories.where((story) => story.status == 'published').toList();
-          final drafts = stories
-              .where((story) =>
-                  story.status == 'draft' && story.approvalStatus != 'rejected')
-              .toList();
           final pending = stories
               .where((story) => story.status == 'pending_parent_approval')
               .toList();
@@ -186,12 +181,6 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
                       Tab(
                         child: FittedBox(
                           fit: BoxFit.scaleDown,
-                          child: Text('Drafts (${drafts.length})'),
-                        ),
-                      ),
-                      Tab(
-                        child: FittedBox(
-                          fit: BoxFit.scaleDown,
                           child: Text('Pending (${pending.length})'),
                         ),
                       ),
@@ -212,16 +201,6 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
                     _StoryList(
                       status: 'published',
                       stories: published,
-                      onOpen: _openStory,
-                      onEdit: _editStory,
-                      onPublish: _publishStory,
-                      onMakeEbook: _openEbookCreator,
-                      onDelete: _deleteStory,
-                      highlightedStoryId: widget.highlightedStoryId,
-                    ),
-                    _StoryList(
-                      status: 'draft',
-                      stories: drafts,
                       onOpen: _openStory,
                       onEdit: _editStory,
                       onPublish: _publishStory,
@@ -403,6 +382,8 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
           TextButton(
             onPressed: () async {
               await _db.collection('stories').doc(story.id).delete();
+              // Cascade delete: Remove this story from all ebooks
+              await _removeStoryFromAllEbooks(story.id);
               if (!context.mounted) return;
               Navigator.pop(context);
               ScaffoldMessenger.of(context).showSnackBar(
@@ -414,6 +395,25 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
         ],
       ),
     );
+  }
+
+  Future<void> _removeStoryFromAllEbooks(String storyId) async {
+    try {
+      final ebooksSnapshot = await _db
+          .collection('ebooks')
+          .where('userId', isEqualTo: _user?.uid)
+          .get();
+      for (final ebookDoc in ebooksSnapshot.docs) {
+        final storyIds = List<String>.from(ebookDoc['storyIds'] ?? []);
+        if (storyIds.contains(storyId)) {
+          storyIds.remove(storyId);
+          await ebookDoc.reference.update({'storyIds': storyIds});
+        }
+      }
+    } catch (error) {
+      // Silently handle error - deletion should not fail due to ebook cleanup
+      debugPrint('Error removing story from ebooks: $error');
+    }
   }
 }
 
@@ -498,28 +498,26 @@ class _BadgeIconRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
       children: badges.map((badge) {
         final unlocked = badge['unlocked'] == true;
         final icon = badge['icon'] as IconData? ?? Icons.emoji_events;
 
-        return Padding(
-          padding: const EdgeInsets.only(right: 8),
-          child: Container(
-            width: 34,
-            height: 34,
-            decoration: BoxDecoration(
-              color: unlocked
-                  ? Colors.white
-                  : Colors.white.withValues(alpha: 0.16),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.white24),
-            ),
-            child: Icon(
-              icon,
-              color: unlocked ? kAppPrimary : Colors.white54,
-              size: 18,
-            ),
+        return Container(
+          width: 34,
+          height: 34,
+          decoration: BoxDecoration(
+            color:
+                unlocked ? Colors.white : Colors.white.withValues(alpha: 0.16),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.white24),
+          ),
+          child: Icon(
+            icon,
+            color: unlocked ? kAppPrimary : Colors.white54,
+            size: 18,
           ),
         );
       }).toList(),

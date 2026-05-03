@@ -3,6 +3,7 @@ import 'package:animated_text_kit/animated_text_kit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../routes.dart';
+import '../auth/services/auth_service.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -43,14 +44,40 @@ class _SplashScreenState extends State<SplashScreen>
     await Future.delayed(const Duration(seconds: 3));
 
     final prefs = await SharedPreferences.getInstance();
-    final bool onboardingCompleted = prefs.getBool('onboarding_completed') ?? false;
+    final bool onboardingCompleted =
+        prefs.getBool('onboarding_completed') ?? false;
 
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
-      Navigator.pushReplacementNamed(context, AppRoutes.community);
+      // Reload user from Firebase to get fresh verified state
+      try {
+        await user.reload();
+      } catch (_) {}
+
+      // Get fresh user after reload
+      final freshUser = FirebaseAuth.instance.currentUser;
+      if (!mounted) return;
+
+      // Check verified on fresh user directly
+      if (freshUser == null || !freshUser.emailVerified) {
+        Navigator.pushReplacementNamed(context, AppRoutes.verifyEmail);
+        return;
+      }
+
+      // User is verified — read role and navigate
+      final authService = AuthService();
+      final role = await authService.readRole(freshUser.uid);
+      if (!mounted) return;
+
+      Navigator.pushReplacementNamed(
+        context,
+        role == 'parent' ? AppRoutes.parentApprovals : AppRoutes.community,
+      );
     } else if (onboardingCompleted) {
+      if (!mounted) return;
       Navigator.pushReplacementNamed(context, AppRoutes.login);
     } else {
+      if (!mounted) return;
       Navigator.pushReplacementNamed(context, AppRoutes.onboarding);
     }
   }

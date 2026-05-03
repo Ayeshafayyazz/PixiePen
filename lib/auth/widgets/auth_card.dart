@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_custom_clippers/flutter_custom_clippers.dart';
 import '../../routes.dart';
 import '../services/auth_service.dart';
@@ -15,7 +14,6 @@ class AuthCard extends StatefulWidget {
 class _AuthCardState extends State<AuthCard> {
   final _formKey = GlobalKey<FormState>();
   final _authService = AuthService();
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
@@ -26,6 +24,11 @@ class _AuthCardState extends State<AuthCard> {
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
   String _role = 'child';
+
+  bool _isValidEmail(String value) {
+    final emailRegex = RegExp(r'^[\w-.]+@([\w-]+\.)+[\w-]{2,}$');
+    return emailRegex.hasMatch(value.trim());
+  }
 
   @override
   void dispose() {
@@ -51,7 +54,18 @@ class _AuthCardState extends State<AuthCard> {
           _emailController.text,
           _passwordController.text,
         );
-        final role = await _readRole(credential?.user?.uid);
+        final user = credential.user;
+        await user?.reload();
+
+        final isVerified = await _authService.reloadAndCheckEmailVerified();
+        if (!isVerified) {
+          if (mounted) {
+            Navigator.pushReplacementNamed(context, AppRoutes.verifyEmail);
+          }
+          return;
+        }
+
+        final role = await _authService.readRole(user?.uid);
         if (mounted) {
           Navigator.pushReplacementNamed(
             context,
@@ -71,13 +85,18 @@ class _AuthCardState extends State<AuthCard> {
               _role == 'child' ? _parentEmailController.text.trim() : null,
         );
         if (mounted) {
-          Navigator.pushReplacementNamed(
-            context,
-            _role == 'parent' ? AppRoutes.parentApprovals : AppRoutes.community,
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content:
+                  Text('Verification email sent. Please check your inbox.'),
+              backgroundColor: Colors.green,
+            ),
           );
+          Navigator.pushReplacementNamed(context, AppRoutes.verifyEmail);
         }
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _errorMessage = e.toString();
       });
@@ -90,10 +109,47 @@ class _AuthCardState extends State<AuthCard> {
     }
   }
 
-  Future<String> _readRole(String? uid) async {
-    if (uid == null) return 'child';
-    final doc = await _db.collection('users').doc(uid).get();
-    return doc.data()?['role'] == 'parent' ? 'parent' : 'child';
+  Future<void> _sendPasswordReset() async {
+    final email = _emailController.text.trim();
+    if (email.isEmpty) {
+      setState(() {
+        _errorMessage = 'Please enter your email first';
+      });
+      return;
+    }
+    if (!_isValidEmail(email)) {
+      setState(() {
+        _errorMessage = 'Enter a valid email address';
+      });
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      await _authService.sendPasswordResetEmail(email);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Password reset link sent to your email.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = e.toString();
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   @override
@@ -173,18 +229,17 @@ class _AuthCardState extends State<AuthCard> {
                         TextFormField(
                           controller: _parentEmailController,
                           decoration: const InputDecoration(
-                            hintText: 'Parent Gmail',
+                            hintText: 'Parent Email',
                             prefixIcon: Icon(Icons.family_restroom),
                           ),
                           keyboardType: TextInputType.emailAddress,
                           validator: (value) {
                             if (_role != 'child') return null;
                             if (value == null || value.trim().isEmpty) {
-                              return 'Please enter parent Gmail';
+                              return 'Please enter parent email';
                             }
-                            final emailRegex = RegExp(r'^[\w-\.]+@gmail\.com$');
-                            if (!emailRegex.hasMatch(value.trim())) {
-                              return 'Enter a valid parent Gmail';
+                            if (!_isValidEmail(value)) {
+                              return 'Enter a valid parent email';
                             }
                             return null;
                           },
@@ -203,9 +258,8 @@ class _AuthCardState extends State<AuthCard> {
                         if (value == null || value.isEmpty) {
                           return 'Please enter an email';
                         }
-                        final emailRegex = RegExp(r'^[\w-\.]+@gmail\.com$');
-                        if (!emailRegex.hasMatch(value)) {
-                          return 'Enter a valid Gmail address';
+                        if (!_isValidEmail(value)) {
+                          return 'Enter a valid email address';
                         }
                         return null;
                       },
@@ -272,7 +326,7 @@ class _AuthCardState extends State<AuthCard> {
                       Align(
                         alignment: Alignment.centerRight,
                         child: TextButton(
-                          onPressed: () {},
+                          onPressed: _isLoading ? null : _sendPasswordReset,
                           child: const Text("Forget Password?",
                               style: TextStyle(color: Colors.black54)),
                         ),

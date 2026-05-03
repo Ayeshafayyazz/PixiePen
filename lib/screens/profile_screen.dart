@@ -329,8 +329,10 @@ class _CartoonAvatarPainter extends CustomPainter {
   void _paintHairBack(Canvas canvas, double scale, Paint hairPaint) {
     switch (style.hairStyle) {
       case _CartoonHairStyle.buns:
-        canvas.drawCircle(Offset(25 * scale, 36 * scale), 14 * scale, hairPaint);
-        canvas.drawCircle(Offset(75 * scale, 36 * scale), 14 * scale, hairPaint);
+        canvas.drawCircle(
+            Offset(25 * scale, 36 * scale), 14 * scale, hairPaint);
+        canvas.drawCircle(
+            Offset(75 * scale, 36 * scale), 14 * scale, hairPaint);
         canvas.drawOval(
           Rect.fromCenter(
             center: Offset(50 * scale, 42 * scale),
@@ -351,8 +353,10 @@ class _CartoonAvatarPainter extends CustomPainter {
         );
         break;
       case _CartoonHairStyle.puffs:
-        canvas.drawCircle(Offset(24 * scale, 42 * scale), 15 * scale, hairPaint);
-        canvas.drawCircle(Offset(76 * scale, 42 * scale), 15 * scale, hairPaint);
+        canvas.drawCircle(
+            Offset(24 * scale, 42 * scale), 15 * scale, hairPaint);
+        canvas.drawCircle(
+            Offset(76 * scale, 42 * scale), 15 * scale, hairPaint);
         break;
       case _CartoonHairStyle.cap:
       case _CartoonHairStyle.curls:
@@ -1377,10 +1381,29 @@ class ParentApprovalsScreen extends StatelessWidget {
             IconButton(
               tooltip: 'Logout',
               onPressed: () async {
-                await FirebaseAuth.instance.signOut();
-                if (context.mounted) {
-                  Navigator.of(context)
-                      .pushNamedAndRemoveUntil('/login', (route) => false);
+                final shouldLogout = await showDialog<bool>(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    title: const Text("Confirm Logout"),
+                    content: const Text("Are you sure you want to logout?"),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text("Cancel"),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        child: const Text("Logout"),
+                      ),
+                    ],
+                  ),
+                );
+                if (shouldLogout == true) {
+                  await FirebaseAuth.instance.signOut();
+                  if (context.mounted) {
+                    Navigator.of(context)
+                        .pushNamedAndRemoveUntil('/login', (route) => false);
+                  }
                 }
               },
               icon: const Icon(Icons.logout, color: Colors.white),
@@ -1499,22 +1522,39 @@ class _ParentApprovalList extends StatelessWidget {
       );
     }
 
-    return ListView.separated(
-      padding: const EdgeInsets.all(16),
-      itemCount: docs.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 12),
-      itemBuilder: (context, index) {
-        final doc = docs[index];
-        final data = doc.data();
-        return _ParentApprovalCard(
-          storyId: doc.id,
-          title: (data['title'] as String?) ?? 'Untitled',
-          body: (data['body'] as String?) ?? '',
-          childId: data['authorId'] as String?,
-          childName: (data['authorName'] as String?) ?? 'Child',
-          approvalStatus: (data['approvalStatus'] as String?) ?? 'pending',
-          showActions: showActions,
-          highlighted: doc.id == highlightStoryId,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final horizontalPadding = constraints.maxWidth < 380 ? 12.0 : 16.0;
+
+        return ListView.separated(
+          padding: EdgeInsets.fromLTRB(
+            horizontalPadding,
+            16,
+            horizontalPadding,
+            24,
+          ),
+          itemCount: docs.length,
+          separatorBuilder: (_, __) => const SizedBox(height: 12),
+          itemBuilder: (context, index) {
+            final doc = docs[index];
+            final data = doc.data();
+            return Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 720),
+                child: _ParentApprovalCard(
+                  storyId: doc.id,
+                  title: (data['title'] as String?) ?? 'Untitled',
+                  body: (data['body'] as String?) ?? '',
+                  childId: data['authorId'] as String?,
+                  childName: (data['authorName'] as String?) ?? 'Child',
+                  approvalStatus:
+                      (data['approvalStatus'] as String?) ?? 'pending',
+                  showActions: showActions,
+                  highlighted: doc.id == highlightStoryId,
+                ),
+              ),
+            );
+          },
         );
       },
     );
@@ -1687,74 +1727,110 @@ class _ParentApprovalCardState extends State<_ParentApprovalCard> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: widget.highlighted ? kAppPrimary : const Color(0xFFE2D9F3),
-          width: widget.highlighted ? 2 : 1,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            widget.title,
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w900,
-              color: Colors.black87,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isNarrow = constraints.maxWidth < 360;
+
+        return Container(
+          padding: EdgeInsets.all(isNarrow ? 12 : 14),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: widget.highlighted ? kAppPrimary : const Color(0xFFE2D9F3),
+              width: widget.highlighted ? 2 : 1,
             ),
           ),
-          const SizedBox(height: 4),
-          Text(
-            'by ${widget.childName}',
-            style: TextStyle(color: Colors.grey.shade700),
-          ),
-          const SizedBox(height: 8),
-          _ParentApprovalStatus(status: widget.approvalStatus),
-          const SizedBox(height: 10),
-          Text(
-            widget.body,
-            maxLines: 5,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(height: 1.35),
-          ),
-          if (widget.showActions) ...[
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed:
-                        _isSaving ? null : () => _review(approved: false),
-                    icon: const Icon(Icons.edit_note),
-                    label: const Text('Send Back'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.orange.shade800,
-                      side: BorderSide(color: Colors.orange.shade300),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                widget.title,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                  color: Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'by ${widget.childName}',
+                style: TextStyle(color: Colors.grey.shade700),
+              ),
+              const SizedBox(height: 8),
+              _ParentApprovalStatus(status: widget.approvalStatus),
+              const SizedBox(height: 10),
+              Text(
+                widget.body,
+                maxLines: 5,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(height: 1.35),
+              ),
+              if (widget.showActions) ...[
+                const SizedBox(height: 12),
+                if (isNarrow) ...[
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed:
+                          _isSaving ? null : () => _review(approved: false),
+                      icon: const Icon(Icons.edit_note),
+                      label: const Text('Send Back'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.orange.shade800,
+                        side: BorderSide(color: Colors.orange.shade300),
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _isSaving ? null : () => _review(approved: true),
-                    icon: const Icon(Icons.check),
-                    label: const Text('Approve'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: kAppPrimary,
-                      foregroundColor: Colors.white,
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed:
+                          _isSaving ? null : () => _review(approved: true),
+                      icon: const Icon(Icons.check),
+                      label: const Text('Approve'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: kAppPrimary,
+                        foregroundColor: Colors.white,
+                      ),
                     ),
                   ),
-                ),
+                ] else
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed:
+                              _isSaving ? null : () => _review(approved: false),
+                          icon: const Icon(Icons.edit_note),
+                          label: const Text('Send Back'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.orange.shade800,
+                            side: BorderSide(color: Colors.orange.shade300),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed:
+                              _isSaving ? null : () => _review(approved: true),
+                          icon: const Icon(Icons.check),
+                          label: const Text('Approve'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: kAppPrimary,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
               ],
-            ),
-          ],
-        ],
-      ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -2070,10 +2146,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
     final parentEmail = _parentEmailController.text.trim().toLowerCase();
     if (_role == 'child' && parentEmail.isNotEmpty) {
-      final emailRegex = RegExp(r'^[\w-\.]+@gmail\.com$');
+      final emailRegex = RegExp(r'^[\w-.]+@([\w-]+\.)+[\w-]{2,}$');
       if (!emailRegex.hasMatch(parentEmail)) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Enter a valid parent Gmail')),
+          const SnackBar(content: Text('Enter a valid parent email')),
         );
         return;
       }
@@ -2087,6 +2163,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       // Update FirebaseAuth displayName
       await _user!.updateDisplayName(newName);
 
+      final hasUploadedPhoto =
+          _photoUrl != null && _photoUrl!.trim().isNotEmpty;
+
       // Update users/{uid}.username (create doc if missing)
       await _db.collection('users').doc(_user!.uid).set({
         'username': newName,
@@ -2095,8 +2174,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         'parentEmail': _role == 'child' && parentEmail.isNotEmpty
             ? parentEmail
             : FieldValue.delete(),
-        'photoURL': _photoUrl,
-        'avatarId': _avatarId ?? _avatarChoices.first.id,
+        'photoURL': hasUploadedPhoto ? _photoUrl : FieldValue.delete(),
+        'profileImageUrl': hasUploadedPhoto ? _photoUrl : FieldValue.delete(),
+        if (!hasUploadedPhoto) 'profileImagePath': FieldValue.delete(),
+        'profileImageType': hasUploadedPhoto ? 'upload' : 'avatar',
+        'avatarId': hasUploadedPhoto
+            ? FieldValue.delete()
+            : _avatarId ?? _avatarChoices.first.id,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
@@ -2155,12 +2239,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         'profileImageUrl': downloadUrl,
         'profileImagePath': ref.fullPath,
         'profileImageType': 'upload',
+        'avatarId': FieldValue.delete(),
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
       if (!mounted) return;
       setState(() {
         _photoUrl = downloadUrl;
+        _avatarId = null;
       });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -2214,15 +2300,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     try {
       final userDoc = _db.collection('users').doc(_user!.uid);
       final snap = await userDoc.get();
-      final storagePath = snap.data()?['profileImagePath'] as String?;
-
-      if (storagePath != null && storagePath.trim().isNotEmpty) {
-        try {
-          await _storage.ref(storagePath).delete();
-        } on FirebaseException catch (e) {
-          if (e.code != 'object-not-found') rethrow;
-        }
-      }
+      await _deleteStoredProfileImage(snap.data()?['profileImagePath']);
+      final fallbackAvatarId = _avatarId ?? _avatarChoices.first.id;
 
       await _user!.updatePhotoURL(null);
       await userDoc.set({
@@ -2230,13 +2309,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         'profileImageUrl': FieldValue.delete(),
         'profileImagePath': FieldValue.delete(),
         'profileImageType': 'avatar',
-        'avatarId': _avatarId ?? _avatarChoices.first.id,
+        'avatarId': fallbackAvatarId,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
       if (!mounted) return;
       setState(() {
         _photoUrl = null;
+        _avatarId = fallbackAvatarId;
       });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -2270,8 +2350,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     });
 
     try {
+      final userDoc = _db.collection('users').doc(_user!.uid);
+      final snap = await userDoc.get();
+      await _deleteStoredProfileImage(snap.data()?['profileImagePath']);
+
       await _user!.updatePhotoURL(null);
-      await _db.collection('users').doc(_user!.uid).set({
+      await userDoc.set({
         'avatarId': avatarId,
         'photoURL': FieldValue.delete(),
         'profileImageUrl': FieldValue.delete(),
@@ -2307,67 +2391,101 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
   }
 
+  Future<void> _deleteStoredProfileImage(dynamic storagePathValue) async {
+    if (storagePathValue is! String || storagePathValue.trim().isEmpty) {
+      return;
+    }
+
+    try {
+      await _storage.ref(storagePathValue.trim()).delete();
+    } on FirebaseException catch (e) {
+      if (e.code != 'object-not-found') rethrow;
+    }
+  }
+
   Future<void> _showAvatarPicker() async {
     final selectedAvatarId = await showModalBottomSheet<String>(
       context: context,
+      isScrollControlled: true,
       showDragHandle: true,
       builder: (context) {
+        final mediaQuery = MediaQuery.of(context);
+        final availableHeight = mediaQuery.size.height -
+            mediaQuery.padding.top -
+            mediaQuery.padding.bottom -
+            mediaQuery.viewInsets.bottom;
+        final sheetHeight =
+            (availableHeight * 0.72).clamp(320.0, 560.0).toDouble();
+
         return SafeArea(
+          top: false,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Choose Avatar',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxHeight: MediaQuery.sizeOf(context).height * 0.55,
-                  ),
-                  child: GridView.builder(
-                    shrinkWrap: true,
-                    itemCount: _avatarChoices.length,
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 3,
-                      mainAxisSpacing: 12,
-                      crossAxisSpacing: 12,
+            padding: EdgeInsets.fromLTRB(
+              20,
+              4,
+              20,
+              16 + mediaQuery.viewInsets.bottom,
+            ),
+            child: SizedBox(
+              height: sheetHeight,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Choose Avatar',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
                     ),
-                    itemBuilder: (context, index) {
-                      final avatar = _avatarChoices[index];
-                      final isSelected = avatar.id == _avatarId;
-                      return InkWell(
-                        borderRadius: BorderRadius.circular(14),
-                        onTap: () => Navigator.pop(context, avatar.id),
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: isSelected
-                                ? kAppPrimary.withValues(alpha: 0.08)
-                                : Colors.white,
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(
-                              color: isSelected
-                                  ? kAppPrimary
-                                  : const Color(0xFFE3D8EF),
-                              width: isSelected ? 2 : 1,
-                            ),
-                          ),
-                          child: Center(
-                            child: _AvatarArt(avatar: avatar, radius: 30),
-                          ),
-                        ),
-                      );
-                    },
                   ),
-                ),
-              ],
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final crossAxisCount =
+                            constraints.maxWidth >= 420 ? 4 : 3;
+
+                        return GridView.builder(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          itemCount: _avatarChoices.length,
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: crossAxisCount,
+                            mainAxisSpacing: 10,
+                            crossAxisSpacing: 10,
+                            childAspectRatio: 1,
+                          ),
+                          itemBuilder: (context, index) {
+                            final avatar = _avatarChoices[index];
+                            final isSelected = avatar.id == _avatarId;
+                            return InkWell(
+                              borderRadius: BorderRadius.circular(14),
+                              onTap: () => Navigator.pop(context, avatar.id),
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  color: isSelected
+                                      ? kAppPrimary.withValues(alpha: 0.08)
+                                      : Colors.white,
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(
+                                    color: isSelected
+                                        ? kAppPrimary
+                                        : const Color(0xFFE3D8EF),
+                                    width: isSelected ? 2 : 1,
+                                  ),
+                                ),
+                                child: Center(
+                                  child: _AvatarArt(avatar: avatar, radius: 30),
+                                ),
+                              ),
+                            );
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         );
@@ -2437,8 +2555,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       ),
                       if (_photoUrl != null)
                         TextButton.icon(
-                          onPressed:
-                              _photoSaving ? null : _removeProfilePhoto,
+                          onPressed: _photoSaving ? null : _removeProfilePhoto,
                           icon: const Icon(Icons.delete_outline),
                           label: const Text('Remove Photo'),
                           style: TextButton.styleFrom(
@@ -2496,8 +2613,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 controller: _parentEmailController,
                 keyboardType: TextInputType.emailAddress,
                 decoration: InputDecoration(
-                  labelText: "Parent Gmail",
-                  hintText: "parent@gmail.com",
+                  labelText: "Parent Email",
+                  hintText: "parent@example.com",
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),
@@ -2782,12 +2899,27 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  final TextEditingController _currentPasswordController =
+      TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   final User? _user = FirebaseAuth.instance.currentUser;
 
   Future<void> _changePassword() async {
+    final currentPassword = _currentPasswordController.text.trim();
     final newPassword = _passwordController.text.trim();
+    final user = FirebaseAuth.instance.currentUser;
+    final email = user?.email;
+
+    if (currentPassword.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter your current password'),
+        ),
+      );
+      return;
+    }
+
     if (newPassword.isEmpty || newPassword.length < 6) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -2797,8 +2929,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return;
     }
 
+    if (user == null || email == null || email.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Unable to verify this account'),
+        ),
+      );
+      return;
+    }
+
     try {
-      await FirebaseAuth.instance.currentUser!.updatePassword(newPassword);
+      final credential = EmailAuthProvider.credential(
+        email: email,
+        password: currentPassword,
+      );
+
+      await user.reauthenticateWithCredential(credential);
+      await user.updatePassword(newPassword);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -2806,12 +2953,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
             backgroundColor: Colors.green,
           ),
         );
+        _currentPasswordController.clear();
+        _passwordController.clear();
         Navigator.pop(context);
+      }
+    } on FirebaseAuthException catch (e) {
+      if (mounted) {
+        final message = switch (e.code) {
+          'wrong-password' ||
+          'invalid-credential' =>
+            'Current password is incorrect',
+          'weak-password' => 'New password is too weak',
+          'requires-recent-login' =>
+            'Please sign in again before changing your password',
+          _ => e.message ?? 'Password update failed',
+        };
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message)),
+        );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
+          const SnackBar(content: Text('Password update failed')),
         );
       }
     }
@@ -2819,6 +2983,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   void dispose() {
+    _currentPasswordController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
@@ -2862,20 +3027,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
             leading: const Icon(Icons.lock),
             title: const Text("Change Password"),
             onTap: () {
+              _currentPasswordController.clear();
+              _passwordController.clear();
               showDialog(
                 context: context,
                 builder: (_) => AlertDialog(
                   title: const Text("Change Password"),
-                  content: TextField(
-                    controller: _passwordController,
-                    obscureText: true,
-                    decoration: const InputDecoration(
-                      hintText: "Enter new password",
-                    ),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: _currentPasswordController,
+                        obscureText: true,
+                        decoration: const InputDecoration(
+                          hintText: "Enter current password",
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _passwordController,
+                        obscureText: true,
+                        decoration: const InputDecoration(
+                          hintText: "Enter new password",
+                        ),
+                      ),
+                    ],
                   ),
                   actions: [
                     TextButton(
-                      onPressed: () => Navigator.pop(context),
+                      onPressed: () {
+                        _currentPasswordController.clear();
+                        _passwordController.clear();
+                        Navigator.pop(context);
+                      },
                       child: const Text("Cancel"),
                     ),
                     TextButton(

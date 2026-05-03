@@ -408,6 +408,11 @@ class _StoryPickerScreenState extends State<StoryPickerScreen> {
     Navigator.pop(context, selectedStories);
   }
 
+  bool _isEligibleForEbook(StoryBookItem story) {
+    // Only allow published stories (approved by parents and in community)
+    return story.status == 'published';
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_user == null) {
@@ -453,6 +458,7 @@ class _StoryPickerScreenState extends State<StoryPickerScreen> {
           final stories = (snapshot.data?.docs ?? [])
               .map(StoryBookItem.fromDocument)
               .where((story) => story.body.trim().isNotEmpty)
+              .where((story) => _isEligibleForEbook(story))
               .toList()
             ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
@@ -461,7 +467,7 @@ class _StoryPickerScreenState extends State<StoryPickerScreen> {
               child: Padding(
                 padding: EdgeInsets.all(24),
                 child: Text(
-                  'Write a story first, then come back to turn it into a book.',
+                  'Publish a story and get approval from your parents first, then come back to turn it into a book.',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 18, height: 1.4),
                 ),
@@ -1718,6 +1724,8 @@ class StoryBookItem {
   final String authorName;
   final String? coverUrl;
   final DateTime createdAt;
+  final String status;
+  final String? approvalStatus;
 
   const StoryBookItem({
     required this.id,
@@ -1726,6 +1734,8 @@ class StoryBookItem {
     required this.authorName,
     required this.coverUrl,
     required this.createdAt,
+    this.status = 'draft',
+    this.approvalStatus,
   });
 
   String get preview {
@@ -1750,6 +1760,8 @@ class StoryBookItem {
       createdAt: createdAt is Timestamp
           ? createdAt.toDate()
           : DateTime.fromMillisecondsSinceEpoch(0),
+      status: (data['status'] as String?) ?? 'draft',
+      approvalStatus: data['approvalStatus'] as String?,
     );
   }
 }

@@ -8,7 +8,13 @@ import '../services/content_moderation_service.dart';
 
 class WriteStoryScreen extends StatefulWidget {
   final String? storyId; // optional, for editing existing story
-  const WriteStoryScreen({super.key, this.storyId});
+  final VoidCallback? onBackToCommunity;
+
+  const WriteStoryScreen({
+    super.key,
+    this.storyId,
+    this.onBackToCommunity,
+  });
 
   @override
   State<WriteStoryScreen> createState() => _WriteStoryScreenState();
@@ -17,11 +23,14 @@ class WriteStoryScreen extends StatefulWidget {
 class _WriteStoryScreenState extends State<WriteStoryScreen> {
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _bodyController = TextEditingController();
+  final ScrollController _bodyScrollController = ScrollController();
+  final FocusNode _bodyFocusNode = FocusNode();
   final ContentModerationService _moderationService =
       ContentModerationService();
   String? _storyCoverUrl;
   bool _isSaving = false;
   bool _isPublishing = false;
+  bool _useUrduStoryEditor = false;
 
   int get _wordCount {
     if (_bodyController.text.trim().isEmpty) return 0;
@@ -33,9 +42,44 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
   @override
   void initState() {
     super.initState();
+
+    // ✅ Auto-scroll listener for both English and Urdu
+    _bodyController.addListener(_autoScroll);
+
+    _bodyFocusNode.addListener(() {
+      if (!_bodyFocusNode.hasFocus &&
+          _useUrduStoryEditor &&
+          !_containsUrdu(_bodyController.text)) {
+        _useUrduStoryEditor = false;
+      }
+      if (mounted) setState(() {});
+    });
+
     if (widget.storyId != null) {
       _loadExistingStory();
     }
+  }
+
+  // ✅ Auto scroll to bottom on every keystroke — works for both English and Urdu
+  void _autoScroll() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!_bodyScrollController.hasClients) return;
+      final maxExtent = _bodyScrollController.position.maxScrollExtent;
+      if (_bodyScrollController.offset < maxExtent) {
+        _bodyScrollController.jumpTo(maxExtent);
+      }
+    });
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!_bodyScrollController.hasClients) return;
+      _bodyScrollController.jumpTo(
+        _bodyScrollController.position.maxScrollExtent,
+      );
+    });
   }
 
   Future<void> _loadExistingStory() async {
@@ -47,6 +91,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     final data = doc.data()!;
     _titleController.text = data['title'] ?? '';
     _bodyController.text = data['body'] ?? '';
+    _useUrduStoryEditor = _containsUrdu(_bodyController.text);
     _storyCoverUrl = data['coverUrl'];
     if (mounted) setState(() {});
   }
@@ -141,7 +186,6 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
       };
 
       if (widget.storyId != null) {
-        // Update existing story (draft or published)
         await FirebaseFirestore.instance
             .collection('stories')
             .doc(widget.storyId)
@@ -155,7 +199,6 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
           );
         }
       } else {
-        // Create new story
         final storyRef =
             await FirebaseFirestore.instance.collection('stories').add({
           ...doc,
@@ -186,7 +229,6 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
                 : "Story saved to Drafts ✅")),
       );
 
-      // Reset fields only if new story
       if (widget.storyId == null && !publish) {
         setState(() {
           _titleController.clear();
@@ -310,23 +352,58 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
 
   void _replaceBody(String text) {
     setState(() {
+      _useUrduStoryEditor = _containsUrdu(text);
       _bodyController.value = TextEditingValue(
         text: text,
         selection: TextSelection.collapsed(offset: text.length),
       );
     });
+    _scrollToBottom();
+  }
+
+  void _handleBack() {
+    FocusManager.instance.primaryFocus?.unfocus();
+    final backToCommunity = widget.onBackToCommunity;
+    if (backToCommunity != null) {
+      backToCommunity();
+      return;
+    }
+    Navigator.maybePop(context);
+  }
+
+  void _handleBodyChanged(String value) {
+    final containsUrdu = _containsUrdu(value);
+    if (containsUrdu && !_useUrduStoryEditor) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_containsUrdu(_bodyController.text)) return;
+        setState(() => _useUrduStoryEditor = true);
+        _scrollToBottom();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _bodyController.removeListener(_autoScroll); // ✅ Clean up listener
+    _titleController.dispose();
+    _bodyController.dispose();
+    _bodyScrollController.dispose();
+    _bodyFocusNode.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final progressColor =
-        _wordProgress < 1.0 ? kAppPrimary : Colors.green.shade600;
-
     return Scaffold(
       backgroundColor: const Color(0xFFF9F7FF),
       appBar: AppBar(
         backgroundColor: kAppPrimary,
         centerTitle: true,
+        leading: IconButton(
+          tooltip: 'Back to Community',
+          onPressed: _handleBack,
+          icon: const Icon(Icons.arrow_back),
+        ),
         title: Text(
             widget.storyId != null ? "Edit Story ✏️" : "Write Your Story ✏️",
             style: const TextStyle(
@@ -343,6 +420,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
                 hint: "Enter story title...",
                 icon: Icons.title,
                 maxLines: 1,
+                onChanged: (_) => setState(() {}),
               ),
               if (_storyCoverUrl != null) ...[
                 const SizedBox(height: 10),
@@ -358,40 +436,43 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
               ],
               const SizedBox(height: 16),
               Expanded(
-                child: _buildTextField(
+                child: _buildStoryEditor(
                   controller: _bodyController,
                   hint: "Start writing your magical story here...",
-                  icon: Icons
-                      .menu_book, // <-- this will be on the left if _buildTextField uses prefixIcon
-                  maxLines: null,
-                  expands: true,
-                  onChanged: (_) => setState(() {}),
-                  outlined: true,
+                  onChanged: _handleBodyChanged,
                 ),
               ),
               const SizedBox(height: 12),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  LinearProgressIndicator(
-                    value: _wordProgress,
-                    color: progressColor,
-                    backgroundColor: Colors.grey.shade300,
-                    minHeight: 8,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  const SizedBox(height: 6),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: Text(
-                      "Word count: $_wordCount / 1000",
-                      style: TextStyle(
+              ValueListenableBuilder<TextEditingValue>(
+                valueListenable: _bodyController,
+                builder: (context, _, __) {
+                  final progressColor =
+                      _wordProgress < 1.0 ? kAppPrimary : Colors.green.shade600;
+
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      LinearProgressIndicator(
+                        value: _wordProgress,
                         color: progressColor,
-                        fontWeight: FontWeight.w600,
+                        backgroundColor: Colors.grey.shade300,
+                        minHeight: 8,
+                        borderRadius: BorderRadius.circular(10),
                       ),
-                    ),
-                  ),
-                ],
+                      const SizedBox(height: 6),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: Text(
+                          "Word count: $_wordCount / 1000",
+                          style: TextStyle(
+                            color: progressColor,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
               ),
               const SizedBox(height: 16),
               Row(
@@ -485,39 +566,184 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     required String hint,
     required IconData icon,
     int? maxLines,
-    bool expands = false,
     Function(String)? onChanged,
     bool outlined = false,
   }) {
+    final borderRadius = BorderRadius.circular(14);
+    final direction = _textDirectionFor(controller.text);
+    final textAlign = _textAlignFor(direction);
+
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: outlined
-            ? Border.all(color: kAppPrimary, width: 1.8)
-            : Border.all(color: Colors.transparent),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.purple.shade100.withValues(alpha: 0.4),
-            blurRadius: 6,
-            offset: const Offset(0, 3),
+      decoration: _fieldDecoration(outlined: outlined),
+      clipBehavior: Clip.antiAlias,
+      child: ClipRRect(
+        borderRadius: borderRadius,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          child: TextField(
+            controller: controller,
+            onChanged: onChanged,
+            onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
+            maxLines: maxLines,
+            textDirection: direction,
+            textAlign: textAlign,
+            decoration: InputDecoration(
+              prefixIcon: Icon(icon, color: kAppPrimary),
+              hintText: hint,
+              border: InputBorder.none,
+              contentPadding: const EdgeInsets.symmetric(vertical: 12),
+            ),
           ),
-        ],
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      child: TextField(
-        controller: controller,
-        onChanged: onChanged,
-        expands: expands,
-        maxLines: maxLines,
-        decoration: InputDecoration(
-          prefixIcon: Icon(icon, color: kAppPrimary),
-          hintText: hint,
-          border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(vertical: 12),
         ),
       ),
+    );
+  }
+
+  Widget _buildStoryEditor({
+    required TextEditingController controller,
+    required String hint,
+    required ValueChanged<String> onChanged,
+  }) {
+    final borderRadius = BorderRadius.circular(14);
+    final direction = _useUrduStoryEditor
+        ? TextDirection.rtl
+        : _textDirectionFor(controller.text);
+    final textAlign = _textAlignFor(direction);
+
+    if (_useUrduStoryEditor) {
+      return Container(
+        margin: const EdgeInsets.symmetric(vertical: 6),
+        decoration: _fieldDecoration(outlined: true),
+        clipBehavior: Clip.antiAlias,
+        child: ClipRRect(
+          borderRadius: borderRadius,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+            child: Scrollbar(
+              controller: _bodyScrollController,
+              thumbVisibility: true,
+              child: TextField(
+                controller: controller,
+                focusNode: _bodyFocusNode,
+                scrollController: _bodyScrollController,
+                onChanged: onChanged,
+                onTapOutside: (_) =>
+                    FocusManager.instance.primaryFocus?.unfocus(),
+                expands: true,
+                minLines: null,
+                maxLines: null,
+                keyboardType: TextInputType.multiline,
+                textInputAction: TextInputAction.newline,
+                textDirection: TextDirection.rtl,
+                textAlign: TextAlign.right,
+                textAlignVertical: TextAlignVertical.top,
+                scrollPadding: const EdgeInsets.fromLTRB(0, 48, 0, 20),
+                scrollPhysics: const ClampingScrollPhysics(),
+                decoration: InputDecoration(
+                  hintText: hint,
+                  border: InputBorder.none,
+                  isCollapsed: true,
+                  contentPadding: const EdgeInsets.only(
+                    top: 2,
+                    right: 10,
+                    bottom: 2,
+                  ),
+                ),
+                style: const TextStyle(
+                  color: Colors.black87,
+                  fontSize: 16,
+                  height: 1.5,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      decoration: _fieldDecoration(outlined: true),
+      clipBehavior: Clip.antiAlias,
+      child: ClipRRect(
+        borderRadius: borderRadius,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+          child: Scrollbar(
+            controller: _bodyScrollController,
+            thumbVisibility: true,
+            child: TextField(
+              controller: controller,
+              focusNode: _bodyFocusNode,
+              scrollController: _bodyScrollController,
+              onChanged: onChanged,
+              onTapOutside: (_) =>
+                  FocusManager.instance.primaryFocus?.unfocus(),
+              expands: true,
+              minLines: null,
+              maxLines: null,
+              keyboardType: TextInputType.multiline,
+              textInputAction: TextInputAction.newline,
+              textDirection: direction,
+              textAlign: textAlign,
+              textAlignVertical: TextAlignVertical.top,
+              scrollPadding: const EdgeInsets.fromLTRB(0, 48, 0, 20),
+              scrollPhysics: const ClampingScrollPhysics(),
+              decoration: InputDecoration(
+                prefixIcon: const Padding(
+                  padding: EdgeInsets.only(right: 8),
+                  child: Icon(Icons.menu_book, color: kAppPrimary),
+                ),
+                prefixIconConstraints: const BoxConstraints(
+                  minWidth: 32,
+                  minHeight: 32,
+                ),
+                hintText: hint,
+                border: InputBorder.none,
+                isCollapsed: true,
+                contentPadding: const EdgeInsets.only(
+                  top: 2,
+                  right: 10,
+                  bottom: 2,
+                ),
+              ),
+              style: const TextStyle(height: 1.45),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  bool _containsUrdu(String value) {
+    return RegExp(
+      r'[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]',
+    ).hasMatch(value);
+  }
+
+  TextDirection _textDirectionFor(String value) {
+    return _containsUrdu(value) ? TextDirection.rtl : TextDirection.ltr;
+  }
+
+  TextAlign _textAlignFor(TextDirection direction) {
+    return direction == TextDirection.rtl ? TextAlign.right : TextAlign.left;
+  }
+
+  BoxDecoration _fieldDecoration({required bool outlined}) {
+    return BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(14),
+      border: outlined
+          ? Border.all(color: kAppPrimary, width: 1.8)
+          : Border.all(color: Colors.transparent),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.purple.shade100.withValues(alpha: 0.4),
+          blurRadius: 6,
+          offset: const Offset(0, 3),
+        ),
+      ],
     );
   }
 
