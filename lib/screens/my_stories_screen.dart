@@ -136,6 +136,11 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
           final badges = BadgeEngine.getBadges(
             storyCount: stories.length,
             likes: totalLikes,
+            storiesThisWeek: stories
+                .where((story) => story.createdAt.isAfter(
+                      DateTime.now().subtract(const Duration(days: 7)),
+                    ))
+                .length,
           );
           final unlockedBadges =
               badges.where((badge) => badge['unlocked'] == true).length;
@@ -206,6 +211,7 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
                       onPublish: _publishStory,
                       onMakeEbook: _openEbookCreator,
                       onDelete: _deleteStory,
+                      onViewFeedback: _showParentFeedback,
                       highlightedStoryId: widget.highlightedStoryId,
                     ),
                     _StoryList(
@@ -216,6 +222,7 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
                       onPublish: _publishStory,
                       onMakeEbook: _openEbookCreator,
                       onDelete: _deleteStory,
+                      onViewFeedback: _showParentFeedback,
                       highlightedStoryId: widget.highlightedStoryId,
                     ),
                     _StoryList(
@@ -226,6 +233,7 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
                       onPublish: _publishStory,
                       onMakeEbook: _openEbookCreator,
                       onDelete: _deleteStory,
+                      onViewFeedback: _showParentFeedback,
                       highlightedStoryId: widget.highlightedStoryId,
                     ),
                   ],
@@ -296,6 +304,7 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
       'isPublish': nextStatus == 'published',
       'parentEmail': isChild ? parentEmail : null,
       'approvalStatus': isChild ? 'pending' : 'approved',
+      'parentFeedback': FieldValue.delete(),
       'moderation': {
         'isSafe': true,
         'flagReason': null,
@@ -364,6 +373,34 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
           userId: _user!.uid,
           userName: _user!.displayName ?? _user!.email ?? 'User',
         ),
+      ),
+    );
+  }
+
+  void _showParentFeedback(_StoryDashboardItem story) {
+    final feedback = story.parentFeedbackText;
+
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Feedback'),
+        content: Text(
+          feedback.isEmpty ? 'No feedback comment was provided.' : feedback,
+          style: const TextStyle(height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _editStory(story);
+            },
+            child: const Text('Edit Story'),
+          ),
+        ],
       ),
     );
   }
@@ -597,6 +634,7 @@ class _StoryList extends StatelessWidget {
   final ValueChanged<_StoryDashboardItem> onPublish;
   final VoidCallback onMakeEbook;
   final ValueChanged<_StoryDashboardItem> onDelete;
+  final ValueChanged<_StoryDashboardItem> onViewFeedback;
   final String? highlightedStoryId;
 
   const _StoryList({
@@ -607,6 +645,7 @@ class _StoryList extends StatelessWidget {
     required this.onPublish,
     required this.onMakeEbook,
     required this.onDelete,
+    required this.onViewFeedback,
     required this.highlightedStoryId,
   });
 
@@ -629,6 +668,7 @@ class _StoryList extends StatelessWidget {
           onPublish: story.status == 'draft' ? () => onPublish(story) : null,
           onMakeEbook: onMakeEbook,
           onDelete: () => onDelete(story),
+          onViewFeedback: () => onViewFeedback(story),
           highlighted: story.id == highlightedStoryId,
         );
       },
@@ -706,6 +746,7 @@ class _StoryManagementCard extends StatelessWidget {
   final VoidCallback? onPublish;
   final VoidCallback onMakeEbook;
   final VoidCallback onDelete;
+  final VoidCallback onViewFeedback;
   final bool highlighted;
 
   const _StoryManagementCard({
@@ -715,6 +756,7 @@ class _StoryManagementCard extends StatelessWidget {
     required this.onPublish,
     required this.onMakeEbook,
     required this.onDelete,
+    required this.onViewFeedback,
     required this.highlighted,
   });
 
@@ -851,6 +893,12 @@ class _StoryManagementCard extends StatelessWidget {
                     icon: Icons.menu_book,
                     label: 'Read',
                     onPressed: onOpen,
+                  ),
+                if (story.approvalStatus == 'rejected')
+                  _ActionButton(
+                    icon: Icons.comment,
+                    label: 'Feedback',
+                    onPressed: onViewFeedback,
                   ),
                 _ActionButton(
                   icon: Icons.auto_stories,
@@ -1029,6 +1077,7 @@ class _StoryDashboardItem {
   final int ratingCount;
   final double averageRating;
   final List likedBy;
+  final Map<String, dynamic>? parentFeedback;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -1047,6 +1096,7 @@ class _StoryDashboardItem {
     required this.ratingCount,
     required this.averageRating,
     required this.likedBy,
+    required this.parentFeedback,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -1079,6 +1129,7 @@ class _StoryDashboardItem {
       ratingCount: _readInt(data['ratingCount']),
       averageRating: _readDouble(data['averageRating']),
       likedBy: (data['likedBy'] as List?) ?? const [],
+      parentFeedback: _readMap(data['parentFeedback']),
       createdAt: _readDate(data['createdAt']),
       updatedAt: _readDate(data['updatedAt'], fallback: data['createdAt']),
     );
@@ -1104,6 +1155,11 @@ class _StoryDashboardItem {
       return 'Sent back for editing';
     }
     return 'Draft saved';
+  }
+
+  String get parentFeedbackText {
+    final feedback = parentFeedback?['feedback'];
+    return feedback is String ? feedback.trim() : '';
   }
 
   Color get approvalColor {
@@ -1161,6 +1217,12 @@ class _StoryDashboardItem {
     if (value is DateTime) return value;
     if (fallback != null) return _readDate(fallback);
     return DateTime.fromMillisecondsSinceEpoch(0);
+  }
+
+  static Map<String, dynamic>? _readMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) return Map<String, dynamic>.from(value);
+    return null;
   }
 
   static String _readStatus(dynamic value) {
