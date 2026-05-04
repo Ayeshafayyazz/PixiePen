@@ -11,6 +11,7 @@ import 'profile_screen.dart';
 import 'theme.dart';
 import 'write_story_screen.dart';
 import '../services/content_moderation_service.dart';
+import '../utils/story_content.dart';
 import '../utils/story_search.dart';
 
 DateTime _readTimestamp(dynamic value) {
@@ -503,49 +504,6 @@ class StoryService {
     return 0;
   }
 
-  static Map<String, dynamic> _readDynamicMap(dynamic value) {
-    if (value is Map) {
-      return value.map((key, mapValue) => MapEntry(key.toString(), mapValue));
-    }
-    return <String, dynamic>{};
-  }
-
-  static Map<String, String> _readStringMap(dynamic value) {
-    if (value is Map) {
-      final result = <String, String>{};
-      for (final entry in value.entries) {
-        final mapValue = entry.value;
-        if (mapValue is String && mapValue.isNotEmpty) {
-          result[entry.key.toString()] = mapValue;
-        }
-      }
-      return result;
-    }
-    return <String, String>{};
-  }
-
-  static List<Map<String, dynamic>> _readCommentReactions(
-    Map<String, dynamic> data,
-  ) {
-    final reactionList = data['commentReactions'];
-    if (reactionList is List) {
-      return reactionList
-          .whereType<Map>()
-          .map((reaction) => Map<String, dynamic>.from(reaction))
-          .where((reaction) =>
-              reaction['userId'] is String && reaction['emoji'] is String)
-          .toList();
-    }
-
-    final reactionsByUser = _readStringMap(data['reactionsByUser']);
-    return reactionsByUser.entries
-        .map((entry) => {
-              'userId': entry.key,
-              'emoji': entry.value,
-            })
-        .toList();
-  }
-
   static bool _notificationsEnabled(Map<String, dynamic>? userData) {
     return userData?['notificationsEnabled'] != false;
   }
@@ -578,6 +536,8 @@ class StoryPost {
   final Color accent;
   final String imageUrl;
   final List<Comment> commentList;
+  /// Ordered text/image blocks when loaded from Firestore `content`; null for legacy stories.
+  final List<Map<String, dynamic>>? contentBlocks;
 
   const StoryPost({
     required this.id,
@@ -595,6 +555,7 @@ class StoryPost {
     required this.accent,
     required this.imageUrl,
     this.commentList = const [],
+    this.contentBlocks,
   });
 
   StoryPost toggleLike() => StoryPost(
@@ -613,6 +574,7 @@ class StoryPost {
         accent: accent,
         imageUrl: imageUrl,
         commentList: commentList,
+        contentBlocks: contentBlocks,
       );
 }
 
@@ -766,19 +728,45 @@ class StoryReaderViewModel extends ChangeNotifier {
   }
 
   void _updateDisplayPost() {
+    final blocks = originalPost.contentBlocks;
+    final String excerpt;
+    final List<Map<String, dynamic>>? outBlocks;
+    if (blocks != null && blocks.isNotEmpty) {
+      outBlocks = blocks.map((m) {
+        final type = m['type'] as String?;
+        if (type == StoryContentCodec.typeText) {
+          final text = m['text'] as String? ?? '';
+          return {
+            'type': StoryContentCodec.typeText,
+            'text': PerspectiveEngine.transform(text, currentMapping),
+          };
+        }
+        return Map<String, dynamic>.from(m);
+      }).toList();
+      excerpt = StoryContentCodec.joinPlainText(outBlocks);
+    } else {
+      excerpt =
+          PerspectiveEngine.transform(originalPost.excerpt, currentMapping);
+      outBlocks = null;
+    }
+
     displayPost = StoryPost(
       id: originalPost.id,
       author: originalPost.author,
       handle: originalPost.handle,
       title: originalPost.title,
-      excerpt:
-          PerspectiveEngine.transform(originalPost.excerpt, currentMapping),
+      excerpt: excerpt,
       likes: originalPost.likes,
       comments: originalPost.comments,
+      saves: originalPost.saves,
+      ratingCount: originalPost.ratingCount,
+      averageRating: originalPost.averageRating,
       likedByMe: originalPost.likedByMe,
+      savedByMe: originalPost.savedByMe,
       accent: originalPost.accent,
       imageUrl: originalPost.imageUrl,
       commentList: originalPost.commentList,
+      contentBlocks: outBlocks,
     );
     notifyListeners();
   }
@@ -1181,6 +1169,9 @@ class _CommunityScreenState extends State<CommunityScreen> {
                                 _savedStoryIds.contains(storyId) ||
                                     savedBy.contains(_userId);
 
+                        final contentBlocks =
+                            StoryContentCodec.parseContent(data['content']);
+
                         final post = StoryPost(
                           id: storyId,
                           author: author,
@@ -1196,6 +1187,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
                           savedByMe: savedByMe,
                           accent: const Color(0xFF7B1FA2),
                           imageUrl: imageUrl,
+                          contentBlocks: contentBlocks,
                         );
 
                         return Container(
@@ -1247,7 +1239,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
                                   storyId: storyId,
                                   userId: activeUserId,
                                 );
-                                if (!mounted) return;
+                                if (!context.mounted) return;
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
                                     content: Text(
@@ -1265,7 +1257,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
                                   'Could not update saved story: $error',
                                 );
                                 debugPrintStack(stackTrace: stackTrace);
-                                if (!mounted) return;
+                                if (!context.mounted) return;
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(
                                     content: Text(
@@ -1443,6 +1435,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
         (data['handle'] as String?) ?? author.replaceAll(' ', '').toLowerCase();
     final cover = data['coverUrl'] as String?;
     final likedBy = (data['likedBy'] as List?) ?? [];
+    final contentBlocks = StoryContentCodec.parseContent(data['content']);
 
     _openStory(
       context,
@@ -1461,6 +1454,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
         imageUrl: cover != null && cover.isNotEmpty
             ? cover
             : 'https://picsum.photos/seed/$storyId/600/300',
+        contentBlocks: contentBlocks,
       ),
     );
   }
@@ -1527,6 +1521,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
     );
 
     if (selectedEmoji == null || _userId.isEmpty) return;
+    if (!context.mounted) return;
     await _toggleCommentReactionSafely(
       context: context,
       storyId: storyId,
@@ -1646,68 +1641,6 @@ class _CommunityScreenState extends State<CommunityScreen> {
         );
       },
     );
-  }
-
-  Widget _buildReactionSummary(Map<String, dynamic> data) {
-    final reactionCounts = <String, int>{};
-    for (final reaction in StoryService._readCommentReactions(data)) {
-      final emoji = reaction['emoji'] as String;
-      reactionCounts[emoji] = (reactionCounts[emoji] ?? 0) + 1;
-    }
-    if (reactionCounts.isEmpty) {
-      for (final entry
-          in StoryService._readDynamicMap(data['reactionCounts']).entries) {
-        final count = _readInt(entry.value);
-        if (count > 0) reactionCounts[entry.key] = count;
-      }
-    }
-
-    return _buildReactionSummaryFromCounts(reactionCounts);
-  }
-
-  Widget _buildReactionSummaryFromCounts(Map<String, int> reactionCounts) {
-    final entries = reactionCounts.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-
-    if (entries.isEmpty) return const SizedBox.shrink();
-
-    return Padding(
-      padding: const EdgeInsets.only(top: 6),
-      child: Wrap(
-        spacing: 6,
-        runSpacing: 4,
-        children: entries.map((entry) {
-          return Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF3E5F5),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Text(
-              '${entry.key} ${entry.value}',
-              style: const TextStyle(fontSize: 12),
-            ),
-          );
-        }).toList(),
-      ),
-    );
-  }
-
-  String? _currentUserCommentReaction(Map<String, dynamic> data) {
-    final reactions = StoryService._readCommentReactions(data);
-    for (final reaction in reactions) {
-      if (reaction['userId'] == _userId) {
-        final emoji = reaction['emoji'];
-        if (emoji is String && emoji.isNotEmpty) return emoji;
-      }
-    }
-
-    final reactionsByUser =
-        StoryService._readStringMap(data['reactionsByUser']);
-    final legacyReaction = reactionsByUser[_userId];
-    return legacyReaction is String && legacyReaction.isNotEmpty
-        ? legacyReaction
-        : null;
   }
 
   Widget _buildCommentReplies({
@@ -3199,6 +3132,24 @@ class _StoryActionCount extends StatelessWidget {
   }
 }
 
+/// One segment in the reader scroll: a speech paragraph or an inline image.
+class _ReaderLayoutPiece {
+  const _ReaderLayoutPiece.text(this.text, this.speechIndex)
+      : isImage = false,
+        imageUrl = null;
+
+  const _ReaderLayoutPiece.image(this.imageUrl)
+      : isImage = true,
+        text = null,
+        speechIndex = -1;
+
+  final bool isImage;
+  final String? text;
+  final String? imageUrl;
+  /// Index into [_paragraphs] / [_paragraphKeys]; -1 for images.
+  final int speechIndex;
+}
+
 /// =============================================================================
 /// STORY READER PAGE (Enhanced with Perspective Shift & Character Names)
 /// =============================================================================
@@ -3229,6 +3180,7 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
   final ScrollController _storyScrollController = ScrollController();
   final List<GlobalKey> _paragraphKeys = [];
   List<String> _paragraphs = [];
+  List<_ReaderLayoutPiece> _layoutPieces = [];
   bool _isSpeaking = false;
   bool _isPreparingSpeech = false;
   bool _isPaused = false;
@@ -3255,18 +3207,52 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
   }
 
   void _syncParagraphs() {
-    final nextParagraphs = _buildParagraphs(viewModel.displayPost.excerpt);
+    final post = viewModel.displayPost;
+    final blocks = post.contentBlocks;
+    final List<String> nextParagraphs;
+    final List<_ReaderLayoutPiece> nextPieces;
+
+    if (blocks != null && blocks.isNotEmpty) {
+      nextParagraphs = [];
+      nextPieces = [];
+      for (final m in blocks) {
+        final type = m['type'] as String?;
+        if (type == StoryContentCodec.typeImage) {
+          final url = (m['url'] as String?)?.trim() ?? '';
+          if (url.isNotEmpty) {
+            nextPieces.add(_ReaderLayoutPiece.image(url));
+          }
+        } else {
+          final raw = m['text'] as String? ?? '';
+          final paras = _buildParagraphs(raw);
+          for (final p in paras) {
+            final idx = nextParagraphs.length;
+            nextParagraphs.add(p);
+            nextPieces.add(_ReaderLayoutPiece.text(p, idx));
+          }
+        }
+      }
+    } else {
+      nextParagraphs = _buildParagraphs(post.excerpt);
+      nextPieces = [
+        for (var i = 0; i < nextParagraphs.length; i++)
+          _ReaderLayoutPiece.text(nextParagraphs[i], i),
+      ];
+    }
+
     _paragraphKeys
       ..clear()
       ..addAll(List.generate(nextParagraphs.length, (_) => GlobalKey()));
 
     if (!mounted) {
       _paragraphs = nextParagraphs;
+      _layoutPieces = nextPieces;
       return;
     }
 
     setState(() {
       _paragraphs = nextParagraphs;
+      _layoutPieces = nextPieces;
       if (!_isSpeaking && !_isPreparingSpeech && !_isPaused) {
         _activeParagraphIndex = null;
       }
@@ -3591,13 +3577,16 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
           ),
         ],
       ),
+      // Pin optional footer (e.g. parent actions) below one Expanded scroll area.
+      // Avoids a Column of [many fixed rows] + Expanded + footer, which can
+      // briefly assign zero/negative flex to Expanded when viewInsets/keyboard
+      // change while a modal is open, causing a short bottom overflow flash.
+      resizeToAvoidBottomInset: true,
       body: ListenableBuilder(
         listenable: viewModel,
         builder: (context, _) {
           return LayoutBuilder(
             builder: (context, constraints) {
-              final imageHeight =
-                  (constraints.maxHeight * 0.18).clamp(115.0, 155.0);
               final pagePadding = constraints.maxWidth < 380 ? 12.0 : 16.0;
 
               return Padding(
@@ -3605,57 +3594,115 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _AuthorRow(
-                      name: viewModel.displayPost.author,
-                      handle: viewModel.displayPost.handle,
-                    ),
-                    const SizedBox(height: 6),
-                    if (viewModel.displayPost.imageUrl.isNotEmpty)
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(14),
-                        child: Image.network(
-                          viewModel.displayPost.imageUrl,
-                          fit: BoxFit.cover,
-                          width: double.infinity,
-                          height: imageHeight,
-                          errorBuilder: (context, error, stackTrace) =>
-                              Container(
-                            height: imageHeight,
-                            color: Colors.grey[200],
-                          ),
-                        ),
-                      ),
-                    const SizedBox(height: 8),
-                    _StoryRatingPanel(
-                      post: viewModel.displayPost,
-                      service: widget.service,
-                      userId: widget.userId,
-                      userName: widget.userName,
-                    ),
-                    const SizedBox(height: 6),
-                    _ReadAloudBar(
-                      isSpeaking: _isSpeaking,
-                      isPreparing: _isPreparingSpeech,
-                      isPaused: _isPaused,
-                      onPressed: _toggleReadAloud,
-                      onStop: _isPaused || _isSpeaking || _isPreparingSpeech
-                          ? _stopReadAloud
-                          : null,
-                    ),
-                    const SizedBox(height: 8),
                     Expanded(
-                      child: SingleChildScrollView(
-                        controller: _storyScrollController,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: List.generate(_paragraphs.length, (index) {
-                            return _TrackedStoryParagraph(
-                              key: _paragraphKeys[index],
-                              text: _paragraphs[index],
-                              highlighted: index == _activeParagraphIndex,
-                            );
-                          }),
-                        ),
+                      child: LayoutBuilder(
+                        builder: (context, innerConstraints) {
+                          // Width-based cover height stays valid inside scrollables
+                          // (inner maxHeight can be unbounded in the scroll axis).
+                          final imageHeight = (innerConstraints.maxWidth * 0.42)
+                              .clamp(110.0, 168.0);
+
+                          return SingleChildScrollView(
+                            controller: _storyScrollController,
+                            keyboardDismissBehavior:
+                                ScrollViewKeyboardDismissBehavior.onDrag,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _AuthorRow(
+                                  name: viewModel.displayPost.author,
+                                  handle: viewModel.displayPost.handle,
+                                ),
+                                const SizedBox(height: 6),
+                                if (viewModel.displayPost.imageUrl.isNotEmpty)
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(14),
+                                    child: Image.network(
+                                      viewModel.displayPost.imageUrl,
+                                      fit: BoxFit.cover,
+                                      width: double.infinity,
+                                      height: imageHeight,
+                                      errorBuilder:
+                                          (context, error, stackTrace) =>
+                                              Container(
+                                        height: imageHeight,
+                                        color: Colors.grey[200],
+                                      ),
+                                    ),
+                                  ),
+                                const SizedBox(height: 8),
+                                _StoryRatingPanel(
+                                  post: viewModel.displayPost,
+                                  service: widget.service,
+                                  userId: widget.userId,
+                                  userName: widget.userName,
+                                ),
+                                const SizedBox(height: 6),
+                                _ReadAloudBar(
+                                  isSpeaking: _isSpeaking,
+                                  isPreparing: _isPreparingSpeech,
+                                  isPaused: _isPaused,
+                                  onPressed: _toggleReadAloud,
+                                  onStop: _isPaused ||
+                                          _isSpeaking ||
+                                          _isPreparingSpeech
+                                      ? _stopReadAloud
+                                      : null,
+                                ),
+                                const SizedBox(height: 8),
+                                ..._layoutPieces.map((piece) {
+                                  if (piece.isImage) {
+                                    return Padding(
+                                      padding: const EdgeInsets.only(
+                                        bottom: 12,
+                                      ),
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(
+                                          10,
+                                        ),
+                                        child: Image.network(
+                                          piece.imageUrl!,
+                                          width: double.infinity,
+                                          fit: BoxFit.fitWidth,
+                                          loadingBuilder: (context, child,
+                                              loadingProgress) {
+                                            if (loadingProgress == null) {
+                                              return child;
+                                            }
+                                            return Container(
+                                              height: 180,
+                                              alignment: Alignment.center,
+                                              color: Colors.grey.shade100,
+                                              child:
+                                                  const CircularProgressIndicator(),
+                                            );
+                                          },
+                                          errorBuilder:
+                                              (context, error, stackTrace) =>
+                                                  Container(
+                                            height: 120,
+                                            color: Colors.grey.shade200,
+                                            alignment: Alignment.center,
+                                            child: const Icon(
+                                              Icons.broken_image_outlined,
+                                              size: 40,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                  final idx = piece.speechIndex;
+                                  return _TrackedStoryParagraph(
+                                    key: _paragraphKeys[idx],
+                                    text: piece.text!,
+                                    highlighted: idx == _activeParagraphIndex,
+                                  );
+                                }),
+                              ],
+                            ),
+                          );
+                        },
                       ),
                     ),
                     if (widget.footer != null) ...[
