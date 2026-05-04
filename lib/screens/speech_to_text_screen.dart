@@ -28,6 +28,8 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
 
   String _savedText = '';
   String _liveWords = '';
+  /// Avoid appending the same dictation twice when stop/status both commit.
+  String _lastAppendedLive = '';
   String _statusMessage = 'Tap the mic and start speaking...';
   String _selectedLanguage = 'en_US';
 
@@ -114,7 +116,6 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
     }
 
     if (status == 'done' || status == 'notListening') {
-      _commitLiveWords();
       setState(() {
         _isListening = false;
         _statusMessage = 'Tap mic to continue speaking';
@@ -137,6 +138,9 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
       if (!_speechEnabled) return;
     }
 
+    if (!mounted) return;
+    _commitLiveWords();
+    _lastAppendedLive = '';
     if (!mounted) return;
     setState(() {
       _liveWords = '';
@@ -212,9 +216,20 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
   void _commitLiveWords() {
     final live = _liveWords.trim();
     if (live.isEmpty) return;
+    if (live == _lastAppendedLive) {
+      _liveWords = '';
+      return;
+    }
 
     final saved = _savedText.trim();
+    if (saved.isNotEmpty && (saved == live || saved.endsWith(' $live'))) {
+      _liveWords = '';
+      _lastAppendedLive = live;
+      return;
+    }
+
     _savedText = saved.isEmpty ? live : '$saved $live';
+    _lastAppendedLive = live;
     _liveWords = '';
   }
 
@@ -393,7 +408,7 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
                               color: (_isListening
                                       ? Colors.redAccent
                                       : kAppPrimary)
-                                  .withOpacity(0.4),
+                                  .withValues(alpha: 0.4),
                               blurRadius: 20,
                               spreadRadius: 5,
                             ),
