@@ -1,4 +1,3 @@
-// profile_screen.dart
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -9,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'badge_screen.dart';
 import 'write_story_screen.dart';
 import 'community.dart';
+import 'parent_approvals_screen.dart';
 import 'theme.dart';
 
 const List<_AvatarChoice> _avatarChoices = [
@@ -541,6 +541,8 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final GlobalKey<ScaffoldState> _profileScaffoldKey =
+      GlobalKey<ScaffoldState>();
   User? _user;
 
   @override
@@ -615,8 +617,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final userId = _user?.uid;
 
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Scaffold(
+        key: _profileScaffoldKey,
         drawer: _buildDrawer(context),
         appBar: AppBar(
           backgroundColor: Colors.transparent,
@@ -631,6 +634,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               tabs: [
                 Tab(text: "My Stories"),
                 Tab(text: "Drafts"),
+                Tab(text: "Saved"),
               ],
             ),
             Expanded(
@@ -639,6 +643,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   _StoriesTab(
                       title: "My Stories", status: "published", userId: userId),
                   _StoriesTab(title: "Drafts", status: "draft", userId: userId),
+                  _SavedStoriesProfileTab(userId: userId),
                 ],
               ),
             ),
@@ -1008,18 +1013,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
               children: [
                 _buildDrawerSectionTitle("Account"),
                 _buildDrawerItem(Icons.emoji_events, "Badges", () {
-                  Navigator.pop(context);
-                  Navigator.push(
+                  _openDrawerRoute(
                     context,
-                    MaterialPageRoute(builder: (_) => const BadgeScreen()),
+                    builder: (_) => const BadgeScreen(),
                   );
                 }),
                 _buildParentApprovalDrawerItem(context),
                 _buildDrawerItem(Icons.settings, "Settings", () {
-                  Navigator.pop(context);
-                  Navigator.push(
+                  _openDrawerRoute(
                     context,
-                    MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                    builder: (_) => const SettingsScreen(),
                   );
                 }),
                 _buildDrawerSectionTitle("Support"),
@@ -1105,10 +1108,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   },
                 ),
                 _buildDrawerItem(Icons.feedback_outlined, "Feedback", () {
-                  Navigator.pop(context);
-                  Navigator.push(
+                  _openDrawerRoute(
                     context,
-                    MaterialPageRoute(builder: (_) => const FeedbackScreen()),
+                    builder: (_) => const FeedbackScreen(),
                   );
                 }),
                 _buildDrawerItem(Icons.info_outline, "About PixiePen", () {
@@ -1178,12 +1180,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
         return _buildDrawerItem(Icons.fact_check_outlined, "Parent Approvals",
             () {
-          Navigator.pop(context);
-          Navigator.push(
+          _openDrawerRoute(
             context,
-            MaterialPageRoute(
-              builder: (_) => const ParentApprovalsScreen(),
-            ),
+            builder: (_) => const ParentApprovalsScreen(),
           );
         });
       },
@@ -1217,17 +1216,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
     required IconData icon,
     required List<_InfoSection> sections,
   }) {
-    Navigator.pop(context);
-    Navigator.push(
+    _openDrawerRoute(
       context,
-      MaterialPageRoute(
-        builder: (_) => _InfoPage(
-          title: title,
-          icon: icon,
-          sections: sections,
-        ),
+      builder: (_) => _InfoPage(
+        title: title,
+        icon: icon,
+        sections: sections,
       ),
     );
+  }
+
+  Future<void> _openDrawerRoute(
+    BuildContext drawerContext, {
+    required WidgetBuilder builder,
+  }) async {
+    Navigator.pop(drawerContext);
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: builder),
+    );
+
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _profileScaffoldKey.currentState?.openDrawer();
+    });
   }
 
   String _profilePhotoUrl(Map<String, dynamic>? data) {
@@ -1353,524 +1366,6 @@ class _InfoSection {
     required this.title,
     required this.body,
   });
-}
-
-class ParentApprovalsScreen extends StatelessWidget {
-  final String? highlightStoryId;
-
-  const ParentApprovalsScreen({super.key, this.highlightStoryId});
-
-  @override
-  Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
-    final parentEmail = user?.email?.trim().toLowerCase();
-
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        backgroundColor: const Color(0xFFF9F7FF),
-        appBar: AppBar(
-          title: const Text(
-            'Parent Approvals',
-            style: TextStyle(color: Colors.white),
-          ),
-          backgroundColor: kAppPrimary,
-          iconTheme: const IconThemeData(color: Colors.white),
-          actions: [
-            if (user != null) _ParentNotificationButton(userId: user.uid),
-            IconButton(
-              tooltip: 'Logout',
-              onPressed: () async {
-                final shouldLogout = await showDialog<bool>(
-                  context: context,
-                  builder: (_) => AlertDialog(
-                    title: const Text("Confirm Logout"),
-                    content: const Text("Are you sure you want to logout?"),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(context, false),
-                        child: const Text("Cancel"),
-                      ),
-                      TextButton(
-                        onPressed: () => Navigator.pop(context, true),
-                        child: const Text("Logout"),
-                      ),
-                    ],
-                  ),
-                );
-                if (shouldLogout == true) {
-                  await FirebaseAuth.instance.signOut();
-                  if (context.mounted) {
-                    Navigator.of(context)
-                        .pushNamedAndRemoveUntil('/login', (route) => false);
-                  }
-                }
-              },
-              icon: const Icon(Icons.logout, color: Colors.white),
-            ),
-          ],
-          bottom: const TabBar(
-            indicatorColor: Colors.white,
-            labelColor: Colors.white,
-            unselectedLabelColor: Colors.white70,
-            tabs: [
-              Tab(text: 'Pending'),
-              Tab(text: 'History'),
-            ],
-          ),
-        ),
-        body: parentEmail == null
-            ? const Center(child: Text('Please log in as a parent.'))
-            : StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                stream: FirebaseFirestore.instance
-                    .collection('stories')
-                    .where('parentEmail', isEqualTo: parentEmail)
-                    .snapshots(),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(
-                      child: CircularProgressIndicator(color: kAppPrimary),
-                    );
-                  }
-
-                  final stories = (snapshot.data?.docs ?? []).toList()
-                    ..sort((a, b) {
-                      final aDate = _readDate(a.data()['createdAt']);
-                      final bDate = _readDate(b.data()['createdAt']);
-                      return bDate.compareTo(aDate);
-                    });
-
-                  final pending = stories
-                      .where(
-                        (doc) =>
-                            doc.data()['status'] == 'pending_parent_approval',
-                      )
-                      .toList();
-                  final history = stories
-                      .where((doc) =>
-                          doc.data()['approvalStatus'] == 'approved' ||
-                          doc.data()['approvalStatus'] == 'rejected')
-                      .toList();
-
-                  return TabBarView(
-                    children: [
-                      _ParentApprovalList(
-                        docs: _prioritizeStory(pending, highlightStoryId),
-                        emptyText: 'No stories waiting for approval.',
-                        showActions: true,
-                        highlightStoryId: highlightStoryId,
-                      ),
-                      _ParentApprovalList(
-                        docs: history,
-                        emptyText: 'No approval history yet.',
-                        showActions: false,
-                        highlightStoryId: highlightStoryId,
-                      ),
-                    ],
-                  );
-                },
-              ),
-      ),
-    );
-  }
-
-  static DateTime _readDate(dynamic value) {
-    if (value is Timestamp) return value.toDate();
-    if (value is DateTime) return value;
-    return DateTime.fromMillisecondsSinceEpoch(0);
-  }
-
-  static List<QueryDocumentSnapshot<Map<String, dynamic>>> _prioritizeStory(
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
-    String? storyId,
-  ) {
-    if (storyId == null) return docs;
-    return docs.toList()
-      ..sort((a, b) {
-        if (a.id == storyId) return -1;
-        if (b.id == storyId) return 1;
-        return 0;
-      });
-  }
-}
-
-class _ParentApprovalList extends StatelessWidget {
-  final List<QueryDocumentSnapshot<Map<String, dynamic>>> docs;
-  final String emptyText;
-  final bool showActions;
-  final String? highlightStoryId;
-
-  const _ParentApprovalList({
-    required this.docs,
-    required this.emptyText,
-    required this.showActions,
-    required this.highlightStoryId,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    if (docs.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(
-            emptyText,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontWeight: FontWeight.w700),
-          ),
-        ),
-      );
-    }
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final horizontalPadding = constraints.maxWidth < 380 ? 12.0 : 16.0;
-
-        return ListView.separated(
-          padding: EdgeInsets.fromLTRB(
-            horizontalPadding,
-            16,
-            horizontalPadding,
-            24,
-          ),
-          itemCount: docs.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 12),
-          itemBuilder: (context, index) {
-            final doc = docs[index];
-            final data = doc.data();
-            return Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 720),
-                child: _ParentApprovalCard(
-                  storyId: doc.id,
-                  title: (data['title'] as String?) ?? 'Untitled',
-                  body: (data['body'] as String?) ?? '',
-                  childId: data['authorId'] as String?,
-                  childName: (data['authorName'] as String?) ?? 'Child',
-                  approvalStatus:
-                      (data['approvalStatus'] as String?) ?? 'pending',
-                  showActions: showActions,
-                  highlighted: doc.id == highlightStoryId,
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-}
-
-class _ParentNotificationButton extends StatelessWidget {
-  final String userId;
-
-  const _ParentNotificationButton({required this.userId});
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance
-          .collection('notifications')
-          .where('toUserId', isEqualTo: userId)
-          .limit(50)
-          .snapshots(),
-      builder: (context, snapshot) {
-        final unreadCount = (snapshot.data?.docs ?? [])
-            .where((doc) => doc.data()['isRead'] != true)
-            .length
-            .clamp(0, 99);
-
-        return IconButton(
-          tooltip: 'Notifications',
-          onPressed: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => NotificationScreen(
-                  userId: userId,
-                  onParentApprovalTap: (storyId) {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            ParentApprovalsScreen(highlightStoryId: storyId),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            );
-          },
-          icon: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              const Icon(Icons.notifications_none, color: Colors.white),
-              if (unreadCount > 0)
-                Positioned(
-                  right: -6,
-                  top: -6,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 5,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.redAccent,
-                      borderRadius: BorderRadius.circular(99),
-                    ),
-                    constraints: const BoxConstraints(minWidth: 18),
-                    child: Text(
-                      '$unreadCount',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _ParentApprovalCard extends StatefulWidget {
-  final String storyId;
-  final String title;
-  final String body;
-  final String? childId;
-  final String childName;
-  final String approvalStatus;
-  final bool showActions;
-  final bool highlighted;
-
-  const _ParentApprovalCard({
-    required this.storyId,
-    required this.title,
-    required this.body,
-    required this.childId,
-    required this.childName,
-    required this.approvalStatus,
-    required this.showActions,
-    required this.highlighted,
-  });
-
-  @override
-  State<_ParentApprovalCard> createState() => _ParentApprovalCardState();
-}
-
-class _ParentApprovalCardState extends State<_ParentApprovalCard> {
-  bool _isSaving = false;
-
-  Future<void> _review({required bool approved}) async {
-    setState(() => _isSaving = true);
-
-    try {
-      final db = FirebaseFirestore.instance;
-      final parent = FirebaseAuth.instance.currentUser;
-      final storyRef = db.collection('stories').doc(widget.storyId);
-
-      await storyRef.set({
-        'status': approved ? 'published' : 'draft',
-        'isPublish': approved,
-        'approvalStatus': approved ? 'approved' : 'rejected',
-        'parentApproval': {
-          'status': approved ? 'approved' : 'rejected',
-          'reviewedAt': FieldValue.serverTimestamp(),
-          'reviewedBy': parent?.uid,
-          'reviewedByEmail': parent?.email?.trim().toLowerCase(),
-        },
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-
-      final childId = widget.childId;
-      if (childId != null && childId.isNotEmpty) {
-        final childSnap = await db.collection('users').doc(childId).get();
-        if (childSnap.data()?['notificationsEnabled'] != false) {
-          await db.collection('notifications').add({
-            'toUserId': childId,
-            'fromUserId': parent?.uid,
-            'fromUserName': parent?.displayName ?? 'Parent',
-            'type': 'approval_result',
-            'storyId': widget.storyId,
-            'storyTitle': widget.title,
-            'message': approved
-                ? 'Your story "${widget.title}" was approved and published.'
-                : 'Your story "${widget.title}" was sent back for editing.',
-            'isRead': false,
-            'createdAt': FieldValue.serverTimestamp(),
-          });
-        }
-      }
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(approved ? 'Story approved' : 'Story sent back'),
-        ),
-      );
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not update story: $error')),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _isSaving = false);
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final isNarrow = constraints.maxWidth < 360;
-
-        return Container(
-          padding: EdgeInsets.all(isNarrow ? 12 : 14),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: widget.highlighted ? kAppPrimary : const Color(0xFFE2D9F3),
-              width: widget.highlighted ? 2 : 1,
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                widget.title,
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w900,
-                  color: Colors.black87,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'by ${widget.childName}',
-                style: TextStyle(color: Colors.grey.shade700),
-              ),
-              const SizedBox(height: 8),
-              _ParentApprovalStatus(status: widget.approvalStatus),
-              const SizedBox(height: 10),
-              Text(
-                widget.body,
-                maxLines: 5,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(height: 1.35),
-              ),
-              if (widget.showActions) ...[
-                const SizedBox(height: 12),
-                if (isNarrow) ...[
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed:
-                          _isSaving ? null : () => _review(approved: false),
-                      icon: const Icon(Icons.edit_note),
-                      label: const Text('Send Back'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.orange.shade800,
-                        side: BorderSide(color: Colors.orange.shade300),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed:
-                          _isSaving ? null : () => _review(approved: true),
-                      icon: const Icon(Icons.check),
-                      label: const Text('Approve'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: kAppPrimary,
-                        foregroundColor: Colors.white,
-                      ),
-                    ),
-                  ),
-                ] else
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed:
-                              _isSaving ? null : () => _review(approved: false),
-                          icon: const Icon(Icons.edit_note),
-                          label: const Text('Send Back'),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.orange.shade800,
-                            side: BorderSide(color: Colors.orange.shade300),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed:
-                              _isSaving ? null : () => _review(approved: true),
-                          icon: const Icon(Icons.check),
-                          label: const Text('Approve'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: kAppPrimary,
-                            foregroundColor: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-              ],
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _ParentApprovalStatus extends StatelessWidget {
-  final String status;
-
-  const _ParentApprovalStatus({required this.status});
-
-  @override
-  Widget build(BuildContext context) {
-    final isApproved = status == 'approved';
-    final isRejected = status == 'rejected';
-    final color = isApproved
-        ? Colors.green.shade700
-        : isRejected
-            ? Colors.orange.shade800
-            : Colors.blue.shade700;
-    final label = isApproved
-        ? 'Approved'
-        : isRejected
-            ? 'Sent back'
-            : 'Waiting for review';
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: color,
-          fontSize: 12,
-          fontWeight: FontWeight.w800,
-        ),
-      ),
-    );
-  }
 }
 
 class FeedbackScreen extends StatefulWidget {
@@ -2090,8 +1585,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   void initState() {
     super.initState();
     _nameController = TextEditingController(text: _user?.displayName ?? "");
-    _handleController =
-        TextEditingController(text: _user?.email?.split('@').first ?? "");
+    _handleController = TextEditingController(text: _user?.email ?? "");
     _parentEmailController = TextEditingController();
     _photoUrl = _user?.photoURL;
     _loadProfileFromFirestore();
@@ -2105,6 +1599,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       final username = data['username'] as String?;
       if (username != null && username.trim().isNotEmpty) {
         _nameController.text = username;
+      }
+      final savedEmail = data['email'] as String?;
+      if (savedEmail != null && savedEmail.trim().isNotEmpty) {
+        _handleController.text = savedEmail.trim().toLowerCase();
       }
       final role = data['role'] as String?;
       final parentEmail = data['parentEmail'] as String?;
@@ -2162,6 +1660,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     try {
       // Update FirebaseAuth displayName
       await _user!.updateDisplayName(newName);
+      await _user!.reload();
 
       final hasUploadedPhoto =
           _photoUrl != null && _photoUrl!.trim().isNotEmpty;
@@ -2169,6 +1668,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       // Update users/{uid}.username (create doc if missing)
       await _db.collection('users').doc(_user!.uid).set({
         'username': newName,
+        'displayName': newName,
         'email': _user!.email?.trim().toLowerCase(),
         'role': _role,
         'parentEmail': _role == 'child' && parentEmail.isNotEmpty
@@ -2184,13 +1684,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
+      await _syncAuthoredStoryIdentity(newName);
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
               content: Text('Profile updated successfully!'),
               backgroundColor: Colors.green),
         );
-        Navigator.pop(context);
+        Navigator.pop(context, true);
       }
     } catch (e) {
       if (mounted) {
@@ -2206,6 +1708,45 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           _saving = false;
         });
       }
+    }
+  }
+
+  Future<void> _syncAuthoredStoryIdentity(String username) async {
+    final user = _user;
+    if (user == null) return;
+
+    final stories = await _db
+        .collection('stories')
+        .where('authorId', isEqualTo: user.uid)
+        .get();
+    if (stories.docs.isEmpty) return;
+
+    var batch = _db.batch();
+    var writeCount = 0;
+    final handle = username.replaceAll(' ', '').toLowerCase();
+
+    for (final story in stories.docs) {
+      batch.set(
+        story.reference,
+        {
+          'authorName': username,
+          'username': username,
+          'handle': handle,
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+      writeCount++;
+
+      if (writeCount == 450) {
+        await batch.commit();
+        batch = _db.batch();
+        writeCount = 0;
+      }
+    }
+
+    if (writeCount > 0) {
+      await batch.commit();
     }
   }
 
@@ -2510,132 +2051,184 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final viewInsets = MediaQuery.viewInsetsOf(context);
+
     return Scaffold(
       appBar: AppBar(
         title:
             const Text("Edit Profile", style: TextStyle(color: Colors.white)),
         backgroundColor: kAppPrimary,
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            Center(
-              child: Column(
-                children: [
-                  _ProfileAvatar(
-                    radius: 50,
-                    photoUrl: _photoUrl,
-                    avatarId: _avatarId,
-                  ),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    alignment: WrapAlignment.center,
-                    spacing: 12,
-                    runSpacing: 8,
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final horizontalPadding = constraints.maxWidth < 380 ? 12.0 : 16.0;
+            final avatarRadius = constraints.maxHeight < 620 ? 42.0 : 50.0;
+
+            return SingleChildScrollView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: EdgeInsets.fromLTRB(
+                horizontalPadding,
+                16,
+                horizontalPadding,
+                24 + viewInsets.bottom,
+              ),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 560),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      OutlinedButton.icon(
-                        onPressed: _photoSaving ? null : _showAvatarPicker,
-                        icon: const Icon(Icons.face),
-                        label: const Text('Choose Avatar'),
+                      Center(
+                        child: Column(
+                          children: [
+                            _ProfileAvatar(
+                              radius: avatarRadius,
+                              photoUrl: _photoUrl,
+                              avatarId: _avatarId,
+                            ),
+                            const SizedBox(height: 12),
+                            Wrap(
+                              alignment: WrapAlignment.center,
+                              spacing: 12,
+                              runSpacing: 8,
+                              children: [
+                                OutlinedButton.icon(
+                                  onPressed: _photoSaving
+                                      ? null
+                                      : _showAvatarPicker,
+                                  icon: const Icon(Icons.face),
+                                  label: const Text('Choose Avatar'),
+                                ),
+                                OutlinedButton.icon(
+                                  onPressed: _photoSaving
+                                      ? null
+                                      : _pickAndUploadProfilePhoto,
+                                  icon: _photoSaving
+                                      ? const SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                      : const Icon(Icons.photo_camera),
+                                  label: Text(
+                                    _photoUrl == null
+                                        ? 'Upload Photo'
+                                        : 'Update',
+                                  ),
+                                ),
+                                if (_photoUrl != null)
+                                  TextButton.icon(
+                                    onPressed: _photoSaving
+                                        ? null
+                                        : _removeProfilePhoto,
+                                    icon: const Icon(Icons.delete_outline),
+                                    label: const Text('Remove Photo'),
+                                    style: TextButton.styleFrom(
+                                      foregroundColor: Colors.red,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
-                      OutlinedButton.icon(
-                        onPressed:
-                            _photoSaving ? null : _pickAndUploadProfilePhoto,
-                        icon: _photoSaving
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.photo_camera),
-                        label:
-                            Text(_photoUrl == null ? 'Upload Photo' : 'Update'),
-                      ),
-                      if (_photoUrl != null)
-                        TextButton.icon(
-                          onPressed: _photoSaving ? null : _removeProfilePhoto,
-                          icon: const Icon(Icons.delete_outline),
-                          label: const Text('Remove Photo'),
-                          style: TextButton.styleFrom(
-                            foregroundColor: Colors.red,
+                      const SizedBox(height: 24),
+                      TextField(
+                        controller: _nameController,
+                        enabled: !_saving,
+                        textCapitalization: TextCapitalization.words,
+                        autofillHints: const [AutofillHints.name],
+                        textInputAction: TextInputAction.next,
+                        decoration: InputDecoration(
+                          labelText: "Display Name",
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
                           ),
                         ),
+                      ),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: _handleController,
+                        enabled: false,
+                        keyboardType: TextInputType.emailAddress,
+                        decoration: InputDecoration(
+                          labelText: "Email",
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerLeft,
+                          child: SegmentedButton<String>(
+                            segments: const [
+                              ButtonSegment(
+                                value: 'child',
+                                icon: Icon(Icons.face),
+                                label: Text('Child'),
+                              ),
+                              ButtonSegment(
+                                value: 'parent',
+                                icon: Icon(Icons.family_restroom),
+                                label: Text('Parent'),
+                              ),
+                            ],
+                            selected: {_role},
+                            onSelectionChanged: (selection) {
+                              setState(() => _role = selection.first);
+                            },
+                          ),
+                        ),
+                      ),
+                      if (_role == 'child') ...[
+                        const SizedBox(height: 16),
+                        TextField(
+                          controller: _parentEmailController,
+                          enabled: !_saving,
+                          keyboardType: TextInputType.emailAddress,
+                          autofillHints: const [AutofillHints.email],
+                          textInputAction: TextInputAction.done,
+                          decoration: InputDecoration(
+                            labelText: "Parent Email",
+                            hintText: "parent@gmail.com",
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 24),
+                      ElevatedButton(
+                        onPressed: _saving ? null : _saveChanges,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: kAppPrimary,
+                          minimumSize: const Size(double.infinity, 50),
+                        ),
+                        child: _saving
+                            ? const CircularProgressIndicator(
+                                color: Colors.white,
+                              )
+                            : const Text(
+                                "Save Changes",
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                ),
+                              ),
+                      ),
                     ],
                   ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-            TextField(
-              controller: _nameController,
-              decoration: InputDecoration(
-                labelText: "Display Name",
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
                 ),
               ),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _handleController,
-              enabled: false,
-              decoration: InputDecoration(
-                labelText: "Email",
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            SegmentedButton<String>(
-              segments: const [
-                ButtonSegment(
-                  value: 'child',
-                  icon: Icon(Icons.face),
-                  label: Text('Child'),
-                ),
-                ButtonSegment(
-                  value: 'parent',
-                  icon: Icon(Icons.family_restroom),
-                  label: Text('Parent'),
-                ),
-              ],
-              selected: {_role},
-              onSelectionChanged: (selection) {
-                setState(() => _role = selection.first);
-              },
-            ),
-            if (_role == 'child') ...[
-              const SizedBox(height: 16),
-              TextField(
-                controller: _parentEmailController,
-                keyboardType: TextInputType.emailAddress,
-                decoration: InputDecoration(
-                  labelText: "Parent Email",
-                  hintText: "parent@example.com",
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-              ),
-            ],
-            const SizedBox(height: 24),
-            ElevatedButton(
-              onPressed: _saving ? null : _saveChanges,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: kAppPrimary,
-                minimumSize: const Size(double.infinity, 50),
-              ),
-              child: _saving
-                  ? const CircularProgressIndicator(color: Colors.white)
-                  : const Text(
-                      "Save Changes",
-                      style: TextStyle(color: Colors.white, fontSize: 16),
-                    ),
-            ),
-          ],
+            );
+          },
         ),
       ),
     );
@@ -2720,6 +2313,7 @@ class _StoriesTabState extends State<_StoriesTab> {
             final story = stories[index];
             final data = story.data() as Map<String, dynamic>;
             final post = _buildStoryPost(story.id, data);
+            final likes = _readInt(data['likes']);
 
             return Card(
               shape: RoundedRectangleBorder(
@@ -2758,14 +2352,14 @@ class _StoriesTabState extends State<_StoriesTab> {
                   children: [
                     Row(
                       children: [
-                        const Icon(
-                          Icons.favorite,
+                        Icon(
+                          likes > 0 ? Icons.favorite : Icons.favorite_border,
                           size: 14,
                           color: Colors.red,
                         ),
                         const SizedBox(width: 4),
                         Text(
-                          '${data['likes'] ?? 0}',
+                          '$likes',
                           style: const TextStyle(fontSize: 12),
                         ),
                       ],
@@ -2884,6 +2478,185 @@ class _StoriesTabState extends State<_StoriesTab> {
         ],
       ),
     );
+  }
+}
+
+class _SavedStoriesProfileTab extends StatelessWidget {
+  final String? userId;
+
+  const _SavedStoriesProfileTab({required this.userId});
+
+  @override
+  Widget build(BuildContext context) {
+    final uid = userId;
+    if (uid == null) return const Center(child: Text('User not logged in'));
+
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream:
+          FirebaseFirestore.instance.collection('users').doc(uid).snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(color: kAppPrimary),
+          );
+        }
+
+        final savedStoryIds = _readStringList(
+          snapshot.data?.data()?['savedStoryIds'],
+        );
+        if (savedStoryIds.isEmpty) return _emptyState();
+
+        return FutureBuilder<List<StoryPost>>(
+          future: _loadSavedPosts(savedStoryIds, uid),
+          builder: (context, postSnap) {
+            if (postSnap.connectionState == ConnectionState.waiting) {
+              return const Center(
+                child: CircularProgressIndicator(color: kAppPrimary),
+              );
+            }
+
+            final posts = postSnap.data ?? const <StoryPost>[];
+            if (posts.isEmpty) return _emptyState();
+
+            return ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: posts.length,
+              itemBuilder: (context, index) {
+                final post = posts[index];
+                return Card(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  elevation: 3,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  child: ListTile(
+                    onTap: () => _openSavedPost(context, post, uid),
+                    leading: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.network(
+                        post.imageUrl,
+                        width: 50,
+                        height: 50,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          width: 50,
+                          height: 50,
+                          color: kAppPrimary,
+                          child: const Icon(Icons.book, color: Colors.white),
+                        ),
+                      ),
+                    ),
+                    title: Text(
+                      post.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    subtitle: Text(
+                      'by ${post.author}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: const Icon(Icons.bookmark, color: kAppPrimary),
+                  ),
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<List<StoryPost>> _loadSavedPosts(
+    List<String> storyIds,
+    String uid,
+  ) async {
+    final posts = <StoryPost>[];
+
+    for (final storyId in storyIds) {
+      final storyDoc = await FirebaseFirestore.instance
+          .collection('stories')
+          .doc(storyId)
+          .get();
+      final data = storyDoc.data();
+      if (!storyDoc.exists || data == null || data['status'] != 'published') {
+        continue;
+      }
+
+      final authorName =
+          (data['authorName'] as String?)?.trim().isNotEmpty == true
+              ? (data['authorName'] as String).trim()
+              : 'Unknown';
+      final coverUrl = data['coverUrl'] as String?;
+      final likedBy = (data['likedBy'] as List?) ?? const [];
+
+      posts.add(
+        StoryPost(
+          id: storyDoc.id,
+          author: authorName,
+          handle: (data['handle'] as String?) ??
+              authorName.replaceAll(' ', '').toLowerCase(),
+          title: (data['title'] as String?) ?? 'Untitled',
+          excerpt: (data['body'] as String?) ?? '',
+          likes: _readInt(data['likes']),
+          comments: _readInt(data['comments']),
+          likedByMe: likedBy.contains(uid),
+          accent: kAppPrimary,
+          imageUrl: coverUrl != null && coverUrl.isNotEmpty
+              ? coverUrl
+              : 'https://picsum.photos/seed/${storyDoc.id}/600/300',
+        ),
+      );
+    }
+
+    return posts;
+  }
+
+  Widget _emptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.bookmark_border, size: 64, color: Colors.grey[300]),
+          const SizedBox(height: 16),
+          const Text(
+            'No saved stories yet',
+            style: TextStyle(
+              fontSize: 16,
+              color: Colors.grey,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _openSavedPost(BuildContext context, StoryPost post, String uid) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => StoryReaderPage(
+          post: post,
+          service: StoryService(),
+          userId: uid,
+          userName: FirebaseAuth.instance.currentUser?.displayName ?? 'User',
+        ),
+      ),
+    );
+  }
+
+  static int _readInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value) ?? 0;
+    return 0;
+  }
+
+  static List<String> _readStringList(dynamic value) {
+    if (value is! List) return const [];
+    return value.whereType<String>().where((id) => id.isNotEmpty).toList();
   }
 }
 
