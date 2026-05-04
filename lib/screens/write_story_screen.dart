@@ -146,11 +146,16 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
 
       final user = FirebaseAuth.instance.currentUser;
       final uid = user?.uid;
-      final authorName = user?.displayName ?? 'Unknown';
       final userDoc = uid == null
           ? null
           : await FirebaseFirestore.instance.collection('users').doc(uid).get();
       final userData = userDoc?.data() ?? {};
+      final savedUsername = (userData['username'] as String?)?.trim();
+      final authorName = savedUsername != null && savedUsername.isNotEmpty
+          ? savedUsername
+          : user?.displayName?.trim().isNotEmpty == true
+              ? user!.displayName!.trim()
+              : user?.email?.split('@').first ?? 'Unknown';
       final role = (userData['role'] as String?) ?? 'child';
       final parentEmail =
           (userData['parentEmail'] as String?)?.trim().toLowerCase();
@@ -183,6 +188,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
         'wordCount': _wordCount,
         'authorId': uid,
         'authorName': authorName,
+        'username': authorName,
         'handle': authorName.replaceAll(' ', '').toLowerCase(),
         'status': storyStatus,
         'isPublish': storyStatus == 'published',
@@ -203,7 +209,10 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
         await FirebaseFirestore.instance
             .collection('stories')
             .doc(widget.storyId)
-            .update(doc);
+            .update({
+          ...doc,
+          if (publish) 'parentFeedback': FieldValue.delete(),
+        });
         if (needsParentApproval) {
           await _notifyParentForApproval(
             storyId: widget.storyId!,
@@ -217,7 +226,10 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
             await FirebaseFirestore.instance.collection('stories').add({
           ...doc,
           'likes': 0,
+          'likedBy': [],
           'comments': 0,
+          'saves': 0,
+          'savedBy': [],
           'ratingTotal': 0,
           'ratingCount': 0,
           'averageRating': 0,
@@ -482,7 +494,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
                             Align(
                               alignment: Alignment.centerRight,
                               child: Text(
-                                "Word count: $_wordCount / 1000",
+                                "Word count: $_wordCount",
                                 style: TextStyle(
                                   color: progressColor,
                                   fontWeight: FontWeight.w600,
