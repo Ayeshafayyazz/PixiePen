@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
+import '../utils/story_content.dart';
+import '../utils/story_search.dart';
 import 'community.dart';
 import 'theme.dart';
 
@@ -19,16 +22,71 @@ class _ParentApprovalsScreenState extends State<ParentApprovalsScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
 
+  final TextEditingController _pendingSearchController =
+      TextEditingController();
+  final TextEditingController _historySearchController =
+      TextEditingController();
+  Timer? _pendingSearchDebounce;
+  Timer? _historySearchDebounce;
+  String _pendingSearchQuery = '';
+  String _historySearchQuery = '';
+  bool _isSearchOpen = false;
+
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _tabController.addListener(_onTabChanged);
+  }
+
+  void _onTabChanged() {
+    if (_tabController.indexIsChanging) return;
+    setState(() {});
   }
 
   @override
   void dispose() {
+    _tabController.removeListener(_onTabChanged);
     _tabController.dispose();
+    _pendingSearchDebounce?.cancel();
+    _historySearchDebounce?.cancel();
+    _pendingSearchController.dispose();
+    _historySearchController.dispose();
     super.dispose();
+  }
+
+  void _toggleSearch() {
+    setState(() {
+      _isSearchOpen = !_isSearchOpen;
+      if (!_isSearchOpen) {
+        _pendingSearchDebounce?.cancel();
+        _historySearchDebounce?.cancel();
+        _pendingSearchController.clear();
+        _historySearchController.clear();
+        _pendingSearchQuery = '';
+        _historySearchQuery = '';
+      }
+    });
+  }
+
+  void _queuePendingSearch(String value) {
+    _pendingSearchDebounce?.cancel();
+    _pendingSearchDebounce = Timer(const Duration(milliseconds: 250), () {
+      if (!mounted) return;
+      setState(() => _pendingSearchQuery = value);
+    });
+  }
+
+  void _queueHistorySearch(String value) {
+    _historySearchDebounce?.cancel();
+    _historySearchDebounce = Timer(const Duration(milliseconds: 250), () {
+      if (!mounted) return;
+      setState(() => _historySearchQuery = value);
+    });
+  }
+
+  bool _matchesStory(Map<String, dynamic> data, String query) {
+    return StorySearch.matchesStory(data, query);
   }
 
   @override
@@ -36,116 +94,235 @@ class _ParentApprovalsScreenState extends State<ParentApprovalsScreen>
     final user = FirebaseAuth.instance.currentUser;
     final parentEmail = user?.email?.trim().toLowerCase();
 
-    return Scaffold(
-      resizeToAvoidBottomInset: false,
-      backgroundColor: const Color(0xFFF9F7FF),
-      appBar: AppBar(
-        title: const Text(
-          'Parent Approvals',
-          style: TextStyle(color: Colors.white),
-        ),
-        backgroundColor: kAppPrimary,
-        iconTheme: const IconThemeData(color: Colors.white),
-        actions: [
-          if (user != null) _ParentNotificationButton(userId: user.uid),
-          IconButton(
-            tooltip: 'Logout',
-            onPressed: () async {
-              final shouldLogout = await showDialog<bool>(
-                context: context,
-                builder: (_) => AlertDialog(
-                  title: const Text("Confirm Logout"),
-                  content: const Text("Are you sure you want to logout?"),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context, false),
-                      child: const Text("Cancel"),
-                    ),
-                    TextButton(
-                      onPressed: () => Navigator.pop(context, true),
-                      child: const Text("Logout"),
-                    ),
-                  ],
-                ),
-              );
-              if (shouldLogout == true) {
-                await FirebaseAuth.instance.signOut();
-                if (context.mounted) {
-                  Navigator.of(context)
-                      .pushNamedAndRemoveUntil('/login', (route) => false);
-                }
-              }
-            },
-            icon: const Icon(Icons.logout, color: Colors.white),
+    if (parentEmail == null) {
+      return Scaffold(
+        resizeToAvoidBottomInset: false,
+        backgroundColor: const Color(0xFFF9F7FF),
+        appBar: AppBar(
+          title: const Text(
+            'Parent Approvals',
+            style: TextStyle(color: Colors.white),
           ),
-        ],
-        bottom: TabBar(
-          controller: _tabController,
-          indicatorColor: Colors.white,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white70,
-          tabs: const [
-            Tab(text: 'Pending'),
-            Tab(text: 'History'),
-          ],
+          backgroundColor: kAppPrimary,
+          iconTheme: const IconThemeData(color: Colors.white),
         ),
-      ),
-      body: parentEmail == null
-          ? const Center(child: Text('Please log in as a parent.'))
-          : StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-              stream: FirebaseFirestore.instance
-                  .collection('stories')
-                  .where('parentEmail', isEqualTo: parentEmail)
-                  .snapshots(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(
-                    child: CircularProgressIndicator(color: kAppPrimary),
+        body: const Center(child: Text('Please log in as a parent.')),
+      );
+    }
+
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('stories')
+          .where('parentEmail', isEqualTo: parentEmail)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Scaffold(
+            resizeToAvoidBottomInset: false,
+            backgroundColor: const Color(0xFFF9F7FF),
+            appBar: AppBar(
+              title: const Text(
+                'Parent Approvals',
+                style: TextStyle(color: Colors.white),
+              ),
+              backgroundColor: kAppPrimary,
+              iconTheme: const IconThemeData(color: Colors.white),
+            ),
+            body: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  'Could not load stories.\n${snapshot.error}',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+          );
+        }
+
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            !snapshot.hasData) {
+          return Scaffold(
+            resizeToAvoidBottomInset: false,
+            backgroundColor: const Color(0xFFF9F7FF),
+            appBar: AppBar(
+              title: const Text(
+                'Parent Approvals',
+                style: TextStyle(color: Colors.white),
+              ),
+              backgroundColor: kAppPrimary,
+              iconTheme: const IconThemeData(color: Colors.white),
+            ),
+            body: const Center(
+              child: CircularProgressIndicator(color: kAppPrimary),
+            ),
+          );
+        }
+
+        final stories = (snapshot.data?.docs ?? []).toList()
+          ..sort((a, b) {
+            final aDate = _readDate(a.data()['createdAt']);
+            final bDate = _readDate(b.data()['createdAt']);
+            return bDate.compareTo(aDate);
+          });
+
+        final pending = stories
+            .where(
+              (doc) => doc.data()['status'] == 'pending_parent_approval',
+            )
+            .toList();
+        final history = stories
+            .where((doc) =>
+                doc.data()['approvalStatus'] == 'approved' ||
+                doc.data()['approvalStatus'] == 'rejected')
+            .toList()
+          ..sort(_compareHistoryStories);
+
+        final pendingCount = pending.length;
+        final pendingFiltered = pending
+            .where((doc) => _matchesStory(doc.data(), _pendingSearchQuery))
+            .toList();
+        final historyFiltered = history
+            .where((doc) => _matchesStory(doc.data(), _historySearchQuery))
+            .toList();
+
+        final pendingPrioritized =
+            _prioritizeStory(pendingFiltered, widget.highlightStoryId);
+        final hasActivePendingSearch =
+            StorySearch.hasSearchTerms(_pendingSearchQuery);
+        final hasActiveHistorySearch =
+            StorySearch.hasSearchTerms(_historySearchQuery);
+
+        final pendingEmptyText = hasActivePendingSearch
+            ? 'No pending stories match your search.'
+            : 'No stories waiting for approval.';
+        final historyEmptyText = hasActiveHistorySearch
+            ? 'No history items match your search.'
+            : 'No approval history yet.';
+
+        return Scaffold(
+          resizeToAvoidBottomInset: _isSearchOpen,
+          backgroundColor: const Color(0xFFF9F7FF),
+          appBar: AppBar(
+            title: const Text(
+              'Parent Approvals',
+              style: TextStyle(color: Colors.white),
+            ),
+            backgroundColor: kAppPrimary,
+            iconTheme: const IconThemeData(color: Colors.white),
+            actions: [
+              IconButton(
+                tooltip: _isSearchOpen ? 'Close search' : 'Search this tab',
+                onPressed: _toggleSearch,
+                icon: Icon(
+                  _isSearchOpen ? Icons.close : Icons.search,
+                  color: Colors.white,
+                ),
+              ),
+              if (user != null) _ParentNotificationButton(userId: user.uid),
+              IconButton(
+                tooltip: 'Logout',
+                onPressed: () async {
+                  final shouldLogout = await showDialog<bool>(
+                    context: context,
+                    builder: (_) => AlertDialog(
+                      title: const Text("Confirm Logout"),
+                      content: const Text("Are you sure you want to logout?"),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          child: const Text("Cancel"),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.pop(context, true),
+                          child: const Text("Logout"),
+                        ),
+                      ],
+                    ),
                   );
-                }
-
-                final stories = (snapshot.data?.docs ?? []).toList()
-                  ..sort((a, b) {
-                    final aDate = _readDate(a.data()['createdAt']);
-                    final bDate = _readDate(b.data()['createdAt']);
-                    return bDate.compareTo(aDate);
-                  });
-
-                final pending = stories
-                    .where(
-                      (doc) =>
-                          doc.data()['status'] == 'pending_parent_approval',
-                    )
-                    .toList();
-                final history = stories
-                    .where((doc) =>
-                        doc.data()['approvalStatus'] == 'approved' ||
-                        doc.data()['approvalStatus'] == 'rejected')
-                    .toList()
-                  ..sort(_compareHistoryStories);
-
-                return TabBarView(
+                  if (shouldLogout == true) {
+                    await FirebaseAuth.instance.signOut();
+                    if (context.mounted) {
+                      Navigator.of(context)
+                          .pushNamedAndRemoveUntil('/login', (route) => false);
+                    }
+                  }
+                },
+                icon: const Icon(Icons.logout, color: Colors.white),
+              ),
+            ],
+            bottom: TabBar(
+              controller: _tabController,
+              indicatorColor: Colors.white,
+              labelColor: Colors.white,
+              unselectedLabelColor: Colors.white70,
+              tabs: [
+                Tab(
+                  child: _PendingTabTitle(count: pendingCount),
+                ),
+                const Tab(text: 'History'),
+              ],
+            ),
+          ),
+          body: Column(
+            children: [
+              if (_isSearchOpen) ...[
+                if (_tabController.index == 0)
+                  _ParentApprovalSearchBar(
+                    controller: _pendingSearchController,
+                    onChanged: _queuePendingSearch,
+                    onClear: () {
+                      setState(() {
+                        _pendingSearchDebounce?.cancel();
+                        _pendingSearchController.clear();
+                        _pendingSearchQuery = '';
+                      });
+                    },
+                  )
+                else
+                  _ParentApprovalSearchBar(
+                    controller: _historySearchController,
+                    onChanged: _queueHistorySearch,
+                    onClear: () {
+                      setState(() {
+                        _historySearchDebounce?.cancel();
+                        _historySearchController.clear();
+                        _historySearchQuery = '';
+                      });
+                    },
+                  ),
+                if (_tabController.index == 0 &&
+                    !hasActivePendingSearch &&
+                    _pendingSearchQuery.trim().isNotEmpty)
+                  const _ParentSearchMinimumHint(),
+                if (_tabController.index == 1 &&
+                    !hasActiveHistorySearch &&
+                    _historySearchQuery.trim().isNotEmpty)
+                  const _ParentSearchMinimumHint(),
+              ],
+              Expanded(
+                child: TabBarView(
                   controller: _tabController,
                   children: [
                     _ParentApprovalList(
-                      docs: _prioritizeStory(
-                        pending,
-                        widget.highlightStoryId,
-                      ),
-                      emptyText: 'No stories waiting for approval.',
+                      docs: pendingPrioritized,
+                      emptyText: pendingEmptyText,
                       showActions: true,
                       highlightStoryId: widget.highlightStoryId,
                     ),
                     _ParentApprovalList(
-                      docs: history,
-                      emptyText: 'No approval history yet.',
+                      docs: historyFiltered,
+                      emptyText: historyEmptyText,
                       showActions: false,
                       highlightStoryId: widget.highlightStoryId,
                     ),
                   ],
-                );
-              },
-            ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -195,6 +372,156 @@ class _ParentApprovalsScreenState extends State<ParentApprovalsScreen>
         if (b.id == storyId) return 1;
         return 0;
       });
+  }
+}
+
+/// Pending tab label with total count (not affected by search filter).
+class _PendingTabTitle extends StatelessWidget {
+  final int count;
+
+  const _PendingTabTitle({required this.count});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text('Pending'),
+        ),
+        if (count > 0) ...[
+          const SizedBox(width: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: Colors.white24,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              '$count',
+              style: const TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 12,
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _ParentApprovalSearchBar extends StatefulWidget {
+  static const String _hint = 'Search by Title or keywords';
+
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onClear;
+
+  const _ParentApprovalSearchBar({
+    required this.controller,
+    required this.onChanged,
+    required this.onClear,
+  });
+
+  @override
+  State<_ParentApprovalSearchBar> createState() =>
+      _ParentApprovalSearchBarState();
+}
+
+class _ParentApprovalSearchBarState extends State<_ParentApprovalSearchBar> {
+  late final VoidCallback _listener;
+
+  @override
+  void initState() {
+    super.initState();
+    _listener = () => setState(() {});
+    widget.controller.addListener(_listener);
+  }
+
+  @override
+  void didUpdateWidget(covariant _ParentApprovalSearchBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_listener);
+      widget.controller.addListener(_listener);
+      setState(() {});
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_listener);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+        child: TextField(
+          controller: widget.controller,
+          autofocus: true,
+          textInputAction: TextInputAction.search,
+          decoration: InputDecoration(
+            hintText: _ParentApprovalSearchBar._hint,
+            prefixIcon: const Icon(Icons.search, color: kAppPrimary),
+            suffixIcon: widget.controller.text.trim().isEmpty
+                ? null
+                : IconButton(
+                    tooltip: 'Clear search',
+                    onPressed: widget.onClear,
+                    icon: const Icon(Icons.close),
+                  ),
+            filled: true,
+            fillColor: const Color(0xFFF7F3FF),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 12,
+            ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(color: Color(0xFFE2D9F3)),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(color: Color(0xFFE2D9F3)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(color: kAppPrimary, width: 1.4),
+            ),
+          ),
+          onChanged: widget.onChanged,
+        ),
+      ),
+    );
+  }
+}
+
+class _ParentSearchMinimumHint extends StatelessWidget {
+  const _ParentSearchMinimumHint();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Text(
+          'Enter at least ${StorySearch.minTermLength} characters to search.',
+          style: TextStyle(
+            color: Colors.grey.shade700,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -252,6 +579,8 @@ class _ParentApprovalList extends StatelessWidget {
                     storyId: doc.id,
                     title: (data['title'] as String?) ?? 'Untitled',
                     body: (data['body'] as String?) ?? '',
+                    contentBlocks:
+                        StoryContentCodec.parseContent(data['content']),
                     childId: data['authorId'] as String?,
                     childName: (data['authorName'] as String?) ?? 'Child',
                     approvalStatus:
@@ -390,95 +719,198 @@ class _ParentSendBackFeedbackSheetState extends State<_ParentSendBackFeedbackShe
     Navigator.of(context).pop<String>(feedback);
   }
 
+  Widget _buildErrorBanner(BuildContext context) {
+    if (_errorText == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Text(
+        _errorText!,
+        style: TextStyle(
+          color: Theme.of(context).colorScheme.error,
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
-    final maxHeight = MediaQuery.sizeOf(context).height * 0.82;
+    final mq = MediaQuery.of(context);
+    final screenH = mq.size.height;
+    final screenW = mq.size.width;
+    final safe = mq.padding;
 
-    return Padding(
-      padding: EdgeInsets.only(bottom: bottomInset),
-      child: Align(
-        alignment: Alignment.bottomCenter,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxHeight: maxHeight),
-          child: Material(
-            color: Colors.white,
-            borderRadius: const BorderRadius.vertical(
-              top: Radius.circular(20),
-            ),
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+    final horizontalPad = screenW < 360 ? 12.0 : 20.0;
+    final titleSize = screenW < 340 ? 18.0 : 22.0;
+    final bodySize = screenW < 340 ? 13.0 : 14.0;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Prefer the modal's max height (finite after AnimatedPadding in sheet route).
+        var maxFromParent = constraints.maxHeight;
+        if (!maxFromParent.isFinite || maxFromParent > screenH) {
+          maxFromParent = screenH;
+        }
+        // Fallback: explicit budget above keyboard (viewInsets still visible here).
+        final mediaBudget = screenH -
+            mq.viewInsets.bottom -
+            safe.top -
+            safe.bottom -
+            20;
+        final budget = maxFromParent < mediaBudget ? maxFromParent : mediaBudget;
+        var sheetH = budget.clamp(80.0, screenH * 0.94);
+        if (maxFromParent.isFinite && sheetH > maxFromParent - 2) {
+          sheetH = (maxFromParent - 2).clamp(80.0, screenH * 0.94);
+        }
+        final sheetW = (constraints.maxWidth.isFinite
+                ? constraints.maxWidth
+                : screenW)
+            .clamp(120.0, 720.0);
+        final narrowButtons = screenW < 380 || sheetH < 300;
+
+        return Align(
+          alignment: Alignment.bottomCenter,
+          child: SizedBox(
+            width: sheetW - 16 < 100 ? sheetW : sheetW - 16,
+            height: sheetH,
+            child: Material(
+              color: Colors.white,
+              elevation: 12,
+              shadowColor: Colors.black26,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(20),
+              ),
+              clipBehavior: Clip.antiAlias,
               child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Text(
-                    'Feedback',
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w800,
-                      color: Colors.black87,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'What would you like your child to improve?',
-                    style: TextStyle(fontSize: 14, color: Colors.black87),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _controller,
-                    autofocus: true,
-                    keyboardType: TextInputType.multiline,
-                    maxLines: 5,
-                    minLines: 3,
-                    textInputAction: TextInputAction.newline,
-                    onChanged: (_) {
-                      if (_errorText != null) {
-                        setState(() => _errorText = null);
-                      }
-                    },
-                    decoration: InputDecoration(
-                      hintText:
-                          'e.g., Check grammar, make it longer, or fix this part...',
-                      errorText: _errorText,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      physics: const ClampingScrollPhysics(),
+                      keyboardDismissBehavior:
+                          ScrollViewKeyboardDismissBehavior.onDrag,
+                      padding: EdgeInsets.fromLTRB(
+                        horizontalPad,
+                        12,
+                        horizontalPad,
+                        12 + safe.bottom,
                       ),
-                      contentPadding: const EdgeInsets.all(12),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextButton(
-                          onPressed: () {
-                            FocusScope.of(context).unfocus();
-                            Navigator.of(context).pop();
-                          },
-                          child: const Text('Cancel'),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: ElevatedButton(
-                          onPressed: _submit,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: kAppPrimary,
-                            foregroundColor: Colors.white,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'Feedback',
+                            style: TextStyle(
+                              fontSize: titleSize,
+                              fontWeight: FontWeight.w800,
+                              color: Colors.black87,
+                            ),
                           ),
-                          child: const Text('Send Back'),
-                        ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'What would you like your child to improve?',
+                            style: TextStyle(
+                              fontSize: bodySize,
+                              color: Colors.black87,
+                              height: 1.35,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          _buildErrorBanner(context),
+                          TextField(
+                            controller: _controller,
+                            autofocus: true,
+                            keyboardType: TextInputType.multiline,
+                            minLines: 3,
+                            maxLines: 10,
+                            textInputAction: TextInputAction.newline,
+                            onChanged: (_) {
+                              if (_errorText != null) {
+                                setState(() => _errorText = null);
+                              }
+                            },
+                            decoration: InputDecoration(
+                              hintText:
+                                  'e.g., Check grammar, make it longer, or fix this part...',
+                              isDense: true,
+                              filled: true,
+                              fillColor: Colors.grey.shade50,
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              contentPadding: const EdgeInsets.all(12),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          _FeedbackSheetActions(
+                            narrow: narrowButtons,
+                            onCancel: () {
+                              FocusScope.of(context).unfocus();
+                              Navigator.of(context).pop();
+                            },
+                            onSend: _submit,
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
                 ],
               ),
             ),
           ),
-        ),
+        );
+      },
+    );
+  }
+}
+
+/// Cancel / Send actions: stacks on narrow widths to avoid horizontal overflow.
+class _FeedbackSheetActions extends StatelessWidget {
+  final bool narrow;
+  final VoidCallback onCancel;
+  final VoidCallback onSend;
+
+  const _FeedbackSheetActions({
+    required this.narrow,
+    required this.onCancel,
+    required this.onSend,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cancel = TextButton(
+      onPressed: onCancel,
+      child: const Text('Cancel'),
+    );
+    final send = ElevatedButton(
+      onPressed: onSend,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: kAppPrimary,
+        foregroundColor: Colors.white,
       ),
+      child: const Text('Send Back'),
+    );
+
+    if (narrow) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(width: double.infinity, child: cancel),
+          const SizedBox(height: 8),
+          SizedBox(width: double.infinity, child: send),
+        ],
+      );
+    }
+
+    return Row(
+      children: [
+        Expanded(child: cancel),
+        const SizedBox(width: 8),
+        Expanded(child: send),
+      ],
     );
   }
 }
@@ -490,7 +922,15 @@ class _ParentApprovalReview {
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => const _ParentSendBackFeedbackSheet(),
+      builder: (sheetContext) {
+        // Lift content above the keyboard; keeps [LayoutBuilder] max height finite.
+        final keyboardBottom = MediaQuery.viewInsetsOf(sheetContext).bottom;
+        return AnimatedPadding(
+          duration: Duration.zero,
+          padding: EdgeInsets.only(bottom: keyboardBottom),
+          child: const _ParentSendBackFeedbackSheet(),
+        );
+      },
     );
   }
 
@@ -561,6 +1001,7 @@ class _ParentApprovalCard extends StatefulWidget {
   final String storyId;
   final String title;
   final String body;
+  final List<Map<String, dynamic>>? contentBlocks;
   final String? childId;
   final String childName;
   final String approvalStatus;
@@ -573,6 +1014,7 @@ class _ParentApprovalCard extends StatefulWidget {
     required this.storyId,
     required this.title,
     required this.body,
+    this.contentBlocks,
     required this.childId,
     required this.childName,
     required this.approvalStatus,
@@ -652,11 +1094,15 @@ class _ParentApprovalCardState extends State<_ParentApprovalCard> {
             excerpt: widget.body,
             likes: 0,
             comments: 0,
+            saves: 0,
+            ratingCount: 0,
+            averageRating: 0,
             likedByMe: false,
             accent: kAppPrimary,
             imageUrl: widget.coverUrl?.isNotEmpty == true
                 ? widget.coverUrl!
                 : 'https://picsum.photos/seed/${widget.storyId}/600/300',
+            contentBlocks: widget.contentBlocks,
           ),
           service: StoryService(),
           userId: parent?.uid ?? '',
@@ -890,7 +1336,10 @@ class _ParentReviewFooterState extends State<_ParentReviewFooter> {
           await _ParentApprovalReview.showFeedbackDialog(context);
       if (entered == null) return;
       feedback = entered;
-      // Wait for the sheet route to fully unwind before ancestor setState/submit.
+      // Let the sheet route and keyboard inset settle before rebuilding the
+      // reader footer (avoids a brief flex overflow on the story screen).
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
       await WidgetsBinding.instance.endOfFrame;
       if (!mounted) return;
     }
@@ -917,12 +1366,14 @@ class _ParentReviewFooterState extends State<_ParentReviewFooter> {
     setState(() => _isSaving = false);
 
     if (success) {
-      // Pop the reader after this frame so we are not unmounting during the
-      // same scheduling pass as other inherited-widget updates.
+      // Pop after the next two frames so layout (insets + reader Column) is
+      // stable and we avoid a one-frame bottom overflow flash.
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          Navigator.of(context).pop();
-        }
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            Navigator.of(context).pop();
+          }
+        });
       });
     }
   }
