@@ -8,6 +8,7 @@ import 'auth/signup_screen.dart';
 import 'auth/verify_email_screen.dart';
 import 'screens/community.dart';
 import 'screens/ebook_screen.dart';
+import 'screens/parent_approvals_screen.dart';
 import 'screens/profile_screen.dart';
 
 class AppRoutes {
