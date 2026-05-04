@@ -10,6 +10,7 @@ import 'write_story_screen.dart';
 import 'community.dart';
 import 'parent_approvals_screen.dart';
 import 'theme.dart';
+import '../utils/story_content.dart';
 
 const List<_AvatarChoice> _avatarChoices = [
   _AvatarChoice(
@@ -2411,6 +2412,7 @@ class _StoriesTabState extends State<_StoriesTab> {
     final imageUrl = cover != null && cover.isNotEmpty
         ? cover
         : 'https://picsum.photos/seed/$storyId/600/300';
+    final contentBlocks = StoryContentCodec.parseContent(data['content']);
 
     return StoryPost(
       id: storyId,
@@ -2423,6 +2425,7 @@ class _StoriesTabState extends State<_StoriesTab> {
       likedByMe: likedByMe,
       accent: kAppPrimary,
       imageUrl: imageUrl,
+      contentBlocks: contentBlocks,
     );
   }
 
@@ -2591,6 +2594,7 @@ class _SavedStoriesProfileTab extends StatelessWidget {
       final coverUrl = data['coverUrl'] as String?;
       final likedBy = (data['likedBy'] as List?) ?? const [];
 
+      final contentBlocks = StoryContentCodec.parseContent(data['content']);
       posts.add(
         StoryPost(
           id: storyDoc.id,
@@ -2606,6 +2610,7 @@ class _SavedStoriesProfileTab extends StatelessWidget {
           imageUrl: coverUrl != null && coverUrl.isNotEmpty
               ? coverUrl
               : 'https://picsum.photos/seed/${storyDoc.id}/600/300',
+          contentBlocks: contentBlocks,
         ),
       );
     }

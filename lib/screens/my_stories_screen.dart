@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../services/content_moderation_service.dart';
+import '../utils/story_content.dart';
 import 'badge_screen.dart';
 import 'community.dart';
 import 'ebook_screen.dart';
@@ -1066,6 +1067,7 @@ class _StoryDashboardItem {
   final String id;
   final String title;
   final String body;
+  final List<Map<String, dynamic>>? contentBlocks;
   final String authorName;
   final String handle;
   final String status;
@@ -1085,6 +1087,7 @@ class _StoryDashboardItem {
     required this.id,
     required this.title,
     required this.body,
+    this.contentBlocks,
     required this.authorName,
     required this.handle,
     required this.status,
@@ -1108,6 +1111,7 @@ class _StoryDashboardItem {
     final data = doc.data();
     final title = (data['title'] as String?)?.trim();
     final body = (data['body'] as String?) ?? '';
+    final contentBlocks = StoryContentCodec.parseContent(data['content']);
     final authorName = (data['authorName'] as String?) ??
         user.displayName ??
         user.email?.split('@').first ??
@@ -1117,6 +1121,7 @@ class _StoryDashboardItem {
       id: doc.id,
       title: title == null || title.isEmpty ? 'Untitled' : title,
       body: body,
+      contentBlocks: contentBlocks,
       authorName: authorName,
       handle: (data['handle'] as String?) ??
           authorName.replaceAll(' ', '').toLowerCase(),
@@ -1190,6 +1195,7 @@ class _StoryDashboardItem {
       likedByMe: likedBy.contains(userId),
       accent: kAppPrimary,
       imageUrl: imageUrl,
+      contentBlocks: contentBlocks,
     );
   }
 
