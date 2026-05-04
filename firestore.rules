@@ -61,6 +61,7 @@ service cloud.firestore {
           'isPublish',
           'approvalStatus',
           'parentApproval',
+          'parentFeedback',
           'updatedAt'
         ]);
     }
@@ -74,7 +75,20 @@ service cloud.firestore {
           'comments',
           'ratingTotal',
           'ratingCount',
-          'averageRating'
+          'averageRating',
+          'saves',
+          'savedBy'
+        ]);
+    }
+
+    function isAuthorIdentityUpdate() {
+      return isStoryAuthor() &&
+        authorKeepsOwnership() &&
+        changedStoryKeys().hasOnly([
+          'authorName',
+          'username',
+          'handle',
+          'updatedAt'
         ]);
     }
 
@@ -105,6 +119,7 @@ service cloud.firestore {
 
       allow update: if isAuthorStoryUpdate() ||
         isLinkedParentApprovalUpdate() ||
+        isAuthorIdentityUpdate() ||
         isEngagementUpdate();
       allow delete: if isStoryAuthor();
 
@@ -143,6 +158,25 @@ service cloud.firestore {
         resource.data.toUserId == request.auth.uid;
 
       allow create: if signedIn();
+    }
+
+    match /storyLikes/{likeId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() &&
+        request.resource.data.userId == request.auth.uid;
+      allow delete: if signedIn() &&
+        resource.data.userId == request.auth.uid;
+    }
+
+    match /savedStories/{savedId} {
+      allow read: if signedIn() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.authorId == request.auth.uid
+      );
+      allow create, update: if signedIn() &&
+        request.resource.data.userId == request.auth.uid;
+      allow delete: if signedIn() &&
+        resource.data.userId == request.auth.uid;
     }
 
     match /ebooks/{ebookId} {
