@@ -24,6 +24,10 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
   bool _speechEnabled = false;
   bool _isListening = false;
   bool _isReturning = false;
+  /// True after mic start until user taps Stop / Done — OS may still end a
+  /// segment after silence; we then auto-resume [listen] so dictation continues.
+  bool _dictationSessionActive = false;
+  int _listenResumeGeneration = 0;
   double _confidence = 0.0;
 
   String _savedText = '';
@@ -78,6 +82,8 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
         onError: (error) {
           debugPrint('Speech error: ${error.errorMsg}');
           if (!mounted) return;
+          _dictationSessionActive = false;
+          _listenResumeGeneration++;
           _commitLiveWords();
           setState(() {
             _isListening = false;
@@ -116,11 +122,43 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
     }
 
     if (status == 'done' || status == 'notListening') {
+      if (_dictationSessionActive && !_isReturning) {
+        _commitLiveWords();
+        _scheduleResumeListenAfterPause();
+        return;
+      }
       setState(() {
         _isListening = false;
         _statusMessage = 'Tap mic to continue speaking';
       });
     }
+  }
+
+  void _scheduleResumeListenAfterPause() {
+    final gen = ++_listenResumeGeneration;
+    Future(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 160));
+      if (!mounted || gen != _listenResumeGeneration) return;
+      if (!_dictationSessionActive || _isReturning) return;
+      if (_speech.isListening) return;
+
+      try {
+        await _startSpeechSession();
+        if (!mounted || !_dictationSessionActive || _isReturning) return;
+        setState(() {
+          _isListening = true;
+          _statusMessage = 'Listening... Speak now';
+        });
+      } catch (e) {
+        debugPrint('Resume listen after pause failed: $e');
+        if (!mounted) return;
+        setState(() {
+          _dictationSessionActive = false;
+          _isListening = false;
+          _statusMessage = 'Tap mic to continue speaking';
+        });
+      }
+    });
   }
 
   Future<void> _startListening() async {
@@ -142,6 +180,9 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
     _commitLiveWords();
     _lastAppendedLive = '';
     if (!mounted) return;
+
+    _dictationSessionActive = true;
+    _listenResumeGeneration++;
     setState(() {
       _liveWords = '';
       _confidence = 0.0;
@@ -155,6 +196,7 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
       debugPrint('Speech listen error: $e');
       if (!mounted) return;
       setState(() {
+        _dictationSessionActive = false;
         _isListening = false;
         _statusMessage = 'Speech stopped. Tap mic to continue.';
       });
@@ -164,8 +206,8 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
   Future<void> _startSpeechSession() async {
     await _speech.listen(
       onResult: _onSpeechResult,
-      listenFor: const Duration(minutes: 10),
-      pauseFor: const Duration(seconds: 20),
+      listenFor: const Duration(minutes: 30),
+      pauseFor: const Duration(minutes: 5),
       localeId: _selectedLanguage,
       listenOptions: stt.SpeechListenOptions(
         partialResults: true,
@@ -177,6 +219,8 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
   }
 
   Future<void> _stopListening() async {
+    _dictationSessionActive = false;
+    _listenResumeGeneration++;
     _commitLiveWords();
     await _speech.stop();
     if (!mounted) return;
@@ -202,6 +246,8 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
   Future<void> _finishAndReturn() async {
     if (_isReturning) return;
     _isReturning = true;
+    _dictationSessionActive = false;
+    _listenResumeGeneration++;
     _commitLiveWords();
 
     if (_speech.isListening) {
@@ -246,6 +292,8 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
 
   @override
   void dispose() {
+    _dictationSessionActive = false;
+    _listenResumeGeneration++;
     _speech.stop();
     _scrollController.dispose();
     super.dispose();
