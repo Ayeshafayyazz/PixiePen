@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -9,6 +11,7 @@ import 'profile_screen.dart';
 import 'theme.dart';
 import 'write_story_screen.dart';
 import '../services/content_moderation_service.dart';
+import '../utils/story_search.dart';
 
 DateTime _readTimestamp(dynamic value) {
   if (value is Timestamp) return value.toDate();
@@ -30,6 +33,7 @@ class StoryService {
   }) async {
     final ref = _db.collection('stories').doc(storyId);
     final notificationRef = _db.collection('notifications').doc();
+    final likeEventRef = _db.collection('storyLikes').doc('${storyId}_$userId');
 
     await _db.runTransaction((tx) async {
       final snap = await tx.get(ref);
@@ -47,9 +51,19 @@ class StoryService {
       if (likedBy.contains(userId)) {
         likedBy.remove(userId);
         likes--;
+        tx.delete(likeEventRef);
       } else {
         likedBy.add(userId);
         likes++;
+        if (ownerId != null) {
+          tx.set(likeEventRef, {
+            'storyId': storyId,
+            'authorId': ownerId,
+            'userId': userId,
+            'userName': userName,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+        }
 
         if (ownerId != null &&
             ownerId != userId &&
@@ -76,6 +90,84 @@ class StoryService {
           },
           SetOptions(merge: true));
     });
+  }
+
+  Future<bool> toggleSave({
+    required String storyId,
+    required String userId,
+  }) async {
+    final storyRef = _db.collection('stories').doc(storyId);
+    final savedRef = _db.collection('savedStories').doc('${userId}_$storyId');
+    final userRef = _db.collection('users').doc(userId);
+    var isNowSaved = false;
+
+    await _db.runTransaction((tx) async {
+      final userSnap = await tx.get(userRef);
+      final savedStoryIds = ((userSnap.data()?['savedStoryIds'] as List?) ??
+              const [])
+          .whereType<String>()
+          .toList();
+      final isSaved = savedStoryIds.contains(storyId);
+
+      if (isSaved) {
+        isNowSaved = false;
+        tx.set(
+          userRef,
+          {
+            'savedStoryIds': FieldValue.arrayRemove([storyId]),
+          },
+          SetOptions(merge: true),
+        );
+      } else {
+        isNowSaved = true;
+        tx.set(
+          userRef,
+          {
+            'savedStoryIds': FieldValue.arrayUnion([storyId]),
+          },
+          SetOptions(merge: true),
+        );
+      }
+    });
+
+    try {
+      if (!isNowSaved) {
+        await savedRef.delete();
+        await storyRef.set(
+          {
+            'saves': FieldValue.increment(-1),
+            'savedBy': FieldValue.arrayRemove([userId]),
+          },
+          SetOptions(merge: true),
+        );
+      } else {
+        final storySnap = await storyRef.get();
+        final data = storySnap.data();
+        if (data == null) {
+          throw StateError('This story is no longer available.');
+        }
+        await savedRef.set({
+          'storyId': storyId,
+          'userId': userId,
+          'authorId': data['authorId'] as String?,
+          'storyTitle': data['title'] as String? ?? 'Untitled',
+          'authorName': data['authorName'] as String? ?? 'Unknown',
+          'coverUrl': data['coverUrl'] as String? ?? '',
+          'savedAt': FieldValue.serverTimestamp(),
+        });
+        await storyRef.set(
+          {
+            'saves': FieldValue.increment(1),
+            'savedBy': FieldValue.arrayUnion([userId]),
+          },
+          SetOptions(merge: true),
+        );
+      }
+    } catch (error) {
+      debugPrint('Saved story mirror update skipped: $error');
+    }
+
+    return isNowSaved;
   }
 
   Future<void> addComment({
@@ -478,9 +570,11 @@ class StoryPost {
   final String excerpt;
   final int likes;
   final int comments;
+  final int saves;
   final int ratingCount;
   final double averageRating;
   final bool likedByMe;
+  final bool savedByMe;
   final Color accent;
   final String imageUrl;
   final List<Comment> commentList;
@@ -493,9 +587,11 @@ class StoryPost {
     required this.excerpt,
     required this.likes,
     required this.comments,
+    this.saves = 0,
     this.ratingCount = 0,
     this.averageRating = 0,
     required this.likedByMe,
+    this.savedByMe = false,
     required this.accent,
     required this.imageUrl,
     this.commentList = const [],
@@ -509,9 +605,11 @@ class StoryPost {
         excerpt: excerpt,
         likes: likedByMe ? likes - 1 : likes + 1,
         comments: comments,
+        saves: saves,
         ratingCount: ratingCount,
         averageRating: averageRating,
         likedByMe: !likedByMe,
+        savedByMe: savedByMe,
         accent: accent,
         imageUrl: imageUrl,
         commentList: commentList,
@@ -823,13 +921,16 @@ class _CommunityScreenState extends State<CommunityScreen> {
   final StoryService _service = StoryService();
   final ContentModerationService _moderationService =
       ContentModerationService();
-  final TextEditingController _authorSearchController = TextEditingController();
+  final TextEditingController _searchController = TextEditingController();
+  Timer? _searchDebounce;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _userDocSub;
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   User? _user;
   String _userId = "";
   String _userName = "";
-  String _authorSearchQuery = "";
-  bool _isSearchingAuthors = false;
+  Set<String> _savedStoryIds = const {};
+  String _searchQuery = "";
+  bool _isSearchOpen = false;
   String? _communityHighlightedStoryId;
   bool _pendingCommunityHighlightScroll = false;
   final Map<String, GlobalKey> _communityStoryKeys = {};
@@ -847,13 +948,33 @@ class _CommunityScreenState extends State<CommunityScreen> {
           _user!.displayName ?? _user!.email?.split('@').first ?? 'User';
       // Try to fetch the actual username from Firestore
       _fetchUserName();
+      _listenToUserSavedStories();
     }
   }
 
   @override
   void dispose() {
-    _authorSearchController.dispose();
+    _searchDebounce?.cancel();
+    _userDocSub?.cancel();
+    _searchController.dispose();
     super.dispose();
+  }
+
+  void _listenToUserSavedStories() {
+    final userId = _user?.uid;
+    if (userId == null || userId.isEmpty) return;
+
+    _userDocSub = _db.collection('users').doc(userId).snapshots().listen(
+      (snapshot) {
+        if (!mounted) return;
+        setState(() {
+          _savedStoryIds = _readStringSet(snapshot.data()?['savedStoryIds']);
+        });
+      },
+      onError: (error) {
+        debugPrint('Could not listen to saved stories: $error');
+      },
+    );
   }
 
   Future<void> _fetchUserName() async {
@@ -952,10 +1073,10 @@ class _CommunityScreenState extends State<CommunityScreen> {
         centerTitle: true,
         actions: [
           IconButton(
-            tooltip: _isSearchingAuthors ? 'Close search' : 'Search authors',
-            onPressed: _toggleAuthorSearch,
+            tooltip: _isSearchOpen ? 'Close search' : 'Search stories',
+            onPressed: _toggleSearch,
             icon: Icon(
-              _isSearchingAuthors ? Icons.close : Icons.search,
+              _isSearchOpen ? Icons.close : Icons.search,
               color: Colors.white,
             ),
           ),
@@ -994,8 +1115,9 @@ class _CommunityScreenState extends State<CommunityScreen> {
             }
 
             final docs = publishedDocs
-                .where((doc) => _matchesAuthorSearch(doc.data()))
+                .where((doc) => _matchesStorySearch(doc.data()))
                 .toList();
+            final hasActiveSearch = StorySearch.hasSearchTerms(_searchQuery);
             if (_pendingCommunityHighlightScroll &&
                 _communityHighlightedStoryId != null &&
                 docs.any((doc) => doc.id == _communityHighlightedStoryId)) {
@@ -1006,104 +1128,157 @@ class _CommunityScreenState extends State<CommunityScreen> {
 
             return Column(
               children: [
-                if (_isSearchingAuthors)
-                  _AuthorSearchSection(
-                    controller: _authorSearchController,
-                    onChanged: (value) {
-                      setState(() => _authorSearchQuery = value);
-                    },
+                if (_isSearchOpen)
+                  _StorySearchSection(
+                    controller: _searchController,
+                    onChanged: _queueSearch,
                     onClear: () {
                       setState(() {
-                        _authorSearchController.clear();
-                        _authorSearchQuery = "";
+                        _searchDebounce?.cancel();
+                        _searchController.clear();
+                        _searchQuery = "";
                       });
                     },
                   ),
+                if (_isSearchOpen &&
+                    !hasActiveSearch &&
+                    _searchQuery.trim().isNotEmpty)
+                  const _SearchMinimumHint(),
                 if (docs.isEmpty)
                   Expanded(
-                    child: _AuthorSearchEmptyState(query: _authorSearchQuery),
+                    child: _StorySearchEmptyState(query: _searchQuery),
                   )
                 else
                   Expanded(
-                    child: ListView(
+                    child: ListView.builder(
                       padding: const EdgeInsets.symmetric(vertical: 12),
-                      children: [
-                        for (final doc in docs)
-                          Builder(builder: (context) {
-                            final data = doc.data();
-                            final storyId = doc.id;
+                      itemCount: docs.length,
+                      itemBuilder: (context, index) {
+                        final doc = docs[index];
+                        final data = doc.data();
+                        final storyId = doc.id;
 
-                            final title =
-                                (data['title'] as String?) ?? 'Untitled';
-                            final body = (data['body'] as String?) ?? '';
-                            final cover = (data['coverUrl'] as String?);
-                            final author = (data['authorName'] as String?) ??
-                                (data['authorId'] as String?) ??
-                                'Unknown';
-                            final handle = (data['handle'] as String?) ??
-                                (author.replaceAll(' ', '').toLowerCase());
+                        final title =
+                            (data['title'] as String?) ?? 'Untitled';
+                        final body = (data['body'] as String?) ?? '';
+                        final cover = data['coverUrl'] as String?;
+                        final author = (data['authorName'] as String?) ??
+                            (data['authorId'] as String?) ??
+                            'Unknown';
+                        final handle = (data['handle'] as String?) ??
+                            author.replaceAll(' ', '').toLowerCase();
                             final likes = (data['likes'] as int?) ?? 0;
                             final comments = (data['comments'] as int?) ?? 0;
+                            final saves = _readInt(data['saves']);
                             final imageUrl = cover != null && cover.isNotEmpty
                                 ? cover
                                 : 'https://picsum.photos/seed/$storyId/600/300';
 
                             final likedBy = (data['likedBy'] as List?) ?? [];
                             final likedByMe = likedBy.contains(_userId);
+                            final savedBy = (data['savedBy'] as List?) ?? [];
+                            final savedByMe =
+                                _savedStoryIds.contains(storyId) ||
+                                    savedBy.contains(_userId);
 
-                            final post = StoryPost(
-                              id: storyId,
-                              author: author,
-                              handle: handle,
-                              title: title,
-                              excerpt: body,
-                              likes: likes,
-                              comments: comments,
-                              ratingCount: _readInt(data['ratingCount']),
-                              averageRating: _readDouble(data['averageRating']),
-                              likedByMe: likedByMe,
-                              accent: const Color(0xFF7B1FA2),
-                              imageUrl: imageUrl,
-                            );
+                        final post = StoryPost(
+                          id: storyId,
+                          author: author,
+                          handle: handle,
+                          title: title,
+                          excerpt: body,
+                          likes: likes,
+                          comments: comments,
+                          saves: saves,
+                          ratingCount: _readInt(data['ratingCount']),
+                          averageRating: _readDouble(data['averageRating']),
+                          likedByMe: likedByMe,
+                          savedByMe: savedByMe,
+                          accent: const Color(0xFF7B1FA2),
+                          imageUrl: imageUrl,
+                        );
 
-                            return Container(
-                              key: _communityStoryKey(storyId),
-                              child: StoryCard(
-                                post: post,
-                                service: _service,
-                                userId: _userId.isEmpty
-                                    ? _user?.uid ?? ''
-                                    : _userId,
-                                userName: _userName.isEmpty
-                                    ? (_user?.displayName ?? 'User')
-                                    : _userName,
-                                onLike: () async {
-                                  if (_userId.isNotEmpty) {
-                                    await _service.toggleLike(
-                                      storyId: storyId,
-                                      userId: _userId,
-                                      userName: _userName.isEmpty
-                                          ? (_user?.displayName ??
-                                              _user?.email?.split('@').first ??
-                                              'User')
-                                          : _userName,
-                                    );
-                                  }
-                                },
-                                onOpen: () {
-                                  _clearCommunityHighlight();
-                                  _openStory(context, post);
-                                },
-                                onComment: () {
-                                  _clearCommunityHighlight();
-                                  _openComments(context, storyId);
-                                },
-                                highlighted:
-                                    storyId == _communityHighlightedStoryId,
-                              ),
-                            );
-                          }),
-                      ],
+                        return Container(
+                          key: _communityStoryKey(storyId),
+                          child: StoryCard(
+                            post: post,
+                            service: _service,
+                            userId:
+                                _userId.isEmpty ? _user?.uid ?? '' : _userId,
+                            userName: _userName.isEmpty
+                                ? (_user?.displayName ?? 'User')
+                                : _userName,
+                            onLike: () async {
+                              if (_userId.isNotEmpty) {
+                                await _service.toggleLike(
+                                  storyId: storyId,
+                                  userId: _userId,
+                                  userName: _userName.isEmpty
+                                      ? (_user?.displayName ??
+                                          _user?.email?.split('@').first ??
+                                          'User')
+                                      : _userName,
+                                );
+                              }
+                            },
+                            onOpen: () {
+                              _clearCommunityHighlight();
+                              _openStory(context, post);
+                            },
+                            onComment: () {
+                              _clearCommunityHighlight();
+                              _openComments(context, storyId);
+                            },
+                            onSave: () async {
+                              final activeUserId =
+                                  _userId.isEmpty ? _user?.uid ?? '' : _userId;
+                              if (activeUserId.isEmpty) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content:
+                                        Text('Please log in to save stories.'),
+                                  ),
+                                );
+                                return;
+                              }
+
+                              try {
+                                final isSaved = await _service.toggleSave(
+                                  storyId: storyId,
+                                  userId: activeUserId,
+                                );
+                                if (!mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      isSaved
+                                          ? 'Story saved to your profile.'
+                                          : 'Story removed from Saved.',
+                                    ),
+                                    backgroundColor: isSaved
+                                        ? Colors.green
+                                        : Colors.grey.shade700,
+                                  ),
+                                );
+                              } catch (error, stackTrace) {
+                                debugPrint(
+                                  'Could not update saved story: $error',
+                                );
+                                debugPrintStack(stackTrace: stackTrace);
+                                if (!mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      'Could not update saved story. Please try again.',
+                                    ),
+                                  ),
+                                );
+                              }
+                            },
+                            highlighted: storyId == _communityHighlightedStoryId,
+                          ),
+                        );
+                      },
                     ),
                   ),
               ],
@@ -1114,13 +1289,22 @@ class _CommunityScreenState extends State<CommunityScreen> {
     );
   }
 
-  void _toggleAuthorSearch() {
+  void _toggleSearch() {
     setState(() {
-      _isSearchingAuthors = !_isSearchingAuthors;
-      if (!_isSearchingAuthors) {
-        _authorSearchController.clear();
-        _authorSearchQuery = "";
+      _isSearchOpen = !_isSearchOpen;
+      if (!_isSearchOpen) {
+        _searchDebounce?.cancel();
+        _searchController.clear();
+        _searchQuery = "";
       }
+    });
+  }
+
+  void _queueSearch(String value) {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 250), () {
+      if (!mounted) return;
+      setState(() => _searchQuery = value);
     });
   }
 
@@ -1154,14 +1338,8 @@ class _CommunityScreenState extends State<CommunityScreen> {
     });
   }
 
-  bool _matchesAuthorSearch(Map<String, dynamic> data) {
-    final query = _authorSearchQuery.trim().toLowerCase();
-    if (query.isEmpty) return true;
-
-    final authorName = ((data['authorName'] as String?) ?? '').toLowerCase();
-    final handle = ((data['handle'] as String?) ?? '').toLowerCase();
-
-    return authorName.contains(query) || handle.contains(query);
+  bool _matchesStorySearch(Map<String, dynamic> data) {
+    return StorySearch.matchesStory(data, _searchQuery);
   }
 
   void _openStory(BuildContext context, StoryPost post) {
@@ -1200,9 +1378,10 @@ class _CommunityScreenState extends State<CommunityScreen> {
         _selectedIndex = 0;
         _communityHighlightedStoryId = storyId;
         _pendingCommunityHighlightScroll = true;
-        _isSearchingAuthors = false;
-        _authorSearchController.clear();
-        _authorSearchQuery = "";
+        _isSearchOpen = false;
+        _searchDebounce?.cancel();
+        _searchController.clear();
+        _searchQuery = "";
       });
       return;
     }
@@ -1298,6 +1477,11 @@ class _CommunityScreenState extends State<CommunityScreen> {
     if (value is num) return value.toDouble();
     if (value is String) return double.tryParse(value) ?? 0;
     return 0;
+  }
+
+  Set<String> _readStringSet(dynamic value) {
+    if (value is! List) return const {};
+    return value.whereType<String>().where((id) => id.isNotEmpty).toSet();
   }
 
   String _currentCommentUserName() {
@@ -2083,12 +2267,12 @@ class _BrandTitle extends StatelessWidget {
   }
 }
 
-class _AuthorSearchSection extends StatelessWidget {
+class _StorySearchSection extends StatelessWidget {
   final TextEditingController controller;
   final ValueChanged<String> onChanged;
   final VoidCallback onClear;
 
-  const _AuthorSearchSection({
+  const _StorySearchSection({
     required this.controller,
     required this.onChanged,
     required this.onClear,
@@ -2104,8 +2288,8 @@ class _AuthorSearchSection extends StatelessWidget {
         autofocus: true,
         textInputAction: TextInputAction.search,
         decoration: InputDecoration(
-          hintText: 'Search by author name',
-          prefixIcon: const Icon(Icons.person_search, color: kAppPrimary),
+          hintText: 'Search title, keyword, or username',
+          prefixIcon: const Icon(Icons.search, color: kAppPrimary),
           suffixIcon: controller.text.trim().isEmpty
               ? null
               : IconButton(
@@ -2138,10 +2322,32 @@ class _AuthorSearchSection extends StatelessWidget {
   }
 }
 
-class _AuthorSearchEmptyState extends StatelessWidget {
+class _SearchMinimumHint extends StatelessWidget {
+  const _SearchMinimumHint();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Text(
+          'Enter at least ${StorySearch.minTermLength} characters to search.',
+          style: TextStyle(
+            color: Colors.grey.shade700,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StorySearchEmptyState extends StatelessWidget {
   final String query;
 
-  const _AuthorSearchEmptyState({required this.query});
+  const _StorySearchEmptyState({required this.query});
 
   @override
   Widget build(BuildContext context) {
@@ -2154,13 +2360,13 @@ class _AuthorSearchEmptyState extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              Icons.person_search,
+              Icons.search_off,
               size: 58,
               color: Colors.grey.shade500,
             ),
             const SizedBox(height: 14),
             const Text(
-              'No authors found',
+              'No stories found',
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
@@ -2170,7 +2376,7 @@ class _AuthorSearchEmptyState extends StatelessWidget {
             const SizedBox(height: 6),
             Text(
               searchText.isEmpty
-                  ? 'Try searching by an author name or handle.'
+                  ? 'Try a story title, keyword, username, or handle.'
                   : 'No published stories match "$searchText".',
               textAlign: TextAlign.center,
               style: TextStyle(
@@ -2769,6 +2975,7 @@ class StoryCard extends StatelessWidget {
   final VoidCallback onLike;
   final VoidCallback onOpen;
   final VoidCallback onComment;
+  final VoidCallback onSave;
   final bool highlighted;
 
   const StoryCard({
@@ -2780,13 +2987,18 @@ class StoryCard extends StatelessWidget {
     required this.onLike,
     required this.onOpen,
     required this.onComment,
+    required this.onSave,
     this.highlighted = false,
   });
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final horizontalPadding = screenWidth < 380 ? 10.0 : 16.0;
+    final imageHeight = (screenWidth * 0.48).clamp(155.0, 220.0).toDouble();
+
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: EdgeInsets.symmetric(horizontal: horizontalPadding, vertical: 10),
       child: Container(
         decoration: BoxDecoration(
           color: highlighted ? const Color(0xFFFFFBEB) : Colors.white,
@@ -2820,10 +3032,10 @@ class StoryCard extends StatelessWidget {
                       post.imageUrl,
                       fit: BoxFit.cover,
                       width: double.infinity,
-                      height: 200,
+                      height: imageHeight,
                       errorBuilder: (context, error, stackTrace) {
                         return Container(
-                          height: 200,
+                          height: imageHeight,
                           color: Colors.grey[300],
                           child: const Icon(Icons.image_not_supported),
                         );
@@ -2922,6 +3134,14 @@ class StoryCard extends StatelessWidget {
                         count: post.comments,
                         onPressed: onComment,
                       ),
+                      _StoryActionCount(
+                        icon: post.savedByMe
+                            ? Icons.bookmark
+                            : Icons.bookmark_border,
+                        color: post.savedByMe ? kAppPrimary : Colors.purple,
+                        count: post.saves,
+                        onPressed: onSave,
+                      ),
                       TextButton.icon(
                         style: TextButton.styleFrom(
                           backgroundColor: Colors.purple,
@@ -2988,6 +3208,7 @@ class StoryReaderPage extends StatefulWidget {
   final StoryService service;
   final String userId;
   final String userName;
+  final Widget? footer;
 
   const StoryReaderPage({
     super.key,
@@ -2995,6 +3216,7 @@ class StoryReaderPage extends StatefulWidget {
     required this.service,
     required this.userId,
     required this.userName,
+    this.footer,
   });
 
   @override
@@ -3436,6 +3658,10 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
                         ),
                       ),
                     ),
+                    if (widget.footer != null) ...[
+                      const SizedBox(height: 8),
+                      widget.footer!,
+                    ],
                   ],
                 ),
               );
