@@ -639,11 +639,12 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
   }
 
   Future<void> _goToSpeechToText() async {
+    final plainBeforeSpeech = _plainBody;
     final spokenText = await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => SpeechToTextScreen(
-          initialText: _plainBody,
+          initialText: plainBeforeSpeech,
         ),
       ),
     );
@@ -651,7 +652,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     if (spokenText is String && mounted) {
       final transcript = spokenText.trim();
       if (_isStoryTranscript(transcript)) {
-        _replaceBody(transcript);
+        _applySpeechTranscript(transcript, plainBeforeSpeech);
       }
     }
   }
@@ -681,6 +682,50 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     _segments.add(_newTextSegment(text));
     _lastActiveTextSegmentIndex = 0;
     setState(() {});
+    _scrollStoryToEnd();
+  }
+
+  /// Applies speech result: full replace when there are no inline images;
+  /// otherwise only appends **new** words after [plainBeforeSpeech] so images stay.
+  void _applySpeechTranscript(String transcript, String plainBeforeSpeech) {
+    final t = transcript.trim();
+    if (t.isEmpty) return;
+
+    final hasInlineImages = _segments.any((s) => s.isImage);
+    if (!hasInlineImages) {
+      _replaceBody(t);
+      return;
+    }
+
+    final before = plainBeforeSpeech.trim();
+    var delta = t;
+    if (before.isNotEmpty) {
+      if (t == before) return;
+      if (t.startsWith(before)) {
+        delta = t.substring(before.length).trimLeft();
+      }
+    }
+    if (delta.isEmpty) return;
+
+    var idx = _focusedTextSegmentIndex();
+    if (idx < 0 || _segments[idx].isImage) {
+      idx = _lastActiveTextSegmentIndex;
+    }
+    if (idx < 0 || _segments[idx].isImage) {
+      idx = _segments.lastIndexWhere((s) => !s.isImage);
+    }
+    if (idx < 0) {
+      setState(() => _segments.add(_newTextSegment(delta)));
+      _scrollStoryToEnd();
+      return;
+    }
+
+    final c = _segments[idx].controller!;
+    final cur = c.text.trim();
+    final spacer = cur.isEmpty ? '' : '\n\n';
+    setState(() {
+      c.text = '$cur$spacer$delta';
+    });
     _scrollStoryToEnd();
   }
 
