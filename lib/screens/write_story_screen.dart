@@ -407,22 +407,29 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _saveStory({bool publish = false}) async {
+  Future<void> _saveStory({
+    bool publish = false,
+    bool silent = false,
+    bool requireComplete = true,
+    bool runModeration = true,
+  }) async {
     FocusScope.of(context).unfocus();
     final title = _titleController.text.trim();
     final body = _plainBody.trim();
-    if (title.isEmpty || body.isEmpty) {
+    if (requireComplete && (title.isEmpty || body.isEmpty)) {
       final missingFields = [
         if (title.isEmpty) 'title',
         if (body.isEmpty) 'story body',
       ].join(' and ');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            "Please add a $missingFields before ${publish ? 'publishing' : 'saving your draft'}.",
+      if (!silent) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              "Please add a $missingFields before ${publish ? 'publishing' : 'saving your draft'}.",
+            ),
           ),
-        ),
-      );
+        );
+      }
       return;
     }
 
@@ -431,14 +438,16 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     });
 
     try {
-      final moderation = _moderationService.moderateStory(
-        title: title,
-        body: body,
-      );
+      if (runModeration) {
+        final moderation = _moderationService.moderateStory(
+          title: title,
+          body: body,
+        );
 
-      if (!moderation.isSafe) {
-        await _showModerationWarning(moderation);
-        return;
+        if (!moderation.isSafe) {
+          await _showModerationWarning(moderation);
+          return;
+        }
       }
 
       final user = FirebaseAuth.instance.currentUser;
@@ -546,16 +555,18 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
       }
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text(publish
-                ? needsParentApproval
-                    ? "Sent to your parent for approval."
-                    : "Your story is now live in Community! 🚀"
-                : "Story saved to Drafts ✅")),
-      );
+      if (!silent) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text(publish
+                  ? needsParentApproval
+                      ? "Sent to your parent for approval."
+                      : "Your story is now live in Community! 🚀"
+                  : "Story saved to Drafts ✅")),
+        );
+      }
 
-      if (widget.storyId == null && !publish) {
+      if (!silent && widget.storyId == null && !publish) {
         setState(() {
           _titleController.clear();
           _disposeAllSegments();
@@ -575,6 +586,28 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
           publish ? _isPublishing = false : _isSaving = false;
         });
       }
+    }
+  }
+
+  bool get _hasDraftableContent {
+    if (_titleController.text.trim().isNotEmpty) return true;
+    if (_plainBody.trim().isNotEmpty) return true;
+    if ((_storyCoverUrl ?? '').trim().isNotEmpty) return true;
+    return _segments.any((s) => s.isImage);
+  }
+
+  Future<void> _saveDraftOnExitIfNeeded() async {
+    if (_isSaving || _isPublishing || _isUploadingInlineImage) return;
+    if (!_hasDraftableContent) return;
+    try {
+      await _saveStory(
+        publish: false,
+        silent: true,
+        requireComplete: false,
+        runModeration: false,
+      );
+    } catch (_) {
+      // Best-effort auto-save on back navigation.
     }
   }
 
@@ -781,8 +814,10 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     }
   }
 
-  void _handleBack() {
+  Future<void> _handleBack() async {
     FocusManager.instance.primaryFocus?.unfocus();
+    await _saveDraftOnExitIfNeeded();
+    if (!mounted) return;
     final backToCommunity = widget.onBackToCommunity;
     if (backToCommunity != null) {
       backToCommunity();

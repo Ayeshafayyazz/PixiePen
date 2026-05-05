@@ -537,7 +537,14 @@ class _ProfileAvatar extends StatelessWidget {
 }
 
 class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({super.key});
+  final int initialTabIndex;
+  final String? entryMessage;
+
+  const ProfileScreen({
+    super.key,
+    this.initialTabIndex = 0,
+    this.entryMessage,
+  });
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -548,6 +555,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final GlobalKey<ScaffoldState> _profileScaffoldKey =
       GlobalKey<ScaffoldState>();
   User? _user;
+  bool _entryMessageShown = false;
 
   @override
   void initState() {
@@ -555,6 +563,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _user = FirebaseAuth.instance.currentUser;
     if (_user != null) {
       _ensureUserDocExists();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant ProfileScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.entryMessage != widget.entryMessage) {
+      _entryMessageShown = false;
     }
   }
 
@@ -621,9 +637,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   Widget build(BuildContext context) {
     final userId = _user?.uid;
+    final safeInitialTab = widget.initialTabIndex.clamp(0, 2);
+
+    if (!_entryMessageShown &&
+        widget.entryMessage != null &&
+        widget.entryMessage!.trim().isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(widget.entryMessage!.trim())),
+        );
+        _entryMessageShown = true;
+      });
+    }
 
     return DefaultTabController(
       length: 3,
+      initialIndex: safeInitialTab,
       child: Scaffold(
         key: _profileScaffoldKey,
         drawer: _buildDrawer(context),
