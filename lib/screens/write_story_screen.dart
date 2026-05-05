@@ -987,6 +987,9 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
 
   /// Bordered “document” containing text + inline images in order (Medium-style).
   List<Widget> _buildSegmentEditorRows(BuildContext context) {
+    final mq = MediaQuery.of(context);
+    final compact = mq.size.width < 360;
+    final isBusy = _isUploadingInlineImage;
     final inner = <Widget>[];
     for (var i = 0; i < _segments.length; i++) {
       final s = _segments[i];
@@ -996,6 +999,43 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
         inner.add(_buildTextSegment(context, i, s));
       }
     }
+    inner.add(const SizedBox(height: 2));
+    inner.add(
+      Align(
+        alignment: Alignment.centerLeft,
+        child: IgnorePointer(
+          ignoring: isBusy,
+          child: Opacity(
+            opacity: isBusy ? 0.5 : 1,
+            child: TextButton.icon(
+              onPressed: _insertInlineImageFromGalleryToolbar,
+              icon: Icon(
+                Icons.add_photo_alternate_outlined,
+                size: compact ? 18 : 20,
+                color: const Color(0xFF6A1B9A),
+              ),
+              label: Text(
+                'Add image here',
+                style: TextStyle(
+                  color: const Color(0xFF6A1B9A),
+                  fontSize: compact ? 13 : 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              style: TextButton.styleFrom(
+                visualDensity: compact
+                    ? VisualDensity.compact
+                    : VisualDensity.standard,
+                padding: EdgeInsets.symmetric(
+                  horizontal: compact ? 6 : 8,
+                  vertical: compact ? 6 : 8,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
     return [
       Container(
         margin: const EdgeInsets.symmetric(vertical: 4),
@@ -1062,10 +1102,10 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
           child: Opacity(
             opacity: _isUploadingInlineImage ? 0.45 : 1,
             child: _buildActionButton(
-              icon: Icons.photo_library_outlined,
-              label: 'Gallery',
+              icon: Icons.add_photo_alternate_outlined,
+              label: 'Add Image',
               tooltip:
-                  'Add a photo from your gallery after the paragraph you are typing in',
+                  'Add an image from your gallery after the paragraph you are typing in',
               onTap: _insertInlineImageFromGalleryToolbar,
               color: const Color(0xFF6A1B9A),
               compact: compact,
