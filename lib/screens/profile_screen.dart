@@ -2213,40 +2213,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           ),
                         ),
                       ),
-                      const SizedBox(height: 16),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: FittedBox(
-                          fit: BoxFit.scaleDown,
-                          alignment: Alignment.centerLeft,
-                          child: SegmentedButton<String>(
-                            segments: const [
-                              ButtonSegment(
-                                value: 'child',
-                                icon: Icon(Icons.face),
-                                label: Text('Child'),
-                              ),
-                              ButtonSegment(
-                                value: 'parent',
-                                icon: Icon(Icons.family_restroom),
-                                label: Text('Parent'),
-                              ),
-                            ],
-                            selected: {_role},
-                            onSelectionChanged: (selection) {
-                              setState(() => _role = selection.first);
-                            },
-                          ),
-                        ),
-                      ),
                       if (_role == 'child') ...[
                         const SizedBox(height: 16),
                         TextField(
                           controller: _parentEmailController,
-                          enabled: !_saving,
-                          keyboardType: TextInputType.emailAddress,
-                          autofillHints: const [AutofillHints.email],
-                          textInputAction: TextInputAction.done,
+                          enabled: false,
+                          readOnly: true,
                           decoration: InputDecoration(
                             labelText: "Parent Email",
                             hintText: "parent@gmail.com",
