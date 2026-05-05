@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -11,6 +12,8 @@ import 'community.dart';
 import 'parent_approvals_screen.dart';
 import 'theme.dart';
 import '../utils/story_content.dart';
+import '../services/content_moderation_service.dart';
+import '../widgets/moderation_ui.dart';
 
 const List<_AvatarChoice> _avatarChoices = [
   _AvatarChoice(
@@ -1378,7 +1381,10 @@ class FeedbackScreen extends StatefulWidget {
 
 class _FeedbackScreenState extends State<FeedbackScreen> {
   final TextEditingController _messageController = TextEditingController();
+  final ContentModerationService _moderation = ContentModerationService();
   final FirebaseFirestore _db = FirebaseFirestore.instance;
+  Timer? _moderationDebounce;
+  ModerationLiveFeedback? _liveModeration;
   final List<String> _categories = const [
     'I have an idea',
     'Something is not working',
@@ -1391,7 +1397,28 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
   bool _isSubmitting = false;
 
   @override
+  void initState() {
+    super.initState();
+    _messageController.addListener(_onFeedbackTextChanged);
+  }
+
+  void _onFeedbackTextChanged() {
+    _moderationDebounce?.cancel();
+    _moderationDebounce = Timer(const Duration(milliseconds: 280), () {
+      if (!mounted) return;
+      final text = '$_category ${_messageController.text}';
+      final fb = _moderation.previewWhileTyping(
+        ModerationSurface.appFeedback,
+        text,
+      );
+      setState(() => _liveModeration = fb);
+    });
+  }
+
+  @override
   void dispose() {
+    _moderationDebounce?.cancel();
+    _messageController.removeListener(_onFeedbackTextChanged);
     _messageController.dispose();
     super.dispose();
   }
@@ -1402,6 +1429,20 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
     if (message.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please write your feedback first.')),
+      );
+      return;
+    }
+
+    final moderation = ContentModerationService().moderateWithSurface(
+      ModerationSurface.appFeedback,
+      '$_category $message',
+    );
+    if (!moderation.isSafe) {
+      if (!mounted) return;
+      await ModerationUi.showBlockDialog(
+        context,
+        result: moderation,
+        surface: ModerationSurface.appFeedback,
       );
       return;
     }
@@ -1512,7 +1553,10 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
                       ? null
                       : (value) {
                           if (value != null) {
-                            setState(() => _category = value);
+                            setState(() {
+                              _category = value;
+                              _onFeedbackTextChanged();
+                            });
                           }
                         },
                 ),
@@ -1529,6 +1573,7 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
                     border: OutlineInputBorder(),
                   ),
                 ),
+                ModerationLiveBanner(feedback: _liveModeration),
                 const SizedBox(height: 16),
                 SizedBox(
                   width: double.infinity,

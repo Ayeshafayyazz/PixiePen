@@ -11,6 +11,7 @@ import 'profile_screen.dart';
 import 'theme.dart';
 import 'write_story_screen.dart';
 import '../services/content_moderation_service.dart';
+import '../widgets/moderation_ui.dart';
 import '../utils/story_content.dart';
 import '../utils/story_search.dart';
 
@@ -177,12 +178,18 @@ class StoryService {
     required String userName,
     required String text,
   }) async {
-    final moderation = ContentModerationService().moderateText(text);
+    final storyRef = _db.collection('stories').doc(storyId);
+    final storySnap = await storyRef.get();
+    final storyTitle = (storySnap.data()?['title'] as String?) ?? '';
+    final moderation = ContentModerationService().moderateWithSurface(
+      ModerationSurface.comment,
+      text,
+      storyExcerpt: storyTitle,
+    );
     if (!moderation.isSafe) {
       throw ArgumentError(ContentModerationService.childFriendlyWarning);
     }
 
-    final storyRef = _db.collection('stories').doc(storyId);
     final commentRef = storyRef.collection('comments').doc();
     final notificationRef = _db.collection('notifications').doc();
 
@@ -257,12 +264,18 @@ class StoryService {
     required String userName,
     required String text,
   }) async {
-    final moderation = ContentModerationService().moderateText(text);
+    final storyRef = _db.collection('stories').doc(storyId);
+    final storySnapPre = await storyRef.get();
+    final storyTitle = (storySnapPre.data()?['title'] as String?) ?? '';
+    final moderation = ContentModerationService().moderateWithSurface(
+      ModerationSurface.reply,
+      text,
+      storyExcerpt: storyTitle,
+    );
     if (!moderation.isSafe) {
       throw ArgumentError(ContentModerationService.childFriendlyWarning);
     }
 
-    final storyRef = _db.collection('stories').doc(storyId);
     final commentRef = storyRef.collection('comments').doc(commentId);
     final notificationRef = _db.collection('notifications').doc();
     final replyData = {
@@ -1219,7 +1232,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
                             },
                             onComment: () {
                               _clearCommunityHighlight();
-                              _openComments(context, storyId);
+                              _openComments(context, storyId, storyTitle: title);
                             },
                             onSave: () async {
                               final activeUserId =
@@ -1724,13 +1737,20 @@ class _CommunityScreenState extends State<CommunityScreen> {
     );
   }
 
-  void _openComments(BuildContext context, String storyId) {
+  void _openComments(
+    BuildContext context,
+    String storyId, {
+    String? storyTitle,
+  }) {
     final controller = TextEditingController();
     final focusNode = FocusNode();
     final expandedReplyCommentIds = <String>{};
     _CommentReplyTarget? replyTarget;
     bool isSending = false;
     bool isSheetClosing = false;
+    Timer? moderationDebounce;
+    ModerationLiveFeedback? liveModeration;
+    var moderationListenerAttached = false;
 
     void dismissCommentKeyboard() {
       focusNode.unfocus();
@@ -1747,24 +1767,48 @@ class _CommunityScreenState extends State<CommunityScreen> {
       builder: (sheetContext) {
         return StatefulBuilder(
           builder: (sheetContext, setModalState) {
+            if (!moderationListenerAttached) {
+              moderationListenerAttached = true;
+              controller.addListener(() {
+                moderationDebounce?.cancel();
+                moderationDebounce = Timer(const Duration(milliseconds: 240), () {
+                  if (isSheetClosing || !sheetContext.mounted) return;
+                  final surface = replyTarget == null
+                      ? ModerationSurface.comment
+                      : ModerationSurface.reply;
+                  final fb = _moderationService.previewWhileTyping(
+                    surface,
+                    controller.text,
+                    storyExcerpt: storyTitle ?? '',
+                  );
+                  setModalState(() => liveModeration = fb);
+                });
+              });
+            }
+
             Future<void> submitText() async {
               if (isSending || isSheetClosing) return;
               final text = controller.text.trim();
               if (text.isEmpty || _userId.isEmpty) return;
 
-              final moderation = _moderationService.moderateText(text);
+              final target = replyTarget;
+              final surface = target == null
+                  ? ModerationSurface.comment
+                  : ModerationSurface.reply;
+              final moderation = _moderationService.moderateWithSurface(
+                surface,
+                text,
+                storyExcerpt: storyTitle ?? '',
+              );
               if (!moderation.isSafe) {
-                ScaffoldMessenger.of(sheetContext).showSnackBar(
-                  const SnackBar(
-                    content: Text(
-                      ContentModerationService.childFriendlyWarning,
-                    ),
-                  ),
+                await ModerationUi.showBlockDialog(
+                  sheetContext,
+                  result: moderation,
+                  surface: surface,
                 );
                 return;
               }
 
-              final target = replyTarget;
               dismissCommentKeyboard();
               setModalState(() => isSending = true);
               try {
@@ -1787,6 +1831,15 @@ class _CommunityScreenState extends State<CommunityScreen> {
                 }
               } catch (e) {
                 if (!sheetContext.mounted || isSheetClosing) return;
+                if (e is ArgumentError) {
+                  await ModerationUi.showPlainMessage(
+                    sheetContext,
+                    message: e.message?.toString() ??
+                        ContentModerationService.childFriendlyWarning,
+                    surface: surface,
+                  );
+                  return;
+                }
                 ScaffoldMessenger.of(sheetContext).showSnackBar(
                   SnackBar(content: Text('Could not send: $e')),
                 );
@@ -2104,50 +2157,59 @@ class _CommunityScreenState extends State<CommunityScreen> {
                         ),
                         Padding(
                           padding: const EdgeInsets.only(bottom: 10),
-                          child: Row(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            mainAxisSize: MainAxisSize.min,
                             children: [
-                              Expanded(
-                                child: TextField(
-                                  controller: controller,
-                                  focusNode: focusNode,
-                                  minLines: 1,
-                                  maxLines: 4,
-                                  textInputAction: TextInputAction.send,
-                                  onSubmitted: (_) {
-                                    submitText();
-                                  },
-                                  decoration: InputDecoration(
-                                    hintText: replyTarget == null
-                                        ? 'Add a comment...'
-                                        : 'Write a reply...',
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(20),
-                                    ),
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 14,
-                                      vertical: 10,
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: TextField(
+                                      controller: controller,
+                                      focusNode: focusNode,
+                                      minLines: 1,
+                                      maxLines: 4,
+                                      textInputAction: TextInputAction.send,
+                                      onSubmitted: (_) {
+                                        submitText();
+                                      },
+                                      decoration: InputDecoration(
+                                        hintText: replyTarget == null
+                                            ? 'Add a comment...'
+                                            : 'Write a reply...',
+                                        border: OutlineInputBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(20),
+                                        ),
+                                        contentPadding:
+                                            const EdgeInsets.symmetric(
+                                          horizontal: 14,
+                                          vertical: 10,
+                                        ),
+                                      ),
                                     ),
                                   ),
-                                ),
+                                  const SizedBox(width: 8),
+                                  IconButton.filled(
+                                    icon: isSending
+                                        ? const SizedBox(
+                                            width: 18,
+                                            height: 18,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color: Colors.white,
+                                            ),
+                                          )
+                                        : const Icon(Icons.send),
+                                    onPressed: isSending ? null : submitText,
+                                    style: IconButton.styleFrom(
+                                      backgroundColor: Colors.purple,
+                                      foregroundColor: Colors.white,
+                                    ),
+                                  ),
+                                ],
                               ),
-                              const SizedBox(width: 8),
-                              IconButton.filled(
-                                icon: isSending
-                                    ? const SizedBox(
-                                        width: 18,
-                                        height: 18,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: Colors.white,
-                                        ),
-                                      )
-                                    : const Icon(Icons.send),
-                                onPressed: isSending ? null : submitText,
-                                style: IconButton.styleFrom(
-                                  backgroundColor: Colors.purple,
-                                  foregroundColor: Colors.white,
-                                ),
-                              ),
+                              ModerationLiveBanner(feedback: liveModeration),
                             ],
                           ),
                         ),
@@ -2162,6 +2224,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
       },
     ).whenComplete(() {
       isSheetClosing = true;
+      moderationDebounce?.cancel();
       dismissCommentKeyboard();
       Future<void>.delayed(const Duration(milliseconds: 350), () {
         controller.dispose();

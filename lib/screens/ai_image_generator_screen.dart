@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/content_moderation_service.dart';
+import '../widgets/moderation_ui.dart';
 import '../services/story_image_generation_service.dart';
 
 class AiImageGeneratorScreen extends StatefulWidget {
@@ -39,11 +40,16 @@ class _AiImageGeneratorScreenState extends State<AiImageGeneratorScreen> {
     final prompt = _promptController.text.trim();
     if (prompt.isEmpty) return;
 
-    final mod = _moderation.moderateText(prompt);
+    final mod = _moderation.moderateWithSurface(
+      ModerationSurface.aiPrompt,
+      prompt,
+    );
     if (!mod.isSafe) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(ContentModerationService.childFriendlyWarning)),
+      await ModerationUi.showBlockDialog(
+        context,
+        result: mod,
+        surface: ModerationSurface.aiPrompt,
       );
       return;
     }

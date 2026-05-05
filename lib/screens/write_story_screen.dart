@@ -6,6 +6,7 @@ import 'speech_to_text_screen.dart';
 import 'theme.dart';
 import 'ai_image_generator_screen.dart';
 import '../services/content_moderation_service.dart';
+import '../widgets/moderation_ui.dart';
 import '../services/story_inline_image_service.dart';
 import '../utils/story_content.dart';
 
@@ -436,7 +437,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
       );
 
       if (!moderation.isSafe) {
-        _showModerationWarning();
+        await _showModerationWarning(moderation);
         return;
       }
 
@@ -657,11 +658,13 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     }
   }
 
-  void _showModerationWarning() {
+  Future<void> _showModerationWarning(ModerationResult result) async {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-      content: Text(ContentModerationService.childFriendlyWarning),
-    ));
+    await ModerationUi.showBlockDialog(
+      context,
+      result: result,
+      surface: ModerationSurface.story,
+    );
   }
 
   bool _isStoryTranscript(String text) {

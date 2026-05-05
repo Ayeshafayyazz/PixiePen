@@ -5,6 +5,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../utils/story_content.dart';
+import '../services/content_moderation_service.dart';
+import '../widgets/moderation_ui.dart';
 import '../utils/story_search.dart';
 import 'community.dart';
 import 'theme.dart';
@@ -693,21 +695,39 @@ class _ParentSendBackFeedbackSheet extends StatefulWidget {
 
 class _ParentSendBackFeedbackSheetState extends State<_ParentSendBackFeedbackSheet> {
   late final TextEditingController _controller;
+  final ContentModerationService _moderation = ContentModerationService();
+  Timer? _moderationDebounce;
+  ModerationLiveFeedback? _liveModeration;
   String? _errorText;
 
   @override
   void initState() {
     super.initState();
     _controller = TextEditingController();
+    _controller.addListener(_onParentFeedbackTextChanged);
+  }
+
+  void _onParentFeedbackTextChanged() {
+    _moderationDebounce?.cancel();
+    _moderationDebounce = Timer(const Duration(milliseconds: 280), () {
+      if (!mounted) return;
+      final fb = _moderation.previewWhileTyping(
+        ModerationSurface.parentFeedback,
+        _controller.text,
+      );
+      setState(() => _liveModeration = fb);
+    });
   }
 
   @override
   void dispose() {
+    _moderationDebounce?.cancel();
+    _controller.removeListener(_onParentFeedbackTextChanged);
     _controller.dispose();
     super.dispose();
   }
 
-  void _submit() {
+  Future<void> _submit() async {
     final feedback = _controller.text.trim();
     if (feedback.isEmpty) {
       setState(() {
@@ -715,6 +735,23 @@ class _ParentSendBackFeedbackSheetState extends State<_ParentSendBackFeedbackShe
       });
       return;
     }
+
+    final moderation = _moderation.moderateWithSurface(
+      ModerationSurface.parentFeedback,
+      feedback,
+    );
+    if (!moderation.isSafe) {
+      setState(() => _errorText = null);
+      if (!mounted) return;
+      await ModerationUi.showBlockDialog(
+        context,
+        result: moderation,
+        surface: ModerationSurface.parentFeedback,
+      );
+      return;
+    }
+
+    if (!mounted) return;
     FocusScope.of(context).unfocus();
     Navigator.of(context).pop<String>(feedback);
   }
@@ -843,6 +880,7 @@ class _ParentSendBackFeedbackSheetState extends State<_ParentSendBackFeedbackShe
                               contentPadding: const EdgeInsets.all(12),
                             ),
                           ),
+                          ModerationLiveBanner(feedback: _liveModeration),
                           const SizedBox(height: 16),
                           _FeedbackSheetActions(
                             narrow: narrowButtons,
@@ -870,7 +908,7 @@ class _ParentSendBackFeedbackSheetState extends State<_ParentSendBackFeedbackShe
 class _FeedbackSheetActions extends StatelessWidget {
   final bool narrow;
   final VoidCallback onCancel;
-  final VoidCallback onSend;
+  final Future<void> Function() onSend;
 
   const _FeedbackSheetActions({
     required this.narrow,
@@ -885,7 +923,9 @@ class _FeedbackSheetActions extends StatelessWidget {
       child: const Text('Cancel'),
     );
     final send = ElevatedButton(
-      onPressed: onSend,
+      onPressed: () async {
+        await onSend();
+      },
       style: ElevatedButton.styleFrom(
         backgroundColor: kAppPrimary,
         foregroundColor: Colors.white,

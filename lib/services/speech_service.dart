@@ -92,7 +92,7 @@ class SpeechService {
       return null; // success
     } catch (e) {
       // Provide a helpful message for debugging / user guidance.
-      final msg = e?.toString() ?? 'Unknown error starting speech recognition.';
+      final msg = e.toString();
       if (kDebugMode) {
         // ignore: avoid_print
         print('SpeechService.startListening error: $msg');

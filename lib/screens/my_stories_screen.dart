@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../services/content_moderation_service.dart';
+import '../widgets/moderation_ui.dart';
 import '../utils/story_content.dart';
 import 'badge_screen.dart';
 import 'community.dart';
@@ -269,10 +270,10 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
 
     if (!moderation.isSafe) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(ContentModerationService.childFriendlyWarning),
-        ),
+      await ModerationUi.showBlockDialog(
+        context,
+        result: moderation,
+        surface: ModerationSurface.story,
       );
       return;
     }

@@ -67,12 +67,18 @@ class StoryService {
     required String userName,
     required String text,
   }) async {
-    final moderation = ContentModerationService().moderateText(text);
+    final storyRef = _db.collection('stories').doc(storyId);
+    final storySnap = await storyRef.get();
+    final storyTitle = (storySnap.data()?['title'] as String?) ?? '';
+    final moderation = ContentModerationService().moderateWithSurface(
+      ModerationSurface.comment,
+      text,
+      storyExcerpt: storyTitle,
+    );
     if (!moderation.isSafe) {
       throw ArgumentError(ContentModerationService.childFriendlyWarning);
     }
 
-    final storyRef = _db.collection('stories').doc(storyId);
 
     final commentRef = storyRef.collection('comments').doc();
     final notificationRef = _db.collection('notifications').doc();
