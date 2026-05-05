@@ -1,14 +1,17 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart' show networkImage;
+import 'package:printing/printing.dart' show PdfGoogleFonts, networkImage;
 
 import 'theme.dart';
 import '../utils/pdf_file_exporter.dart';
+import '../utils/story_content.dart';
 
 const _kEbookPageBackground = Color(0xFFF5F5F5);
 const _kEbookCardBackground = Color(0xFFFFF4FB);
@@ -16,6 +19,173 @@ const _kEbookCardBorder = Color(0xFFEADAE8);
 const _kEbookIconBackground = Color(0xFFF1E3F7);
 const _kEbookTitleColor = Color(0xFF241627);
 const _kEbookMutedText = Color(0xFF5F5262);
+
+/// Apple Books–inspired layout presets: reader colors + PDF tint.
+class EbookTemplateDef {
+  final String id;
+  final String name;
+  final String tagline;
+  final LinearGradient coverGradient;
+  final Color coverBorder;
+  final Color coverTitleColor;
+  final Color coverAuthorColor;
+  final Color readerScaffoldBg;
+  final Color readerCardBg;
+  final Color readerCardBorder;
+  final Color readerStoryTitleColor;
+  final Color readerBodyColor;
+  final Color readerPartLabelColor;
+  final double readerTitleSize;
+  final double readerBodySize;
+  final bool useSerifBody;
+
+  const EbookTemplateDef({
+    required this.id,
+    required this.name,
+    required this.tagline,
+    required this.coverGradient,
+    required this.coverBorder,
+    required this.coverTitleColor,
+    required this.coverAuthorColor,
+    required this.readerScaffoldBg,
+    required this.readerCardBg,
+    required this.readerCardBorder,
+    required this.readerStoryTitleColor,
+    required this.readerBodyColor,
+    required this.readerPartLabelColor,
+    required this.readerTitleSize,
+    required this.readerBodySize,
+    this.useSerifBody = false,
+  });
+}
+
+class EbookTemplateCatalog {
+  static final List<EbookTemplateDef> all = [
+    EbookTemplateDef(
+      id: 'classic',
+      name: 'Storybook',
+      tagline: 'Soft violet • PixiePen default',
+      coverGradient: const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFFFFF4FB), Color(0xFFE8DDF5)],
+      ),
+      coverBorder: kAppPrimary,
+      coverTitleColor: _kEbookTitleColor,
+      coverAuthorColor: _kEbookMutedText,
+      readerScaffoldBg: Color(0xFFF2F0F5),
+      readerCardBg: Color(0xFFFFF8FD),
+      readerCardBorder: Color(0xFFEADAE8),
+      readerStoryTitleColor: _kEbookTitleColor,
+      readerBodyColor: Color(0xFF242124),
+      readerPartLabelColor: _kEbookMutedText,
+      readerTitleSize: 24,
+      readerBodySize: 18,
+    ),
+    EbookTemplateDef(
+      id: 'paper',
+      name: 'Paper',
+      tagline: 'Warm paper • book serif text',
+      coverGradient: const LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [Color(0xFFFDFBF7), Color(0xFFE8E0D5)],
+      ),
+      coverBorder: Color(0xFF8D7B68),
+      coverTitleColor: Color(0xFF2C241C),
+      coverAuthorColor: Color(0xFF6B5E54),
+      readerScaffoldBg: Color(0xFFF5F1EA),
+      readerCardBg: Color(0xFFFDFBF7),
+      readerCardBorder: Color(0xFFD9D0C3),
+      readerStoryTitleColor: Color(0xFF2C241C),
+      readerBodyColor: Color(0xFF3D342B),
+      readerPartLabelColor: Color(0xFF7A6E63),
+      readerTitleSize: 23,
+      readerBodySize: 17.5,
+      useSerifBody: true,
+    ),
+    EbookTemplateDef(
+      id: 'night',
+      name: 'Night',
+      tagline: 'Dark mode • easy on the eyes',
+      coverGradient: const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFF2C2C2E), Color(0xFF1C1C1E)],
+      ),
+      coverBorder: Color(0xFF48484A),
+      coverTitleColor: Color(0xFFF2F2F7),
+      coverAuthorColor: Color(0xFFAEAEB2),
+      readerScaffoldBg: Color(0xFF1C1C1E),
+      readerCardBg: Color(0xFF2C2C2E),
+      readerCardBorder: Color(0xFF3A3A3C),
+      readerStoryTitleColor: Color(0xFFF2F2F7),
+      readerBodyColor: Color(0xFFE5E5EA),
+      readerPartLabelColor: Color(0xFF8E8E93),
+      readerTitleSize: 24,
+      readerBodySize: 18,
+    ),
+    EbookTemplateDef(
+      id: 'mint',
+      name: 'Fresh',
+      tagline: 'Mint accent • clean & modern',
+      coverGradient: const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFFF4FFFB), Color(0xFFD8F5EE)],
+      ),
+      coverBorder: Color(0xFF34C759),
+      coverTitleColor: Color(0xFF1A3D36),
+      coverAuthorColor: Color(0xFF3D5C54),
+      readerScaffoldBg: Color(0xFFEEF8F4),
+      readerCardBg: Color(0xFFFFFFFF),
+      readerCardBorder: Color(0xFFBFE8D9),
+      readerStoryTitleColor: Color(0xFF1A3D36),
+      readerBodyColor: Color(0xFF253630),
+      readerPartLabelColor: Color(0xFF5C7A72),
+      readerTitleSize: 24,
+      readerBodySize: 18,
+    ),
+    EbookTemplateDef(
+      id: 'sunset',
+      name: 'Sunset',
+      tagline: 'Peach glow • cozy chapters',
+      coverGradient: const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFFFFF5F0), Color(0xFFFFE0D6)],
+      ),
+      coverBorder: Color(0xFFFF8A65),
+      coverTitleColor: Color(0xFF4A2C2A),
+      coverAuthorColor: Color(0xFF8D6E63),
+      readerScaffoldBg: Color(0xFFFFF7F4),
+      readerCardBg: Color(0xFFFFFDFC),
+      readerCardBorder: Color(0xFFFFCCBC),
+      readerStoryTitleColor: Color(0xFF4A2C2A),
+      readerBodyColor: Color(0xFF3E2723),
+      readerPartLabelColor: Color(0xFF8D6E63),
+      readerTitleSize: 24,
+      readerBodySize: 18,
+    ),
+  ];
+
+  static EbookTemplateDef byId(String? id) {
+    for (final t in all) {
+      if (t.id == id) return t;
+    }
+    return all.first;
+  }
+}
+
+TextStyle _ebookReaderBody(EbookTemplateDef t) {
+  final base = TextStyle(
+    fontSize: t.readerBodySize,
+    height: 1.55,
+    color: t.readerBodyColor,
+  );
+  if (t.useSerifBody) return GoogleFonts.literata(textStyle: base);
+  return GoogleFonts.plusJakartaSans(textStyle: base);
+}
 
 class EbookScreen extends StatefulWidget {
   const EbookScreen({super.key});
@@ -84,6 +254,14 @@ class _EbookScreenState extends State<EbookScreen> {
                 ebook: ebook,
                 isExporting: _exportingEbookId == ebook.ebookId,
                 onRead: () => _openEbook(ebook),
+                onEdit: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => EbookCreatorScreen(editing: ebook),
+                    ),
+                  );
+                },
                 onDownload: () => _exportEbook(ebook, share: false),
                 onShare: () => _exportEbook(ebook, share: true),
                 onDelete: () => _confirmDeleteEbook(ebook),
@@ -217,7 +395,10 @@ class _EbookScreenState extends State<EbookScreen> {
 }
 
 class EbookCreatorScreen extends StatefulWidget {
-  const EbookCreatorScreen({super.key});
+  /// When set, saves changes to this book instead of creating a new one.
+  final Ebook? editing;
+
+  const EbookCreatorScreen({super.key, this.editing});
 
   @override
   State<EbookCreatorScreen> createState() => _EbookCreatorScreenState();
@@ -228,8 +409,34 @@ class _EbookCreatorScreenState extends State<EbookCreatorScreen> {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   final User? _user = FirebaseAuth.instance.currentUser;
 
+  String _selectedTemplateId = 'classic';
   List<StoryBookItem> _selectedStories = [];
   bool _isCreating = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final existing = widget.editing;
+    if (existing != null) {
+      _titleController.text = existing.title;
+      _selectedTemplateId = existing.templateId;
+      _loadStoriesForEdit(existing);
+    }
+  }
+
+  Future<void> _loadStoriesForEdit(Ebook ebook) async {
+    if (_user == null) return;
+    try {
+      final list = <StoryBookItem>[];
+      for (final id in ebook.storyIds) {
+        final doc = await _db.collection('stories').doc(id).get();
+        if (doc.exists) list.add(StoryBookItem.fromDocument(doc));
+      }
+      if (mounted) setState(() => _selectedStories = list);
+    } catch (_) {
+      /* keep partial list */
+    }
+  }
 
   @override
   void dispose() {
@@ -269,13 +476,47 @@ class _EbookCreatorScreenState extends State<EbookCreatorScreen> {
     setState(() => _isCreating = true);
 
     try {
-      final ebookRef = _db.collection('ebooks').doc();
       final coverImage = _selectedStories
           .map((story) => story.coverUrl)
           .where((url) => url != null && url.isNotEmpty)
           .cast<String?>()
           .firstWhere((_) => true, orElse: () => null);
 
+      final existing = widget.editing;
+      if (existing != null) {
+        await _db.collection('ebooks').doc(existing.ebookId).update({
+          'title': title,
+          'authorName': user.displayName ?? _selectedStories.first.authorName,
+          'coverImage': coverImage,
+          'storyIds': _selectedStories.map((story) => story.id).toList(),
+          'templateId': _selectedTemplateId,
+        });
+
+        final ebook = Ebook(
+          ebookId: existing.ebookId,
+          userId: existing.userId,
+          title: title,
+          authorName: user.displayName ?? _selectedStories.first.authorName,
+          coverImage: coverImage,
+          storyIds: _selectedStories.map((story) => story.id).toList(),
+          createdAt: existing.createdAt,
+          templateId: _selectedTemplateId,
+        );
+
+        if (!mounted) return;
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => EbookReaderScreen(
+              ebook: ebook,
+              stories: _selectedStories,
+            ),
+          ),
+        );
+        return;
+      }
+
+      final ebookRef = _db.collection('ebooks').doc();
       final ebook = Ebook(
         ebookId: ebookRef.id,
         userId: user.uid,
@@ -284,6 +525,7 @@ class _EbookCreatorScreenState extends State<EbookCreatorScreen> {
         coverImage: coverImage,
         storyIds: _selectedStories.map((story) => story.id).toList(),
         createdAt: DateTime.now(),
+        templateId: _selectedTemplateId,
       );
 
       await ebookRef.set(ebook.toFirestore());
@@ -300,8 +542,15 @@ class _EbookCreatorScreenState extends State<EbookCreatorScreen> {
       );
     } catch (error) {
       if (!mounted) return;
+      final isEdit = widget.editing != null;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not create eBook: $error')),
+        SnackBar(
+          content: Text(
+            isEdit
+                ? 'Could not update eBook: $error'
+                : 'Could not create eBook: $error',
+          ),
+        ),
       );
     } finally {
       if (mounted) {
@@ -312,41 +561,107 @@ class _EbookCreatorScreenState extends State<EbookCreatorScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isEditing = widget.editing != null;
     if (_user == null) {
       return Scaffold(
-        appBar: _buildAppBar('Create E-Book'),
+        appBar: _buildAppBar(isEditing ? 'Edit E-Book' : 'Create E-Book'),
         body: const Center(child: Text('Please log in to create an eBook.')),
       );
     }
 
     return Scaffold(
       backgroundColor: _kEbookPageBackground,
-      appBar: _buildAppBar('Create E-Book'),
+      appBar: _buildAppBar(isEditing ? 'Edit E-Book' : 'Create E-Book'),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
         children: [
+          Text(
+            'Choose a template',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: _kEbookTitleColor,
+                ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Pick a look — you can change stories anytime.',
+            style: TextStyle(
+              fontSize: 13,
+              height: 1.35,
+              color: _kEbookMutedText,
+            ),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 132,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: EbookTemplateCatalog.all.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 12),
+              itemBuilder: (context, index) {
+                final t = EbookTemplateCatalog.all[index];
+                final selected = _selectedTemplateId == t.id;
+                return _TemplateChoiceCard(
+                  template: t,
+                  selected: selected,
+                  onTap: () => setState(() => _selectedTemplateId = t.id),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 20),
           _EbookHeader(
             controller: _titleController,
             selectedCount: _selectedStories.length,
             onChooseStories: _chooseStories,
             onCreate: _isCreating ? null : _createEbook,
             isCreating: _isCreating,
+            primaryActionLabel: isEditing ? 'Save' : 'Preview',
           ),
           if (_selectedStories.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            Text(
-              'Selected stories',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w800,
-                    color: _kEbookTitleColor,
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Text(
+                  'Stories in this book',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        color: _kEbookTitleColor,
+                      ),
+                ),
+                const Spacer(),
+                Text(
+                  '${_selectedStories.length} items',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: kAppPrimary,
                   ),
+                ),
+              ],
             ),
-            const SizedBox(height: 10),
-            ..._selectedStories.map(
-              (story) => Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: _SelectedStoryPreview(story: story),
-              ),
+            const SizedBox(height: 12),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final w = constraints.maxWidth;
+                final crossCount = w >= 520 ? 2 : 1;
+                return GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: crossCount,
+                    mainAxisSpacing: 12,
+                    crossAxisSpacing: 12,
+                    childAspectRatio: crossCount == 2 ? 0.82 : 1.15,
+                  ),
+                  itemCount: _selectedStories.length,
+                  itemBuilder: (context, index) {
+                    return _SelectedStoryGridTile(
+                      story: _selectedStories[index],
+                      index: index + 1,
+                    );
+                  },
+                );
+              },
             ),
           ],
         ],
@@ -413,6 +728,15 @@ class _StoryPickerScreenState extends State<StoryPickerScreen> {
     return story.status == 'published';
   }
 
+  /// Draft body can be empty when the author used only photos (`content` blocks).
+  bool _hasPickableStoryBody(StoryBookItem story) {
+    if (story.body.trim().isNotEmpty) return true;
+    final c = story.content;
+    if (c == null || c.isEmpty) return false;
+    if (StoryContentCodec.hasRichLayout(c)) return true;
+    return StoryContentCodec.joinPlainText(c).trim().isNotEmpty;
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_user == null) {
@@ -457,7 +781,7 @@ class _StoryPickerScreenState extends State<StoryPickerScreen> {
 
           final stories = (snapshot.data?.docs ?? [])
               .map(StoryBookItem.fromDocument)
-              .where((story) => story.body.trim().isNotEmpty)
+              .where(_hasPickableStoryBody)
               .where((story) => _isEligibleForEbook(story))
               .toList()
             ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -475,27 +799,38 @@ class _StoryPickerScreenState extends State<StoryPickerScreen> {
             );
           }
 
-          return ListView.separated(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-            itemCount: stories.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 12),
-            itemBuilder: (context, index) {
-              final story = stories[index];
-              final isSelected = _selectedStoryIds.contains(story.id);
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              final w = constraints.maxWidth;
+              final cross = w >= 480 ? 2 : 1;
+              return GridView.builder(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: cross,
+                  mainAxisSpacing: 12,
+                  crossAxisSpacing: 12,
+                  childAspectRatio: cross == 2 ? 0.68 : 0.74,
+                ),
+                itemCount: stories.length,
+                itemBuilder: (context, index) {
+                  final story = stories[index];
+                  final isSelected = _selectedStoryIds.contains(story.id);
 
-              return _StorySelectionCard(
-                story: story,
-                isSelected: isSelected,
-                onTap: () {
-                  setState(() {
-                    if (isSelected) {
-                      _selectedStoryIds.remove(story.id);
-                      _selectedStoriesById.remove(story.id);
-                    } else {
-                      _selectedStoryIds.add(story.id);
-                      _selectedStoriesById[story.id] = story;
-                    }
-                  });
+                  return _StoryPickerGridTile(
+                    story: story,
+                    isSelected: isSelected,
+                    onTap: () {
+                      setState(() {
+                        if (isSelected) {
+                          _selectedStoryIds.remove(story.id);
+                          _selectedStoriesById.remove(story.id);
+                        } else {
+                          _selectedStoryIds.add(story.id);
+                          _selectedStoriesById[story.id] = story;
+                        }
+                      });
+                    },
+                  );
                 },
               );
             },
@@ -529,8 +864,6 @@ class EbookReaderScreen extends StatefulWidget {
 }
 
 class _EbookReaderScreenState extends State<EbookReaderScreen> {
-  static const int _charactersPerPage = 520;
-
   late final PageController _pageController;
   late final List<EbookPageData> _pages;
   int _currentPage = 0;
@@ -540,59 +873,13 @@ class _EbookReaderScreenState extends State<EbookReaderScreen> {
   void initState() {
     super.initState();
     _pageController = PageController();
-    _pages = _buildPages(widget.ebook, widget.stories);
+    _pages = buildEbookPages(widget.ebook, widget.stories);
   }
 
   @override
   void dispose() {
     _pageController.dispose();
     super.dispose();
-  }
-
-  List<EbookPageData> _buildPages(Ebook ebook, List<StoryBookItem> stories) {
-    final pages = <EbookPageData>[EbookPageData.cover(ebook)];
-
-    for (final story in stories) {
-      final chunks = _paginateText(story.body, _charactersPerPage);
-      for (var index = 0; index < chunks.length; index++) {
-        pages.add(
-          EbookPageData.story(
-            story: story,
-            text: chunks[index],
-            partNumber: index + 1,
-            totalParts: chunks.length,
-          ),
-        );
-      }
-    }
-
-    return pages;
-  }
-
-  List<String> _paginateText(String text, int maxCharacters) {
-    final normalized = text.trim().replaceAll(RegExp(r'\s+'), ' ');
-    if (normalized.isEmpty) return const [];
-
-    final pages = <String>[];
-    var start = 0;
-
-    while (start < normalized.length) {
-      var end = (start + maxCharacters).clamp(0, normalized.length).toInt();
-      if (end < normalized.length) {
-        final lastSpace = normalized.lastIndexOf(' ', end);
-        if (lastSpace > start + 120) {
-          end = lastSpace;
-        }
-      }
-
-      pages.add(normalized.substring(start, end).trim());
-      start = end;
-      while (start < normalized.length && normalized[start] == ' ') {
-        start++;
-      }
-    }
-
-    return pages;
   }
 
   Future<void> _exportPdf({required bool share}) async {
@@ -619,123 +906,8 @@ class _EbookReaderScreenState extends State<EbookReaderScreen> {
     }
   }
 
-  Future<Uint8List> _buildPdf() async {
-    final document = pw.Document();
-    final imageCache = <String, pw.ImageProvider>{};
-
-    for (final page in _pages) {
-      final imageUrl = page.imageUrl;
-      pw.ImageProvider? image;
-
-      if (imageUrl != null && imageUrl.isNotEmpty) {
-        image = imageCache[imageUrl] ??= await networkImage(imageUrl);
-      }
-
-      document.addPage(
-        pw.Page(
-          pageFormat: PdfPageFormat.a4,
-          margin: const pw.EdgeInsets.all(36),
-          build: (context) {
-            if (page.isCover) {
-              return _buildPdfCover(page.ebook!, image);
-            }
-
-            return _buildPdfStoryPage(page, image);
-          },
-        ),
-      );
-    }
-
-    return document.save();
-  }
-
-  pw.Widget _buildPdfCover(Ebook ebook, pw.ImageProvider? image) {
-    return pw.Container(
-      decoration: pw.BoxDecoration(
-        color: PdfColor.fromHex('#FFF4FB'),
-        borderRadius: pw.BorderRadius.circular(18),
-        border: pw.Border.all(color: PdfColor.fromHex('#8E44AD'), width: 2),
-      ),
-      padding: const pw.EdgeInsets.all(34),
-      child: pw.Column(
-        mainAxisAlignment: pw.MainAxisAlignment.center,
-        children: [
-          if (image != null)
-            pw.ClipRRect(
-              horizontalRadius: 14,
-              verticalRadius: 14,
-              child: pw.Image(image, height: 280, fit: pw.BoxFit.cover),
-            ),
-          pw.SizedBox(height: 34),
-          pw.Text(
-            ebook.title,
-            textAlign: pw.TextAlign.center,
-            style: pw.TextStyle(
-              fontSize: 34,
-              fontWeight: pw.FontWeight.bold,
-              color: PdfColor.fromHex('#5C2D91'),
-            ),
-          ),
-          pw.SizedBox(height: 14),
-          pw.Text(
-            'by ${ebook.authorName}',
-            style:
-                pw.TextStyle(fontSize: 18, color: PdfColor.fromHex('#555555')),
-          ),
-        ],
-      ),
-    );
-  }
-
-  pw.Widget _buildPdfStoryPage(EbookPageData page, pw.ImageProvider? image) {
-    return pw.Container(
-      decoration: pw.BoxDecoration(
-        color: PdfColor.fromHex('#FFF4FB'),
-        borderRadius: pw.BorderRadius.circular(16),
-        border: pw.Border.all(color: PdfColor.fromHex('#EADAE8'), width: 1.5),
-      ),
-      padding: const pw.EdgeInsets.all(26),
-      child: pw.Column(
-        crossAxisAlignment: pw.CrossAxisAlignment.start,
-        children: [
-          pw.Text(
-            page.story!.title,
-            style: pw.TextStyle(
-              fontSize: 24,
-              fontWeight: pw.FontWeight.bold,
-              color: PdfColor.fromHex('#5C2D91'),
-            ),
-          ),
-          if (page.totalParts > 1)
-            pw.Padding(
-              padding: const pw.EdgeInsets.only(top: 4),
-              child: pw.Text(
-                'Page ${page.partNumber} of ${page.totalParts}',
-                style: pw.TextStyle(
-                    fontSize: 11, color: PdfColor.fromHex('#777777')),
-              ),
-            ),
-          if (image != null && page.partNumber == 1) ...[
-            pw.SizedBox(height: 16),
-            pw.Center(
-              child: pw.ClipRRect(
-                horizontalRadius: 12,
-                verticalRadius: 12,
-                child: pw.Image(image, height: 210, fit: pw.BoxFit.cover),
-              ),
-            ),
-          ],
-          pw.SizedBox(height: 18),
-          pw.Expanded(
-            child: pw.Text(
-              page.text,
-              style: const pw.TextStyle(fontSize: 18, height: 1.45),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  Future<Uint8List> _buildPdf() async =>
+      EbookPdfGenerator.buildPdf(widget.ebook, widget.stories);
 
   String _safeFileName(String title) {
     final cleaned = title.trim().replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '_');
@@ -744,8 +916,10 @@ class _EbookReaderScreenState extends State<EbookReaderScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final template = EbookTemplateCatalog.byId(widget.ebook.templateId);
+
     return Scaffold(
-      backgroundColor: _kEbookPageBackground,
+      backgroundColor: template.readerScaffoldBg,
       appBar: AppBar(
         backgroundColor: kAppPrimary,
         iconTheme: const IconThemeData(color: Colors.white),
@@ -779,8 +953,14 @@ class _EbookReaderScreenState extends State<EbookReaderScreen> {
                     return Padding(
                       padding: const EdgeInsets.fromLTRB(18, 18, 18, 10),
                       child: page.isCover
-                          ? _BookCoverPage(ebook: page.ebook!)
-                          : _StoryBookPage(page: page),
+                          ? _BookCoverPage(
+                              ebook: page.ebook!,
+                              template: template,
+                            )
+                          : _StoryChapterPage(
+                              story: page.story!,
+                              template: template,
+                            ),
                     );
                   },
                 ),
@@ -794,16 +974,17 @@ class _EbookReaderScreenState extends State<EbookReaderScreen> {
                         value: (_currentPage + 1) / _pages.length,
                         minHeight: 8,
                         color: kAppPrimary,
-                        backgroundColor: Colors.white,
+                        backgroundColor: template.readerCardBorder
+                            .withValues(alpha: 0.35),
                         borderRadius: BorderRadius.circular(99),
                       ),
                     ),
                     const SizedBox(width: 12),
                     Text(
                       '${_currentPage + 1}/${_pages.length}',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontWeight: FontWeight.w700,
-                        color: kAppPrimary,
+                        color: template.readerStoryTitleColor,
                       ),
                     ),
                   ],
@@ -832,6 +1013,211 @@ class _EbookReaderScreenState extends State<EbookReaderScreen> {
             ),
         ],
       ),
+    );
+  }
+}
+
+class _TemplateChoiceCard extends StatelessWidget {
+  final EbookTemplateDef template;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _TemplateChoiceCard({
+    required this.template,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        width: 118,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: selected ? kAppPrimary : Colors.black12,
+            width: selected ? 2.8 : 1,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: selected ? 0.12 : 0.06),
+              blurRadius: selected ? 14 : 8,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            DecoratedBox(
+              decoration: BoxDecoration(gradient: template.coverGradient),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    template.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                      color: template.coverTitleColor,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Expanded(
+                    child: Text(
+                      template.tagline,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 10,
+                        height: 1.25,
+                        color: template.coverAuthorColor,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (selected)
+              Positioned(
+                top: 6,
+                right: 6,
+                child: Container(
+                  padding: const EdgeInsets.all(3),
+                  decoration: const BoxDecoration(
+                    color: kAppPrimary,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.check, color: Colors.white, size: 14),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SelectedStoryGridTile extends StatelessWidget {
+  final StoryBookItem story;
+  final int index;
+
+  const _SelectedStoryGridTile({
+    required this.story,
+    required this.index,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _kEbookCardBorder, width: 1.2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            flex: 5,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                story.coverUrl != null && story.coverUrl!.isNotEmpty
+                    ? Image.network(
+                        story.coverUrl!,
+                        fit: BoxFit.cover,
+                        width: double.infinity,
+                        errorBuilder: (_, __, ___) => _tilePlaceholder(),
+                      )
+                    : _tilePlaceholder(),
+                Positioned(
+                  left: 8,
+                  top: 8,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: kAppPrimary.withValues(alpha: 0.92),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      '$index',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            flex: 3,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    story.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                      color: _kEbookTitleColor,
+                      height: 1.2,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Expanded(
+                    child: Text(
+                      story.preview,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 11,
+                        height: 1.25,
+                        color: _kEbookMutedText,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _tilePlaceholder() {
+    return Container(
+      color: _kEbookIconBackground,
+      alignment: Alignment.center,
+      child: const Icon(Icons.auto_stories, color: kAppPrimary, size: 36),
     );
   }
 }
@@ -906,6 +1292,7 @@ class _EbookLibraryCard extends StatelessWidget {
   final Ebook ebook;
   final bool isExporting;
   final VoidCallback onRead;
+  final VoidCallback onEdit;
   final VoidCallback onDownload;
   final VoidCallback onShare;
   final VoidCallback onDelete;
@@ -914,6 +1301,7 @@ class _EbookLibraryCard extends StatelessWidget {
     required this.ebook,
     required this.isExporting,
     required this.onRead,
+    required this.onEdit,
     required this.onDownload,
     required this.onShare,
     required this.onDelete,
@@ -952,6 +1340,28 @@ class _EbookLibraryCard extends StatelessWidget {
                       fontSize: 18,
                       fontWeight: FontWeight.w900,
                       color: _kEbookTitleColor,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: kAppPrimary.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        EbookTemplateCatalog.byId(ebook.templateId).name,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          color: kAppPrimary,
+                        ),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 5),
@@ -1006,6 +1416,11 @@ class _EbookLibraryCard extends StatelessWidget {
                   )
                 else ...[
                   IconButton(
+                    tooltip: 'Edit stories & cover',
+                    onPressed: onEdit,
+                    icon: const Icon(Icons.edit_outlined, color: kAppPrimary),
+                  ),
+                  IconButton(
                     tooltip: 'Download PDF',
                     onPressed: onDownload,
                     icon: const Icon(Icons.download, color: kAppPrimary),
@@ -1033,59 +1448,13 @@ class _EbookLibraryCard extends StatelessWidget {
   }
 }
 
-class _SelectedStoryPreview extends StatelessWidget {
-  final StoryBookItem story;
-
-  const _SelectedStoryPreview({required this.story});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: _kEbookCardBackground,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _kEbookCardBorder, width: 1.2),
-      ),
-      child: Row(
-        children: [
-          _StoryThumbnail(imageUrl: story.coverUrl),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  story.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w800,
-                    color: _kEbookTitleColor,
-                  ),
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  story.preview,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: _kEbookMutedText, height: 1.3),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _EbookHeader extends StatelessWidget {
   final TextEditingController controller;
   final int selectedCount;
   final VoidCallback onChooseStories;
   final VoidCallback? onCreate;
   final bool isCreating;
+  final String primaryActionLabel;
 
   const _EbookHeader({
     required this.controller,
@@ -1093,13 +1462,18 @@ class _EbookHeader extends StatelessWidget {
     required this.onChooseStories,
     required this.onCreate,
     required this.isCreating,
+    this.primaryActionLabel = 'Preview',
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      color: _kEbookCardBackground,
+      decoration: BoxDecoration(
+        color: _kEbookCardBackground,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _kEbookCardBorder, width: 1.1),
+      ),
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1209,7 +1583,11 @@ class _EbookHeader extends StatelessWidget {
                         ),
                       )
                     : const Icon(Icons.menu_book),
-                label: Text(isCreating ? 'Creating' : 'Preview'),
+                label: Text(
+                  isCreating
+                      ? (primaryActionLabel == 'Save' ? 'Saving' : 'Creating')
+                      : primaryActionLabel,
+                ),
               ),
             ],
           ),
@@ -1219,12 +1597,12 @@ class _EbookHeader extends StatelessWidget {
   }
 }
 
-class _StorySelectionCard extends StatelessWidget {
+class _StoryPickerGridTile extends StatelessWidget {
   final StoryBookItem story;
   final bool isSelected;
   final VoidCallback onTap;
 
-  const _StorySelectionCard({
+  const _StoryPickerGridTile({
     required this.story,
     required this.isSelected,
     required this.onTap,
@@ -1232,68 +1610,114 @@ class _StorySelectionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
-      child: Ink(
-        decoration: BoxDecoration(
-          color: _kEbookCardBackground,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: isSelected ? kAppPrimary : _kEbookCardBorder,
-            width: isSelected ? 2.5 : 1.2,
-          ),
-          boxShadow: const [
-            BoxShadow(
-              color: Colors.black12,
-              blurRadius: 8,
-              offset: Offset(0, 4),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Ink(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: isSelected ? kAppPrimary : _kEbookCardBorder,
+              width: isSelected ? 2.4 : 1.1,
             ),
-          ],
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: isSelected ? 0.1 : 0.05),
+                blurRadius: isSelected ? 12 : 8,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _StoryThumbnail(imageUrl: story.coverUrl),
-              const SizedBox(width: 12),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      story.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w800,
-                        color: _kEbookTitleColor,
+                flex: 12,
+                child: ClipRRect(
+                  borderRadius:
+                      const BorderRadius.vertical(top: Radius.circular(13)),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      story.coverUrl != null && story.coverUrl!.isNotEmpty
+                          ? Image.network(
+                              story.coverUrl!,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => _ph(),
+                            )
+                          : _ph(),
+                      Positioned(
+                        top: 8,
+                        right: 8,
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.45),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            isSelected
+                                ? Icons.check_circle
+                                : Icons.circle_outlined,
+                            color: isSelected ? Colors.lightGreenAccent : Colors.white,
+                            size: 22,
+                          ),
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      story.preview,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        height: 1.3,
-                        color: _kEbookMutedText,
-                      ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(width: 8),
-              Icon(
-                isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
-                color: isSelected ? kAppPrimary : Colors.grey.shade500,
-                size: 30,
+              Expanded(
+                flex: 9,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        story.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                          color: _kEbookTitleColor,
+                          height: 1.2,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Expanded(
+                        child: Text(
+                          story.preview,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 11,
+                            height: 1.25,
+                            color: _kEbookMutedText,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _ph() {
+    return Container(
+      color: _kEbookIconBackground,
+      alignment: Alignment.center,
+      child: const Icon(Icons.auto_stories, color: kAppPrimary, size: 40),
     );
   }
 }
@@ -1331,185 +1755,511 @@ class _StoryThumbnail extends StatelessWidget {
 
 class _BookCoverPage extends StatelessWidget {
   final Ebook ebook;
+  final EbookTemplateDef template;
 
-  const _BookCoverPage({required this.ebook});
+  const _BookCoverPage({
+    required this.ebook,
+    required this.template,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: _kEbookCardBackground,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: kAppPrimary, width: 3),
-        boxShadow: const [
-          BoxShadow(
-            color: Colors.black12,
-            blurRadius: 14,
-            offset: Offset(0, 8),
-          ),
-        ],
-      ),
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          if (ebook.coverImage != null && ebook.coverImage!.isNotEmpty)
-            ClipRRect(
-              borderRadius: BorderRadius.circular(18),
-              child: Image.network(
-                ebook.coverImage!,
-                height: 260,
-                width: double.infinity,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final w = constraints.maxWidth;
+        final maxArtH = math.min(380.0, w * 0.95);
+
+        return Container(
+          width: double.infinity,
+          decoration: BoxDecoration(
+            gradient: template.coverGradient,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: template.coverBorder, width: 2.5),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.12),
+                blurRadius: 18,
+                offset: const Offset(0, 10),
               ),
-            ),
-          const SizedBox(height: 28),
-          Text(
-            ebook.title,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 34,
-              height: 1.15,
-              fontWeight: FontWeight.w900,
-              color: _kEbookTitleColor,
-            ),
+            ],
           ),
-          const SizedBox(height: 14),
-          Text(
-            'by ${ebook.authorName}',
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 19,
-              fontWeight: FontWeight.w600,
-              color: _kEbookMutedText,
-            ),
+          padding: const EdgeInsets.all(22),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (ebook.coverImage != null && ebook.coverImage!.isNotEmpty)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: w,
+                      maxHeight: maxArtH,
+                    ),
+                    child: Image.network(
+                      ebook.coverImage!,
+                      width: w,
+                      fit: BoxFit.contain,
+                      alignment: Alignment.center,
+                      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                    ),
+                  ),
+                ),
+              SizedBox(height: ebook.coverImage != null ? 22 : 0),
+              Text(
+                ebook.title,
+                textAlign: TextAlign.center,
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 28,
+                  height: 1.12,
+                  fontWeight: FontWeight.w900,
+                  color: template.coverTitleColor,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'by ${ebook.authorName}',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w600,
+                  color: template.coverAuthorColor,
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
 
-class _StoryBookPage extends StatelessWidget {
-  final EbookPageData page;
+/// One swipe per story: title block once at the top, then text + inline images
+/// in editor order in a single scroll (like a printed book chapter).
+class _StoryChapterPage extends StatelessWidget {
+  final StoryBookItem story;
+  final EbookTemplateDef template;
 
-  const _StoryBookPage({required this.page});
+  const _StoryChapterPage({
+    required this.story,
+    required this.template,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final story = page.story!;
+    final blocks = ebookStoryBlocks(story);
+    final bodyStyle = _ebookReaderBody(template);
 
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        color: _kEbookCardBackground,
+        color: template.readerCardBg,
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: _kEbookCardBorder, width: 2),
-        boxShadow: const [
+        border: Border.all(color: template.readerCardBorder, width: 1.8),
+        boxShadow: [
           BoxShadow(
-            color: Colors.black12,
-            blurRadius: 14,
-            offset: Offset(0, 8),
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
           ),
         ],
       ),
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            story.title,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 25,
-              height: 1.15,
-              fontWeight: FontWeight.w900,
-              color: _kEbookTitleColor,
-            ),
-          ),
-          if (page.totalParts > 1)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                'Part ${page.partNumber} of ${page.totalParts}',
-                style: const TextStyle(
-                  color: _kEbookMutedText,
-                  fontWeight: FontWeight.w600,
+      padding: const EdgeInsets.fromLTRB(18, 20, 18, 16),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final contentW = constraints.maxWidth;
+          final maxChapterCoverH = math.min(240.0, contentW * 0.56);
+          final maxInlineImageH = math.min(320.0, contentW * 0.78);
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                story.title,
+                textAlign: TextAlign.center,
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 26,
+                  height: 1.15,
+                  fontWeight: FontWeight.w900,
+                  color: template.readerStoryTitleColor,
                 ),
               ),
-            ),
-          if (story.coverUrl != null &&
-              story.coverUrl!.isNotEmpty &&
-              page.partNumber == 1) ...[
-            const SizedBox(height: 14),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(16),
+              const SizedBox(height: 8),
+              Text(
+                'by ${story.authorName}',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: template.readerPartLabelColor,
+                ),
+              ),
+              if (story.coverUrl != null && story.coverUrl!.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: contentW,
+                      maxHeight: maxChapterCoverH,
+                    ),
+                    child: Image.network(
+                      story.coverUrl!,
+                      width: contentW,
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 18),
+              Expanded(
+                child: SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (final block in blocks)
+                        ..._widgetsForBlock(
+                          block,
+                          bodyStyle,
+                          contentW,
+                          maxInlineImageH,
+                        ),
+                      if (_chapterBodyIsEmpty(blocks))
+                        Text(
+                          '(This story is empty.)',
+                          style: bodyStyle,
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  bool _chapterBodyIsEmpty(List<Map<String, dynamic>> blocks) {
+    for (final m in blocks) {
+      final type = m['type'] as String?;
+      if (type == StoryContentCodec.typeImage &&
+          ((m['url'] as String?)?.trim().isNotEmpty ?? false)) {
+        return false;
+      }
+      if (type != StoryContentCodec.typeImage) {
+        final t = (m['text'] as String?)?.trim() ?? '';
+        if (t.isNotEmpty) return false;
+      }
+    }
+    return true;
+  }
+
+  List<Widget> _widgetsForBlock(
+    Map<String, dynamic> block,
+    TextStyle bodyStyle,
+    double contentWidth,
+    double maxImageHeight,
+  ) {
+    final type = block['type'] as String?;
+    if (type == StoryContentCodec.typeImage) {
+      final url = (block['url'] as String?)?.trim();
+      if (url == null || url.isEmpty) return const [];
+      return [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 14),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: contentWidth,
+                maxHeight: maxImageHeight,
+              ),
               child: Image.network(
-                story.coverUrl!,
-                height: 150,
-                width: double.infinity,
-                fit: BoxFit.cover,
+                url,
+                width: contentWidth,
+                fit: BoxFit.contain,
+                alignment: Alignment.center,
                 errorBuilder: (_, __, ___) => const SizedBox.shrink(),
               ),
             ),
-          ],
-          const SizedBox(height: 16),
-          Expanded(
-            child: SingleChildScrollView(
-              physics: const BouncingScrollPhysics(),
-              child: Text(
-                page.text,
-                style: const TextStyle(
-                  fontSize: 20,
-                  height: 1.55,
-                  color: Color(0xFF242124),
-                ),
-              ),
-            ),
           ),
-        ],
-      ),
-    );
+        ),
+      ];
+    }
+
+    final raw = (block['text'] as String?) ?? '';
+    if (raw.trim().isEmpty) return const [];
+
+    final paragraphs = raw.split(RegExp(r'\n\s*\n'));
+    final out = <Widget>[];
+    for (final para in paragraphs) {
+      final p = para.trim();
+      if (p.isEmpty) continue;
+      out.add(
+        Padding(
+          padding: const EdgeInsets.only(bottom: 14),
+          child: Text(p, style: bodyStyle),
+        ),
+      );
+    }
+    return out;
+  }
+}
+
+class _PdfExportTheme {
+  final PdfColor coverBg;
+  final PdfColor coverBorder;
+  final PdfColor coverTitle;
+  final PdfColor coverAuthor;
+  final PdfColor cardBg;
+  final PdfColor cardBorder;
+  final PdfColor storyTitle;
+  final PdfColor body;
+  final PdfColor muted;
+
+  const _PdfExportTheme({
+    required this.coverBg,
+    required this.coverBorder,
+    required this.coverTitle,
+    required this.coverAuthor,
+    required this.cardBg,
+    required this.cardBorder,
+    required this.storyTitle,
+    required this.body,
+    required this.muted,
+  });
+}
+
+/// Shared A4 metrics so cover, MultiPage chapters, and images stay aligned for export/share/print.
+abstract final class _EbookPdfLayout {
+  _EbookPdfLayout._();
+
+  static const double marginPt = 40;
+
+  static PdfPageFormat get pageFormat => PdfPageFormat.a4;
+
+  /// Printable width inside left+right margins (points).
+  static double contentWidthPt(PdfPageFormat format) =>
+      format.width - 2 * marginPt;
+
+  /// Height inside margins for one PDF sheet (A4 minus margins).
+  static double innerHeightPt(PdfPageFormat format) =>
+      format.height - 2 * marginPt;
+
+  /// Room left on cover after title, subtitle, padding — avoids single-page overflow.
+  static double maxBookCoverArtHeightPt(PdfPageFormat format) =>
+      math.min(300.0, innerHeightPt(format) - 230).clamp(72.0, 300.0);
+
+  static double maxChapterCoverHeightPt(PdfPageFormat format) =>
+      math.min(220.0, innerHeightPt(format) * 0.28).clamp(72.0, 220.0);
+
+  static double maxInlineImageHeightPt(PdfPageFormat format) =>
+      math.min(280.0, innerHeightPt(format) * 0.34).clamp(72.0, 280.0);
+}
+
+_PdfExportTheme _pdfExportThemeFor(String? templateId) {
+  switch (templateId ?? 'classic') {
+    case 'paper':
+      return _PdfExportTheme(
+        coverBg: PdfColor.fromHex('FDFBF7'),
+        coverBorder: PdfColor.fromHex('8D7B68'),
+        coverTitle: PdfColor.fromHex('2C241C'),
+        coverAuthor: PdfColor.fromHex('6B5E54'),
+        cardBg: PdfColor.fromHex('FDFBF7'),
+        cardBorder: PdfColor.fromHex('D9D0C3'),
+        storyTitle: PdfColor.fromHex('2C241C'),
+        body: PdfColor.fromHex('3D342B'),
+        muted: PdfColor.fromHex('7A6E63'),
+      );
+    case 'night':
+      return _PdfExportTheme(
+        coverBg: PdfColor.fromHex('2C2C2E'),
+        coverBorder: PdfColor.fromHex('48484A'),
+        coverTitle: PdfColor.fromHex('F2F2F7'),
+        coverAuthor: PdfColor.fromHex('AEAEB2'),
+        cardBg: PdfColor.fromHex('2C2C2E'),
+        cardBorder: PdfColor.fromHex('3A3A3C'),
+        storyTitle: PdfColor.fromHex('F2F2F7'),
+        body: PdfColor.fromHex('E5E5EA'),
+        muted: PdfColor.fromHex('8E8E93'),
+      );
+    case 'mint':
+      return _PdfExportTheme(
+        coverBg: PdfColor.fromHex('FFFFFF'),
+        coverBorder: PdfColor.fromHex('34C759'),
+        coverTitle: PdfColor.fromHex('1A3D36'),
+        coverAuthor: PdfColor.fromHex('3D5C54'),
+        cardBg: PdfColor.fromHex('FFFFFF'),
+        cardBorder: PdfColor.fromHex('BFE8D9'),
+        storyTitle: PdfColor.fromHex('1A3D36'),
+        body: PdfColor.fromHex('253630'),
+        muted: PdfColor.fromHex('5C7A72'),
+      );
+    case 'sunset':
+      return _PdfExportTheme(
+        coverBg: PdfColor.fromHex('FFFDFC'),
+        coverBorder: PdfColor.fromHex('FF8A65'),
+        coverTitle: PdfColor.fromHex('4A2C2A'),
+        coverAuthor: PdfColor.fromHex('8D6E63'),
+        cardBg: PdfColor.fromHex('FFFDFC'),
+        cardBorder: PdfColor.fromHex('FFCCBC'),
+        storyTitle: PdfColor.fromHex('4A2C2A'),
+        body: PdfColor.fromHex('3E2723'),
+        muted: PdfColor.fromHex('8D6E63'),
+      );
+    case 'classic':
+    default:
+      return _PdfExportTheme(
+        coverBg: PdfColor.fromHex('FFF4FB'),
+        coverBorder: PdfColor.fromHex('8E44AD'),
+        coverTitle: PdfColor.fromHex('5C2D91'),
+        coverAuthor: PdfColor.fromHex('555555'),
+        cardBg: PdfColor.fromHex('FFF4FB'),
+        cardBorder: PdfColor.fromHex('EADAE8'),
+        storyTitle: PdfColor.fromHex('5C2D91'),
+        body: PdfColor.fromHex('242124'),
+        muted: PdfColor.fromHex('777777'),
+      );
   }
 }
 
 class EbookPdfGenerator {
-  static const int _charactersPerPage = 520;
+  /// Embedded TrueType fonts so curly quotes, apostrophes, dashes render (Helvetica lacks these glyphs).
+  static Future<pw.ThemeData?> _loadPdfEmbeddedFontTheme() async {
+    try {
+      final fonts = await Future.wait([
+        PdfGoogleFonts.openSansRegular(),
+        PdfGoogleFonts.openSansBold(),
+        PdfGoogleFonts.openSansItalic(),
+        PdfGoogleFonts.openSansBoldItalic(),
+      ]);
+      return pw.ThemeData.withFont(
+        base: fonts[0],
+        bold: fonts[1],
+        italic: fonts[2],
+        boldItalic: fonts[3],
+      );
+    } catch (_) {
+      return null;
+    }
+  }
 
+  /// Fallback when fonts cannot load (offline): map Unicode punctuation to ASCII.
+  static String _pdfAsciiPunctuationFallback(String input) {
+    final sb = StringBuffer();
+    for (final unit in input.runes) {
+      switch (unit) {
+        case 0x2018: // ‘
+        case 0x2019: // ’
+        case 0x02BC: // ʼ modifier letter apostrophe
+          sb.write("'");
+          break;
+        case 0x201C: // “
+        case 0x201D: // ”
+          sb.write('"');
+          break;
+        case 0x2013: // –
+          sb.write('-');
+          break;
+        case 0x2014: // —
+          sb.write('--');
+          break;
+        case 0x2026: // …
+          sb.write('...');
+          break;
+        case 0x00A0: // nbsp
+          sb.write(' ');
+          break;
+        default:
+          sb.writeCharCode(unit);
+      }
+    }
+    return sb.toString();
+  }
+
+  /// Cover as its own page; story text + images flow across PDF pages like a book.
   static Future<Uint8List> buildPdf(
     Ebook ebook,
     List<StoryBookItem> stories,
   ) async {
-    final pages = _buildPages(ebook, stories);
-    final document = pw.Document();
-    final imageCache = <String, pw.ImageProvider>{};
+    final embeddedFontTheme = await _loadPdfEmbeddedFontTheme();
+    final pdfFontsOk = embeddedFontTheme != null;
+    String pdfTxt(String raw) =>
+        pdfFontsOk ? raw : _pdfAsciiPunctuationFallback(raw);
 
-    for (final page in pages) {
-      final imageUrl = page.imageUrl;
-      pw.ImageProvider? image;
+    final document = pw.Document(
+      theme: embeddedFontTheme,
+      title: ebook.title,
+      author: ebook.authorName,
+    );
+    final pdfTheme = _pdfExportThemeFor(ebook.templateId);
+    final cache = <String, pw.ImageProvider>{};
+    final format = _EbookPdfLayout.pageFormat;
+    final contentW = _EbookPdfLayout.contentWidthPt(format);
 
-      if (imageUrl != null && imageUrl.isNotEmpty) {
-        try {
-          image = imageCache[imageUrl] ??= await networkImage(imageUrl);
-        } catch (_) {
-          image = null;
+    Future<pw.ImageProvider?> loadUrl(String? url) async {
+      if (url == null || url.isEmpty) return null;
+      try {
+        return cache[url] ??= await networkImage(url);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    final urls = <String>{};
+    final ci = ebook.coverImage;
+    if (ci != null && ci.isNotEmpty) urls.add(ci);
+    for (final s in stories) {
+      final cu = s.coverUrl;
+      if (cu != null && cu.isNotEmpty) urls.add(cu);
+      for (final b in ebookStoryBlocks(s)) {
+        if (b['type'] == StoryContentCodec.typeImage) {
+          final u = (b['url'] as String?)?.trim();
+          if (u != null && u.isNotEmpty) urls.add(u);
         }
       }
+    }
+    for (final u in urls) {
+      await loadUrl(u);
+    }
 
+    final ebookCoverProvider = await loadUrl(ebook.coverImage);
+
+    document.addPage(
+      pw.Page(
+        pageFormat: format,
+        margin: pw.EdgeInsets.all(_EbookPdfLayout.marginPt),
+        build: (context) => _buildPdfCoverPage(
+          ebook,
+          ebookCoverProvider,
+          pdfTheme,
+          contentW,
+          format,
+          pdfTxt,
+        ),
+      ),
+    );
+
+    // One MultiPage per story so each chapter begins on a new PDF page (after the cover).
+    for (final story in stories) {
+      final chapterWidgets = _buildPdfChapterWidgets(
+        story,
+        pdfTheme,
+        cache,
+        contentW,
+        format,
+        pdfTxt,
+      );
+      if (chapterWidgets.isEmpty) continue;
       document.addPage(
-        pw.Page(
-          pageFormat: PdfPageFormat.a4,
-          margin: const pw.EdgeInsets.all(36),
-          build: (context) {
-            if (page.isCover) {
-              return _buildPdfCover(page.ebook!, image);
-            }
-
-            return _buildPdfStoryPage(page, image);
-          },
+        pw.MultiPage(
+          pageFormat: format,
+          margin: pw.EdgeInsets.all(_EbookPdfLayout.marginPt),
+          build: (context) => chapterWidgets,
         ),
       );
     }
@@ -1522,144 +2272,256 @@ class EbookPdfGenerator {
     return cleaned.isEmpty ? 'pixiepen_ebook' : cleaned;
   }
 
-  static List<EbookPageData> _buildPages(
-    Ebook ebook,
-    List<StoryBookItem> stories,
-  ) {
-    final pages = <EbookPageData>[EbookPageData.cover(ebook)];
+  /// MultiPage splits between widgets; one huge [pw.Text] can exceed a sheet — chunk instead.
+  static const int _kPdfTextChunkChars = 900;
 
-    for (final story in stories) {
-      final chunks = _paginateText(story.body, _charactersPerPage);
-      for (var index = 0; index < chunks.length; index++) {
-        pages.add(
-          EbookPageData.story(
-            story: story,
-            text: chunks[index],
-            partNumber: index + 1,
-            totalParts: chunks.length,
+  /// Prefer breaks at spaces so punctuation stays attached to words (no stray commas/periods).
+  static int _findPdfChunkBreak(String rest, int max) {
+    if (rest.length <= max) return rest.length;
+    var cut = rest.lastIndexOf(' ', max);
+    if (cut >= 12) return cut;
+    // No space in first segment — extend to next space so we never split mid-word / mid-punctuation.
+    final nextSpace = rest.indexOf(' ', max);
+    if (nextSpace > 0) return nextSpace;
+    return rest.length;
+  }
+
+  static List<String> _splitTextForMultiPage(String paragraph) {
+    final t = paragraph.trim();
+    if (t.isEmpty) return const [];
+    if (t.length <= _kPdfTextChunkChars) return [t];
+    final out = <String>[];
+    var rest = t;
+    while (rest.isNotEmpty) {
+      if (rest.length <= _kPdfTextChunkChars) {
+        out.add(rest.trim());
+        break;
+      }
+      var cut = _findPdfChunkBreak(rest, _kPdfTextChunkChars);
+      if (cut <= 0 || cut > rest.length) {
+        cut = math.min(rest.length, _kPdfTextChunkChars);
+      }
+      final piece = rest.substring(0, cut).trim();
+      if (piece.isNotEmpty) out.add(piece);
+      rest = rest.substring(cut).trim();
+    }
+    return _mergeTrailingPunctuationChunks(out);
+  }
+
+  /// Join tiny leftover fragments like lone "." or "," with the previous chunk.
+  static List<String> _mergeTrailingPunctuationChunks(List<String> chunks) {
+    if (chunks.length < 2) return chunks;
+    final merged = <String>[chunks.first];
+    for (var i = 1; i < chunks.length; i++) {
+      final c = chunks[i].trim();
+      if (c.isEmpty) continue;
+      if (RegExp(r'^[.,;:!?…]+$').hasMatch(c) && merged.isNotEmpty) {
+        merged[merged.length - 1] = '${merged.last}$c';
+      } else {
+        merged.add(chunks[i]);
+      }
+    }
+    return merged;
+  }
+
+  static pw.Widget _buildPdfCoverPage(
+    Ebook ebook,
+    pw.ImageProvider? image,
+    _PdfExportTheme theme,
+    double contentWidth,
+    PdfPageFormat format,
+    String Function(String) pdfTxt,
+  ) {
+    final maxArtH = _EbookPdfLayout.maxBookCoverArtHeightPt(format);
+    return pw.Container(
+      decoration: pw.BoxDecoration(
+        color: theme.coverBg,
+        borderRadius: pw.BorderRadius.circular(18),
+        border: pw.Border.all(color: theme.coverBorder, width: 2),
+      ),
+      padding: const pw.EdgeInsets.all(24),
+      child: pw.Column(
+        mainAxisAlignment: pw.MainAxisAlignment.center,
+        children: [
+          if (image != null) ...[
+            pw.ClipRRect(
+              horizontalRadius: 14,
+              verticalRadius: 14,
+              child: pw.SizedBox(
+                width: contentWidth,
+                height: maxArtH,
+                child: pw.Center(
+                  child: pw.Image(image, fit: pw.BoxFit.contain),
+                ),
+              ),
+            ),
+            pw.SizedBox(height: 22),
+          ],
+          pw.Container(
+            width: contentWidth,
+            child: pw.Text(
+              pdfTxt(ebook.title),
+              textAlign: pw.TextAlign.center,
+              maxLines: 4,
+              overflow: pw.TextOverflow.clip,
+              style: pw.TextStyle(
+                fontSize: 30,
+                fontWeight: pw.FontWeight.bold,
+                color: theme.coverTitle,
+                height: 1.2,
+              ),
+            ),
+          ),
+          pw.SizedBox(height: 10),
+          pw.Container(
+            width: contentWidth,
+            child: pw.Text(
+              pdfTxt('by ${ebook.authorName}'),
+              textAlign: pw.TextAlign.center,
+              maxLines: 2,
+              overflow: pw.TextOverflow.clip,
+              style: pw.TextStyle(
+                fontSize: 16,
+                color: theme.coverAuthor,
+                height: 1.25,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static List<pw.Widget> _buildPdfChapterWidgets(
+    StoryBookItem story,
+    _PdfExportTheme theme,
+    Map<String, pw.ImageProvider> cache,
+    double contentWidth,
+    PdfPageFormat format,
+    String Function(String) pdfTxt,
+  ) {
+    final maxChapterCoverH = _EbookPdfLayout.maxChapterCoverHeightPt(format);
+    final maxInlineH = _EbookPdfLayout.maxInlineImageHeightPt(format);
+
+    final out = <pw.Widget>[
+      pw.Container(
+        width: contentWidth,
+        child: pw.Text(
+          pdfTxt(story.title),
+          textAlign: pw.TextAlign.left,
+          style: pw.TextStyle(
+            fontSize: 22,
+            fontWeight: pw.FontWeight.bold,
+            color: theme.storyTitle,
+            height: 1.25,
+          ),
+        ),
+      ),
+      pw.SizedBox(height: 6),
+      pw.Container(
+        width: contentWidth,
+        child: pw.Text(
+          pdfTxt('by ${story.authorName}'),
+          textAlign: pw.TextAlign.left,
+          style: pw.TextStyle(
+            fontSize: 12,
+            color: theme.muted,
+            height: 1.35,
+          ),
+        ),
+      ),
+    ];
+
+    final coverUrl = story.coverUrl?.trim();
+    if (coverUrl != null && coverUrl.isNotEmpty) {
+      final prov = cache[coverUrl];
+      if (prov != null) {
+        out.add(pw.SizedBox(height: 14));
+        out.add(
+          pw.ClipRRect(
+            horizontalRadius: 12,
+            verticalRadius: 12,
+            child: pw.SizedBox(
+              width: contentWidth,
+              height: maxChapterCoverH,
+              child: pw.Center(
+                child: pw.Image(prov, fit: pw.BoxFit.contain),
+              ),
+            ),
           ),
         );
       }
     }
 
-    return pages;
-  }
-
-  static List<String> _paginateText(String text, int maxCharacters) {
-    final normalized = text.trim().replaceAll(RegExp(r'\s+'), ' ');
-    if (normalized.isEmpty) return const [];
-
-    final pages = <String>[];
-    var start = 0;
-
-    while (start < normalized.length) {
-      var end = (start + maxCharacters).clamp(0, normalized.length).toInt();
-      if (end < normalized.length) {
-        final lastSpace = normalized.lastIndexOf(' ', end);
-        if (lastSpace > start + 120) {
-          end = lastSpace;
+    final blocks = ebookStoryBlocks(story);
+    var anyBody = false;
+    for (final block in blocks) {
+      final type = block['type'] as String?;
+      if (type == StoryContentCodec.typeImage) {
+        final u = (block['url'] as String?)?.trim();
+        if (u == null || u.isEmpty) continue;
+        final prov = cache[u];
+        if (prov == null) continue;
+        anyBody = true;
+        out.add(pw.SizedBox(height: 12));
+        out.add(
+          pw.Center(
+            child: pw.ClipRRect(
+              horizontalRadius: 10,
+              verticalRadius: 10,
+              child: pw.ConstrainedBox(
+                constraints: pw.BoxConstraints(
+                  maxWidth: contentWidth,
+                  maxHeight: maxInlineH,
+                ),
+                child: pw.Image(prov, fit: pw.BoxFit.contain),
+              ),
+            ),
+          ),
+        );
+      } else {
+        final raw = (block['text'] as String?) ?? '';
+        if (raw.trim().isEmpty) continue;
+        anyBody = true;
+        for (final para in raw.split(RegExp(r'\n\s*\n'))) {
+          final p = para.trim();
+          if (p.isEmpty) continue;
+          for (final chunk in _splitTextForMultiPage(p)) {
+            out.add(pw.SizedBox(height: 10));
+            out.add(
+              pw.Container(
+                width: contentWidth,
+                child: pw.Text(
+                  pdfTxt(chunk),
+                  textAlign: pw.TextAlign.left,
+                  style: pw.TextStyle(
+                    fontSize: 12.5,
+                    height: 1.65,
+                    letterSpacing: 0.15,
+                    color: theme.body,
+                  ),
+                ),
+              ),
+            );
+          }
         }
-      }
-
-      pages.add(normalized.substring(start, end).trim());
-      start = end;
-      while (start < normalized.length && normalized[start] == ' ') {
-        start++;
       }
     }
 
-    return pages;
-  }
+    if (!anyBody && (coverUrl == null || coverUrl.isEmpty)) {
+      out.add(pw.SizedBox(height: 12));
+      out.add(
+        pw.Container(
+          width: contentWidth,
+          child: pw.Text(
+            pdfTxt('(This story is empty.)'),
+            style: pw.TextStyle(fontSize: 13, color: theme.muted),
+          ),
+        ),
+      );
+    }
 
-  static pw.Widget _buildPdfCover(Ebook ebook, pw.ImageProvider? image) {
-    return pw.Container(
-      decoration: pw.BoxDecoration(
-        color: PdfColor.fromHex('#FFF4FB'),
-        borderRadius: pw.BorderRadius.circular(18),
-        border: pw.Border.all(color: PdfColor.fromHex('#8E44AD'), width: 2),
-      ),
-      padding: const pw.EdgeInsets.all(34),
-      child: pw.Column(
-        mainAxisAlignment: pw.MainAxisAlignment.center,
-        children: [
-          if (image != null)
-            pw.ClipRRect(
-              horizontalRadius: 14,
-              verticalRadius: 14,
-              child: pw.Image(image, height: 280, fit: pw.BoxFit.cover),
-            ),
-          pw.SizedBox(height: 34),
-          pw.Text(
-            ebook.title,
-            textAlign: pw.TextAlign.center,
-            style: pw.TextStyle(
-              fontSize: 34,
-              fontWeight: pw.FontWeight.bold,
-              color: PdfColor.fromHex('#5C2D91'),
-            ),
-          ),
-          pw.SizedBox(height: 14),
-          pw.Text(
-            'by ${ebook.authorName}',
-            style:
-                pw.TextStyle(fontSize: 18, color: PdfColor.fromHex('#555555')),
-          ),
-        ],
-      ),
-    );
-  }
-
-  static pw.Widget _buildPdfStoryPage(
-    EbookPageData page,
-    pw.ImageProvider? image,
-  ) {
-    return pw.Container(
-      decoration: pw.BoxDecoration(
-        color: PdfColor.fromHex('#FFF4FB'),
-        borderRadius: pw.BorderRadius.circular(16),
-        border: pw.Border.all(color: PdfColor.fromHex('#EADAE8'), width: 1.5),
-      ),
-      padding: const pw.EdgeInsets.all(26),
-      child: pw.Column(
-        crossAxisAlignment: pw.CrossAxisAlignment.start,
-        children: [
-          pw.Text(
-            page.story!.title,
-            style: pw.TextStyle(
-              fontSize: 24,
-              fontWeight: pw.FontWeight.bold,
-              color: PdfColor.fromHex('#5C2D91'),
-            ),
-          ),
-          if (page.totalParts > 1)
-            pw.Padding(
-              padding: const pw.EdgeInsets.only(top: 4),
-              child: pw.Text(
-                'Page ${page.partNumber} of ${page.totalParts}',
-                style: pw.TextStyle(
-                    fontSize: 11, color: PdfColor.fromHex('#777777')),
-              ),
-            ),
-          if (image != null && page.partNumber == 1) ...[
-            pw.SizedBox(height: 16),
-            pw.Center(
-              child: pw.ClipRRect(
-                horizontalRadius: 12,
-                verticalRadius: 12,
-                child: pw.Image(image, height: 210, fit: pw.BoxFit.cover),
-              ),
-            ),
-          ],
-          pw.SizedBox(height: 18),
-          pw.Expanded(
-            child: pw.Text(
-              page.text,
-              style: const pw.TextStyle(fontSize: 18, height: 1.45),
-            ),
-          ),
-        ],
-      ),
-    );
+    return out;
   }
 }
 
@@ -1671,6 +2533,7 @@ class Ebook {
   final String? coverImage;
   final List<String> storyIds;
   final DateTime createdAt;
+  final String templateId;
 
   const Ebook({
     required this.ebookId,
@@ -1680,6 +2543,7 @@ class Ebook {
     required this.coverImage,
     required this.storyIds,
     required this.createdAt,
+    this.templateId = 'classic',
   });
 
   Map<String, dynamic> toFirestore() {
@@ -1691,6 +2555,7 @@ class Ebook {
       'coverImage': coverImage,
       'storyIds': storyIds,
       'createdAt': Timestamp.fromDate(createdAt),
+      'templateId': templateId,
     };
   }
 
@@ -1713,6 +2578,9 @@ class Ebook {
       createdAt: createdAt is Timestamp
           ? createdAt.toDate()
           : DateTime.fromMillisecondsSinceEpoch(0),
+      templateId: (data['templateId'] as String?)?.trim().isNotEmpty == true
+          ? (data['templateId'] as String).trim()
+          : 'classic',
     );
   }
 }
@@ -1721,6 +2589,8 @@ class StoryBookItem {
   final String id;
   final String title;
   final String body;
+  /// Ordered text + image blocks from Firestore (`content`); drives eBook layout.
+  final List<Map<String, dynamic>>? content;
   final String authorName;
   final String? coverUrl;
   final DateTime createdAt;
@@ -1731,6 +2601,7 @@ class StoryBookItem {
     required this.id,
     required this.title,
     required this.body,
+    this.content,
     required this.authorName,
     required this.coverUrl,
     required this.createdAt,
@@ -1755,6 +2626,7 @@ class StoryBookItem {
           ? (data['title'] as String).trim()
           : 'Untitled Story',
       body: (data['body'] as String?) ?? '',
+      content: StoryContentCodec.parseContent(data['content']),
       authorName: (data['authorName'] as String?) ?? 'PixiePen Author',
       coverUrl: data['coverUrl'] as String?,
       createdAt: createdAt is Timestamp
@@ -1769,42 +2641,28 @@ class StoryBookItem {
 class EbookPageData {
   final Ebook? ebook;
   final StoryBookItem? story;
-  final String text;
-  final int partNumber;
-  final int totalParts;
 
-  const EbookPageData._({
-    this.ebook,
-    this.story,
-    required this.text,
-    required this.partNumber,
-    required this.totalParts,
-  });
+  const EbookPageData._({this.ebook, this.story});
 
-  factory EbookPageData.cover(Ebook ebook) {
-    return EbookPageData._(
-      ebook: ebook,
-      text: '',
-      partNumber: 1,
-      totalParts: 1,
-    );
-  }
+  factory EbookPageData.cover(Ebook ebook) => EbookPageData._(ebook: ebook);
 
-  factory EbookPageData.story({
-    required StoryBookItem story,
-    required String text,
-    required int partNumber,
-    required int totalParts,
-  }) {
-    return EbookPageData._(
-      story: story,
-      text: text,
-      partNumber: partNumber,
-      totalParts: totalParts,
-    );
-  }
+  factory EbookPageData.chapter(StoryBookItem story) =>
+      EbookPageData._(story: story);
 
   bool get isCover => ebook != null;
+}
 
-  String? get imageUrl => isCover ? ebook?.coverImage : story?.coverUrl;
+/// Book cover, then one horizontal page per story (each story scrolls internally).
+List<EbookPageData> buildEbookPages(Ebook ebook, List<StoryBookItem> stories) {
+  return [
+    EbookPageData.cover(ebook),
+    for (final s in stories) EbookPageData.chapter(s),
+  ];
+}
+
+/// Same ordered blocks as the write screen / Firestore `content` field.
+List<Map<String, dynamic>> ebookStoryBlocks(StoryBookItem story) {
+  final c = story.content;
+  if (c != null && c.isNotEmpty) return c;
+  return [StoryContentCodec.textBlock(story.body)];
 }
