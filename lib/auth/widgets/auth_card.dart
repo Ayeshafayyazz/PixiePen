@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_custom_clippers/flutter_custom_clippers.dart';
@@ -13,12 +15,24 @@ class AuthCard extends StatefulWidget {
 }
 
 class _AuthCardState extends State<AuthCard> {
+  static const _kSignupParentEmailField = 'signup_parent_email';
+  static const _kChildLoginParentEmailField = 'child_login_parent_email';
+  static const _kLoginEmailField = 'login_email';
+  static const _kSignupEmailField = 'signup_email';
+
   final _formKey = GlobalKey<FormState>();
   final _authService = AuthService();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
-  final _usernameController = TextEditingController();
+  final _signupChildUsernameController = TextEditingController();
+  final _signupParentUsernameController = TextEditingController();
+  final _signupChildEmailController = TextEditingController();
+  final _signupParentEmailController = TextEditingController();
+  final _signupChildPasswordController = TextEditingController();
+  final _signupParentPasswordController = TextEditingController();
+  final _signupChildConfirmPasswordController = TextEditingController();
+  final _signupParentConfirmPasswordController = TextEditingController();
   final _parentEmailController = TextEditingController();
   final _childLoginParentEmailController = TextEditingController();
   final _childLoginUsernameController = TextEditingController();
@@ -27,14 +41,73 @@ class _AuthCardState extends State<AuthCard> {
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
   String _role = 'child';
+  final Map<String, String?> _emailFieldErrors = {};
+  final Map<String, Timer> _emailValidationTimers = {};
+  final Map<String, int> _emailValidationRunIds = {};
   /// Sign-up: child uses parent email + username only (synthetic Auth email under the hood).
   bool _childNoOwnEmail = false;
   /// Login: child signs in with parent email + username + password.
   bool _childUsernameLogin = false;
 
   bool _isValidEmail(String value) {
-    final emailRegex = RegExp(r'^[\w-.]+@([\w-]+\.)+[\w-]{2,}$');
-    return emailRegex.hasMatch(value.trim());
+    return AuthService.isValidEmailFormat(value);
+  }
+
+  Future<bool> _ensureDomainIsValid(String email, {required String label}) async {
+    final domainStatus = await AuthService.hasResolvableEmailDomain(email);
+    if (domainStatus == false) {
+      if (!mounted) return false;
+      final normalizedLabel = label.trim().isEmpty ? 'email' : '$label email';
+      setState(() {
+        _errorMessage =
+            'Incorrect $normalizedLabel domain. Please check and try again.';
+      });
+      return false;
+    }
+    return true;
+  }
+
+  void _onEmailChangedRealtime({
+    required String fieldKey,
+    required String value,
+    required String label,
+  }) {
+    _emailValidationTimers[fieldKey]?.cancel();
+
+    final normalized = value.trim().toLowerCase();
+    if (normalized.isEmpty || !normalized.contains('@')) {
+      if (_emailFieldErrors[fieldKey] != null && mounted) {
+        setState(() => _emailFieldErrors[fieldKey] = null);
+      }
+      return;
+    }
+
+    final runId = (_emailValidationRunIds[fieldKey] ?? 0) + 1;
+    _emailValidationRunIds[fieldKey] = runId;
+
+    _emailValidationTimers[fieldKey] = Timer(
+      const Duration(milliseconds: 450),
+      () async {
+        final normalizedLabel = label.trim().isEmpty ? 'email' : '$label email';
+        if (!AuthService.isValidEmailFormat(normalized)) {
+          if (!mounted || _emailValidationRunIds[fieldKey] != runId) return;
+          setState(() {
+            _emailFieldErrors[fieldKey] = 'Enter a valid $normalizedLabel';
+          });
+          return;
+        }
+
+        final domainStatus = await AuthService.hasResolvableEmailDomain(
+          normalized,
+        );
+        if (!mounted || _emailValidationRunIds[fieldKey] != runId) return;
+        setState(() {
+          _emailFieldErrors[fieldKey] = domainStatus == false
+              ? 'Incorrect $normalizedLabel domain'
+              : null;
+        });
+      },
+    );
   }
 
   @override
@@ -42,12 +115,38 @@ class _AuthCardState extends State<AuthCard> {
     _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
-    _usernameController.dispose();
+    _signupChildUsernameController.dispose();
+    _signupParentUsernameController.dispose();
+    _signupChildEmailController.dispose();
+    _signupParentEmailController.dispose();
+    _signupChildPasswordController.dispose();
+    _signupParentPasswordController.dispose();
+    _signupChildConfirmPasswordController.dispose();
+    _signupParentConfirmPasswordController.dispose();
     _parentEmailController.dispose();
     _childLoginParentEmailController.dispose();
     _childLoginUsernameController.dispose();
+    for (final timer in _emailValidationTimers.values) {
+      timer.cancel();
+    }
     super.dispose();
   }
+
+  TextEditingController get _signupUsernameController =>
+      _role == 'parent'
+          ? _signupParentUsernameController
+          : _signupChildUsernameController;
+
+  TextEditingController get _signupEmailController =>
+      _role == 'parent' ? _signupParentEmailController : _signupChildEmailController;
+
+  TextEditingController get _signupPasswordController => _role == 'parent'
+      ? _signupParentPasswordController
+      : _signupChildPasswordController;
+
+  TextEditingController get _signupConfirmPasswordController => _role == 'parent'
+      ? _signupParentConfirmPasswordController
+      : _signupChildConfirmPasswordController;
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
@@ -59,6 +158,20 @@ class _AuthCardState extends State<AuthCard> {
 
     try {
       if (widget.isLogin) {
+        if (_childUsernameLogin) {
+          final ok = await _ensureDomainIsValid(
+            _childLoginParentEmailController.text.trim(),
+            label: 'parent',
+          );
+          if (!ok) return;
+        } else {
+          final ok = await _ensureDomainIsValid(
+            _emailController.text.trim(),
+            label: '',
+          );
+          if (!ok) return;
+        }
+
         final UserCredential credential;
         if (_childUsernameLogin) {
           credential = await _authService.signInChildNoOwnEmail(
@@ -97,14 +210,23 @@ class _AuthCardState extends State<AuthCard> {
           );
         }
       } else {
-        if (_passwordController.text != _confirmPasswordController.text) {
+        final signupUsername = _signupUsernameController.text.trim();
+        final signupEmail = _signupEmailController.text.trim();
+        final signupPassword = _signupPasswordController.text;
+        final signupConfirmPassword = _signupConfirmPasswordController.text;
+        if (signupPassword != signupConfirmPassword) {
           throw 'Passwords do not match';
         }
         if (_role == 'child' && _childNoOwnEmail) {
+          final ok = await _ensureDomainIsValid(
+            _parentEmailController.text.trim(),
+            label: 'parent',
+          );
+          if (!ok) return;
           final cred = await _authService.signUpChildNoOwnEmail(
             parentEmail: _parentEmailController.text,
-            username: _usernameController.text,
-            password: _passwordController.text,
+            username: signupUsername,
+            password: signupPassword,
           );
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -125,10 +247,12 @@ class _AuthCardState extends State<AuthCard> {
             );
           }
         } else {
+          final ok = await _ensureDomainIsValid(signupEmail, label: '');
+          if (!ok) return;
           await _authService.signUp(
-            _emailController.text,
-            _passwordController.text,
-            username: _usernameController.text.trim(),
+            signupEmail,
+            signupPassword,
+            username: signupUsername,
             role: _role,
             parentEmail:
                 _role == 'child' ? _parentEmailController.text.trim() : null,
@@ -170,6 +294,13 @@ class _AuthCardState extends State<AuthCard> {
     if (!_isValidEmail(email)) {
       setState(() {
         _errorMessage = 'Enter a valid email address';
+      });
+      return;
+    }
+    final domainStatus = await AuthService.hasResolvableEmailDomain(email);
+    if (domainStatus == false) {
+      setState(() {
+        _errorMessage = 'Incorrect email domain. Please check and try again.';
       });
       return;
     }
@@ -246,6 +377,9 @@ class _AuthCardState extends State<AuthCard> {
                               : () => setState(() {
                                     _childUsernameLogin = !_childUsernameLogin;
                                     _errorMessage = null;
+                                    _emailFieldErrors[_kLoginEmailField] = null;
+                                    _emailFieldErrors[_kChildLoginParentEmailField] =
+                                        null;
                                   }),
                           child: Text(
                             _childUsernameLogin
@@ -261,7 +395,7 @@ class _AuthCardState extends State<AuthCard> {
                       ),
                     if (!widget.isLogin)
                       TextFormField(
-                        controller: _usernameController,
+                        controller: _signupUsernameController,
                         decoration: const InputDecoration(
                           hintText: 'User Name',
                           prefixIcon: Icon(Icons.person_outline),
@@ -291,7 +425,10 @@ class _AuthCardState extends State<AuthCard> {
                               icon: Icons.face,
                               label: 'Child',
                               selected: _role == 'child',
-                              onTap: () => setState(() => _role = 'child'),
+                              onTap: () => setState(() {
+                                _role = 'child';
+                                _emailFieldErrors[_kSignupEmailField] = null;
+                              }),
                             ),
                           ),
                           const SizedBox(width: 8),
@@ -303,6 +440,8 @@ class _AuthCardState extends State<AuthCard> {
                               onTap: () => setState(() {
                                 _role = 'parent';
                                 _childNoOwnEmail = false;
+                                _emailFieldErrors[_kSignupParentEmailField] = null;
+                                _emailFieldErrors[_kSignupEmailField] = null;
                               }),
                             ),
                           ),
@@ -312,9 +451,15 @@ class _AuthCardState extends State<AuthCard> {
                         const SizedBox(height: 10),
                         TextFormField(
                           controller: _parentEmailController,
-                          decoration: const InputDecoration(
+                          onChanged: (value) => _onEmailChangedRealtime(
+                            fieldKey: _kSignupParentEmailField,
+                            value: value,
+                            label: 'parent',
+                          ),
+                          decoration: InputDecoration(
                             hintText: 'Parent Email',
-                            prefixIcon: Icon(Icons.family_restroom),
+                            prefixIcon: const Icon(Icons.family_restroom),
+                            errorText: _emailFieldErrors[_kSignupParentEmailField],
                           ),
                           keyboardType: TextInputType.emailAddress,
                           validator: (value) {
@@ -325,28 +470,52 @@ class _AuthCardState extends State<AuthCard> {
                             if (!_isValidEmail(value)) {
                               return 'Enter a valid parent email';
                             }
+                            final liveError =
+                                _emailFieldErrors[_kSignupParentEmailField];
+                            if (liveError != null) return liveError;
                             return null;
                           },
                         ),
                         const SizedBox(height: 6),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: TextButton(
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
                             onPressed: _isLoading
                                 ? null
                                 : () => setState(() {
                                       _childNoOwnEmail = !_childNoOwnEmail;
                                       _errorMessage = null;
                                     }),
-                            child: Text(
+                            icon: Icon(
+                              _childNoOwnEmail
+                                  ? Icons.check_circle_outline
+                                  : Icons.touch_app_outlined,
+                              size: 18,
+                            ),
+                            label: Text(
                               _childNoOwnEmail
                                   ? 'I have my own email'
-                                  : "I don't have my own email (parent + username)",
+                                  : "Tap here: I don't have my own email (use parent email + username)",
                               textAlign: TextAlign.left,
                               style: const TextStyle(
-                                color: Color(0xFF7B1FA2),
                                 fontWeight: FontWeight.w600,
                                 fontSize: 13,
+                              ),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              alignment: Alignment.centerLeft,
+                              side: BorderSide(
+                                color: const Color(0xFF7B1FA2).withValues(
+                                  alpha: 0.6,
+                                ),
+                              ),
+                              foregroundColor: const Color(0xFF7B1FA2),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 10,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
                               ),
                             ),
                           ),
@@ -356,10 +525,17 @@ class _AuthCardState extends State<AuthCard> {
                     if (widget.isLogin && _childUsernameLogin) ...[
                       TextFormField(
                         controller: _childLoginParentEmailController,
+                        onChanged: (value) => _onEmailChangedRealtime(
+                          fieldKey: _kChildLoginParentEmailField,
+                          value: value,
+                          label: 'parent',
+                        ),
                         keyboardType: TextInputType.emailAddress,
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           hintText: "Parent's email",
-                          prefixIcon: Icon(Icons.family_restroom),
+                          prefixIcon: const Icon(Icons.family_restroom),
+                          errorText:
+                              _emailFieldErrors[_kChildLoginParentEmailField],
                         ),
                         validator: (value) {
                           if (!_childUsernameLogin) return null;
@@ -369,6 +545,9 @@ class _AuthCardState extends State<AuthCard> {
                           if (!_isValidEmail(value)) {
                             return 'Enter a valid email';
                           }
+                          final liveError =
+                              _emailFieldErrors[_kChildLoginParentEmailField];
+                          if (liveError != null) return liveError;
                           return null;
                         },
                       ),
@@ -398,9 +577,15 @@ class _AuthCardState extends State<AuthCard> {
                     ] else if (widget.isLogin) ...[
                       TextFormField(
                         controller: _emailController,
-                        decoration: const InputDecoration(
+                        onChanged: (value) => _onEmailChangedRealtime(
+                          fieldKey: _kLoginEmailField,
+                          value: value,
+                          label: '',
+                        ),
+                        decoration: InputDecoration(
                           hintText: 'Email',
-                          prefixIcon: Icon(Icons.email_outlined),
+                          prefixIcon: const Icon(Icons.email_outlined),
+                          errorText: _emailFieldErrors[_kLoginEmailField],
                         ),
                         keyboardType: TextInputType.emailAddress,
                         validator: (value) {
@@ -411,6 +596,8 @@ class _AuthCardState extends State<AuthCard> {
                           if (!_isValidEmail(value)) {
                             return 'Enter a valid email address';
                           }
+                          final liveError = _emailFieldErrors[_kLoginEmailField];
+                          if (liveError != null) return liveError;
                           return null;
                         },
                       ),
@@ -419,10 +606,16 @@ class _AuthCardState extends State<AuthCard> {
                         (_role == 'parent' ||
                             (_role == 'child' && !_childNoOwnEmail))) ...[
                       TextFormField(
-                        controller: _emailController,
-                        decoration: const InputDecoration(
+                        controller: _signupEmailController,
+                        onChanged: (value) => _onEmailChangedRealtime(
+                          fieldKey: _kSignupEmailField,
+                          value: value,
+                          label: '',
+                        ),
+                        decoration: InputDecoration(
                           hintText: 'Email',
-                          prefixIcon: Icon(Icons.email_outlined),
+                          prefixIcon: const Icon(Icons.email_outlined),
+                          errorText: _emailFieldErrors[_kSignupEmailField],
                         ),
                         keyboardType: TextInputType.emailAddress,
                         validator: (value) {
@@ -432,13 +625,16 @@ class _AuthCardState extends State<AuthCard> {
                           if (!_isValidEmail(value)) {
                             return 'Enter a valid email address';
                           }
+                          final liveError = _emailFieldErrors[_kSignupEmailField];
+                          if (liveError != null) return liveError;
                           return null;
                         },
                       ),
                       const SizedBox(height: 10),
                     ],
                     TextFormField(
-                      controller: _passwordController,
+                      controller:
+                          widget.isLogin ? _passwordController : _signupPasswordController,
                       obscureText: _obscurePassword,
                       decoration: InputDecoration(
                         hintText: 'Password',
@@ -469,7 +665,7 @@ class _AuthCardState extends State<AuthCard> {
                     if (!widget.isLogin) ...[
                       const SizedBox(height: 10),
                       TextFormField(
-                        controller: _confirmPasswordController,
+                        controller: _signupConfirmPasswordController,
                         obscureText: _obscureConfirmPassword,
                         decoration: InputDecoration(
                           hintText: 'Confirm Password',
@@ -487,7 +683,7 @@ class _AuthCardState extends State<AuthCard> {
                           ),
                         ),
                         validator: (value) {
-                          if (value != _passwordController.text) {
+                          if (value != _signupPasswordController.text) {
                             return 'Passwords do not match';
                           }
                           return null;

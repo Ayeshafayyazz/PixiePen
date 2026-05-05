@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:crypto/crypto.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -217,6 +218,66 @@ class AuthService {
         return 'An account already exists with this email.';
       default:
         return 'Something went wrong. Please try again.';
+    }
+  }
+
+  static bool isValidEmailFormat(String value) {
+    final emailRegex = RegExp(r'^[\w-.]+@([\w-]+\.)+[\w-]{2,}$');
+    return emailRegex.hasMatch(value.trim());
+  }
+
+  /// Returns:
+  /// - true: domain resolves for email delivery checks
+  /// - false: domain appears invalid/non-existent
+  /// - null: could not verify (network/offline/server issue)
+  static Future<bool?> hasResolvableEmailDomain(String email) async {
+    final normalized = email.trim().toLowerCase();
+    if (!isValidEmailFormat(normalized)) return false;
+
+    final atIndex = normalized.lastIndexOf('@');
+    if (atIndex <= 0 || atIndex == normalized.length - 1) return false;
+    final domain = normalized.substring(atIndex + 1);
+    if (domain.startsWith('.') ||
+        domain.endsWith('.') ||
+        domain.contains('..')) {
+      return false;
+    }
+
+    final mx = await _queryDnsHasAnswer(domain: domain, type: 'MX');
+    if (mx == true) return true;
+    if (mx == null) return null;
+
+    final a = await _queryDnsHasAnswer(domain: domain, type: 'A');
+    if (a == true) return true;
+    if (a == null) return null;
+
+    return false;
+  }
+
+  static Future<bool?> _queryDnsHasAnswer({
+    required String domain,
+    required String type,
+  }) async {
+    try {
+      final uri = Uri.https('dns.google', '/resolve', {
+        'name': domain,
+        'type': type,
+      });
+      final response = await http.get(uri).timeout(const Duration(seconds: 4));
+      if (response.statusCode != 200) return null;
+
+      final payload = jsonDecode(response.body);
+      if (payload is! Map<String, dynamic>) return null;
+
+      final status = payload['Status'];
+      if (status is int && status == 3) return false; // NXDOMAIN
+      if (status is int && status != 0) return null;
+
+      final answer = payload['Answer'];
+      if (answer is List) return answer.isNotEmpty;
+      return false;
+    } catch (_) {
+      return null;
     }
   }
 }
