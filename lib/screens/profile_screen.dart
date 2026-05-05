@@ -581,8 +581,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (username == null || username.isEmpty) {
         await docRef.set({'username': fallbackName}, SetOptions(merge: true));
       }
+      final preserveContactEmail = data['childLoginWithoutOwnEmail'] == true;
       await docRef.set({
-        'email': _user!.email?.trim().toLowerCase(),
+        if (!preserveContactEmail)
+          'email': _user!.email?.trim().toLowerCase(),
         if (data['role'] == null) 'role': 'child',
         if (data['avatarId'] == null) 'avatarId': _avatarChoices.first.id,
       }, SetOptions(merge: true));
@@ -705,8 +707,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _buildHeader(BuildContext context, String? userId) {
-    final String email = _user?.email ?? "no-email@example.com";
-    final String handle = "@${email.split('@').first}";
+    final String authFallbackEmail = _user?.email ?? "no-email@example.com";
 
     return Container(
       padding: const EdgeInsets.only(top: 50, bottom: 30),
@@ -752,9 +753,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 : const Stream.empty(),
             builder: (context, userDocSnap) {
               String displayName = "Guest User";
-
+              var contactEmail = authFallbackEmail;
               if (userDocSnap.hasData && userDocSnap.data!.exists) {
                 final data = userDocSnap.data!.data() ?? {};
+                final stored = (data['email'] as String?)?.trim();
+                if (stored != null && stored.isNotEmpty) {
+                  contactEmail = stored;
+                }
                 final dynamic usernameField =
                     data['username'] ?? data['displayName'];
                 if (usernameField is String &&
@@ -764,16 +769,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     _user!.displayName!.trim().isNotEmpty) {
                   displayName = _user!.displayName!.trim();
                 } else {
-                  displayName = email.split('@').first;
+                  displayName = contactEmail.split('@').first;
                 }
               } else {
                 if (_user?.displayName != null &&
                     _user!.displayName!.trim().isNotEmpty) {
                   displayName = _user!.displayName!.trim();
                 } else {
-                  displayName = email.split('@').first;
+                  displayName = contactEmail.split('@').first;
                 }
               }
+              final handle = '@${contactEmail.split('@').first}';
 
               return Column(
                 children: [

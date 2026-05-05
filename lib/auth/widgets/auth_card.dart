@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_custom_clippers/flutter_custom_clippers.dart';
 import '../../routes.dart';
@@ -19,11 +20,17 @@ class _AuthCardState extends State<AuthCard> {
   final _confirmPasswordController = TextEditingController();
   final _usernameController = TextEditingController();
   final _parentEmailController = TextEditingController();
+  final _childLoginParentEmailController = TextEditingController();
+  final _childLoginUsernameController = TextEditingController();
   bool _isLoading = false;
   String? _errorMessage;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
   String _role = 'child';
+  /// Sign-up: child uses parent email + username only (synthetic Auth email under the hood).
+  bool _childNoOwnEmail = false;
+  /// Login: child signs in with parent email + username + password.
+  bool _childUsernameLogin = false;
 
   bool _isValidEmail(String value) {
     final emailRegex = RegExp(r'^[\w-.]+@([\w-]+\.)+[\w-]{2,}$');
@@ -37,6 +44,8 @@ class _AuthCardState extends State<AuthCard> {
     _confirmPasswordController.dispose();
     _usernameController.dispose();
     _parentEmailController.dispose();
+    _childLoginParentEmailController.dispose();
+    _childLoginUsernameController.dispose();
     super.dispose();
   }
 
@@ -50,16 +59,31 @@ class _AuthCardState extends State<AuthCard> {
 
     try {
       if (widget.isLogin) {
-        final credential = await _authService.signIn(
-          _emailController.text,
-          _passwordController.text,
-        );
+        final UserCredential credential;
+        if (_childUsernameLogin) {
+          credential = await _authService.signInChildNoOwnEmail(
+            parentEmail: _childLoginParentEmailController.text,
+            username: _childLoginUsernameController.text,
+            password: _passwordController.text,
+          );
+        } else {
+          credential = await _authService.signIn(
+            _emailController.text,
+            _passwordController.text,
+          );
+        }
         final user = credential.user;
         await user?.reload();
 
-        final isVerified = await _authService.reloadAndCheckEmailVerified();
+        final isVerified = await _authService.reloadAndCheckEffectiveVerified();
         if (!isVerified) {
           if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(AuthService.emailNotVerifiedYet),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
             Navigator.pushReplacementNamed(context, AppRoutes.verifyEmail);
           }
           return;
@@ -76,23 +100,49 @@ class _AuthCardState extends State<AuthCard> {
         if (_passwordController.text != _confirmPasswordController.text) {
           throw 'Passwords do not match';
         }
-        await _authService.signUp(
-          _emailController.text,
-          _passwordController.text,
-          username: _usernameController.text.trim(),
-          role: _role,
-          parentEmail:
-              _role == 'child' ? _parentEmailController.text.trim() : null,
-        );
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content:
-                  Text('Verification email sent. Please check your inbox.'),
-              backgroundColor: Colors.green,
-            ),
+        if (_role == 'child' && _childNoOwnEmail) {
+          final cred = await _authService.signUpChildNoOwnEmail(
+            parentEmail: _parentEmailController.text,
+            username: _usernameController.text,
+            password: _passwordController.text,
           );
-          Navigator.pushReplacementNamed(context, AppRoutes.verifyEmail);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Welcome! Your parent email is saved for safety notices.',
+                ),
+                backgroundColor: Colors.green,
+              ),
+            );
+            final role = await _authService.readRole(cred.user?.uid);
+            if (!mounted) return;
+            Navigator.pushReplacementNamed(
+              context,
+              role == 'parent'
+                  ? AppRoutes.parentApprovals
+                  : AppRoutes.community,
+            );
+          }
+        } else {
+          await _authService.signUp(
+            _emailController.text,
+            _passwordController.text,
+            username: _usernameController.text.trim(),
+            role: _role,
+            parentEmail:
+                _role == 'child' ? _parentEmailController.text.trim() : null,
+          );
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content:
+                    Text('Verification email sent. Please check your inbox.'),
+                backgroundColor: Colors.green,
+              ),
+            );
+            Navigator.pushReplacementNamed(context, AppRoutes.verifyEmail);
+          }
         }
       }
     } catch (e) {
@@ -183,9 +233,32 @@ class _AuthCardState extends State<AuthCard> {
               padding: const EdgeInsets.all(20),
               child: Form(
                 key: _formKey,
-                child: Column(
-                  children: [
+                child: SingleChildScrollView(
+                  child: Column(
+                    children: [
                     const SizedBox(height: 20),
+                    if (widget.isLogin)
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton(
+                          onPressed: _isLoading
+                              ? null
+                              : () => setState(() {
+                                    _childUsernameLogin = !_childUsernameLogin;
+                                    _errorMessage = null;
+                                  }),
+                          child: Text(
+                            _childUsernameLogin
+                                ? 'Use email & password instead'
+                                : 'Child: sign in with parent email + username',
+                            style: const TextStyle(
+                              color: Color(0xFF7B1FA2),
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ),
                     if (!widget.isLogin)
                       TextFormField(
                         controller: _usernameController,
@@ -197,6 +270,14 @@ class _AuthCardState extends State<AuthCard> {
                           if (!widget.isLogin &&
                               (value == null || value.isEmpty)) {
                             return 'Please enter a username';
+                          }
+                          if (!widget.isLogin &&
+                              _role == 'child' &&
+                              _childNoOwnEmail &&
+                              AuthService.normalizeChildUsername(value ?? '')
+                                      .length <
+                                  3) {
+                            return 'Username: at least 3 letters or numbers';
                           }
                           return null;
                         },
@@ -219,7 +300,10 @@ class _AuthCardState extends State<AuthCard> {
                               icon: Icons.family_restroom,
                               label: 'Parent',
                               selected: _role == 'parent',
-                              onTap: () => setState(() => _role = 'parent'),
+                              onTap: () => setState(() {
+                                _role = 'parent';
+                                _childNoOwnEmail = false;
+                              }),
                             ),
                           ),
                         ],
@@ -244,27 +328,115 @@ class _AuthCardState extends State<AuthCard> {
                             return null;
                           },
                         ),
+                        const SizedBox(height: 6),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton(
+                            onPressed: _isLoading
+                                ? null
+                                : () => setState(() {
+                                      _childNoOwnEmail = !_childNoOwnEmail;
+                                      _errorMessage = null;
+                                    }),
+                            child: Text(
+                              _childNoOwnEmail
+                                  ? 'I have my own email'
+                                  : "I don't have my own email (parent + username)",
+                              textAlign: TextAlign.left,
+                              style: const TextStyle(
+                                color: Color(0xFF7B1FA2),
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                        ),
                       ],
                     ],
-                    const SizedBox(height: 10),
-                    TextFormField(
-                      controller: _emailController,
-                      decoration: const InputDecoration(
-                        hintText: 'Email',
-                        prefixIcon: Icon(Icons.email_outlined),
+                    if (widget.isLogin && _childUsernameLogin) ...[
+                      TextFormField(
+                        controller: _childLoginParentEmailController,
+                        keyboardType: TextInputType.emailAddress,
+                        decoration: const InputDecoration(
+                          hintText: "Parent's email",
+                          prefixIcon: Icon(Icons.family_restroom),
+                        ),
+                        validator: (value) {
+                          if (!_childUsernameLogin) return null;
+                          if (value == null || value.trim().isEmpty) {
+                            return "Enter your parent's email";
+                          }
+                          if (!_isValidEmail(value)) {
+                            return 'Enter a valid email';
+                          }
+                          return null;
+                        },
                       ),
-                      keyboardType: TextInputType.emailAddress,
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Please enter an email';
-                        }
-                        if (!_isValidEmail(value)) {
-                          return 'Enter a valid email address';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 10),
+                      const SizedBox(height: 10),
+                      TextFormField(
+                        controller: _childLoginUsernameController,
+                        textCapitalization: TextCapitalization.none,
+                        autocorrect: false,
+                        decoration: const InputDecoration(
+                          hintText: 'Your username',
+                          prefixIcon: Icon(Icons.person_outline),
+                        ),
+                        validator: (value) {
+                          if (!_childUsernameLogin) return null;
+                          if (value == null || value.trim().isEmpty) {
+                            return 'Enter your username';
+                          }
+                          if (AuthService.normalizeChildUsername(value)
+                                  .length <
+                              3) {
+                            return 'At least 3 letters or numbers';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                    ] else if (widget.isLogin) ...[
+                      TextFormField(
+                        controller: _emailController,
+                        decoration: const InputDecoration(
+                          hintText: 'Email',
+                          prefixIcon: Icon(Icons.email_outlined),
+                        ),
+                        keyboardType: TextInputType.emailAddress,
+                        validator: (value) {
+                          if (_childUsernameLogin) return null;
+                          if (value == null || value.isEmpty) {
+                            return 'Please enter an email';
+                          }
+                          if (!_isValidEmail(value)) {
+                            return 'Enter a valid email address';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                    ] else if (!widget.isLogin &&
+                        (_role == 'parent' ||
+                            (_role == 'child' && !_childNoOwnEmail))) ...[
+                      TextFormField(
+                        controller: _emailController,
+                        decoration: const InputDecoration(
+                          hintText: 'Email',
+                          prefixIcon: Icon(Icons.email_outlined),
+                        ),
+                        keyboardType: TextInputType.emailAddress,
+                        validator: (value) {
+                          if (value == null || value.isEmpty) {
+                            return 'Please enter an email';
+                          }
+                          if (!_isValidEmail(value)) {
+                            return 'Enter a valid email address';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                    ],
                     TextFormField(
                       controller: _passwordController,
                       obscureText: _obscurePassword,
@@ -322,7 +494,7 @@ class _AuthCardState extends State<AuthCard> {
                         },
                       ),
                     ],
-                    if (widget.isLogin)
+                    if (widget.isLogin && !_childUsernameLogin)
                       Align(
                         alignment: Alignment.centerRight,
                         child: TextButton(
@@ -359,6 +531,7 @@ class _AuthCardState extends State<AuthCard> {
                                   fontSize: 16, color: Colors.white)),
                     ),
                   ],
+                  ),
                 ),
               ),
             ),

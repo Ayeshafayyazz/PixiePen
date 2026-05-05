@@ -58,14 +58,16 @@ class _SplashScreenState extends State<SplashScreen>
       final freshUser = FirebaseAuth.instance.currentUser;
       if (!mounted) return;
 
-      // Check verified on fresh user directly
-      if (freshUser == null || !freshUser.emailVerified) {
+      final authService = AuthService();
+      final canEnter =
+          await authService.canProceedPastEmailVerification(freshUser);
+      if (!mounted) return;
+      if (freshUser == null || !canEnter) {
         Navigator.pushReplacementNamed(context, AppRoutes.verifyEmail);
         return;
       }
 
-      // User is verified — read role and navigate
-      final authService = AuthService();
+      // User is verified (or no-email child) — read role and navigate
       final role = await authService.readRole(freshUser.uid);
       if (!mounted) return;
 

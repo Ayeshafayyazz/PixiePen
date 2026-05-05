@@ -16,11 +16,30 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
   bool _isChecking = false;
   bool _isResending = false;
 
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _autoSkipIfAllowed());
+  }
+
+  Future<void> _autoSkipIfAllowed() async {
+    final ok = await _authService.reloadAndCheckEffectiveVerified();
+    if (!ok || !mounted) return;
+    final role = await _authService.readRole(
+      FirebaseAuth.instance.currentUser?.uid,
+    );
+    if (!mounted) return;
+    Navigator.pushReplacementNamed(
+      context,
+      role == 'parent' ? AppRoutes.parentApprovals : AppRoutes.community,
+    );
+  }
+
   Future<void> _checkVerification() async {
     setState(() => _isChecking = true);
 
     try {
-      final isVerified = await _authService.reloadAndCheckEmailVerified();
+      final isVerified = await _authService.reloadAndCheckEffectiveVerified();
       if (!mounted) return;
 
       if (!isVerified) {
@@ -52,6 +71,20 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
   }
 
   Future<void> _resendEmail() async {
+    final u = FirebaseAuth.instance.currentUser;
+    if (u != null &&
+        await _authService.shouldSkipEmailVerificationGate(u)) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'No inbox is linked for this account. Tap below if you are verified.',
+          ),
+        ),
+      );
+      return;
+    }
+
     setState(() => _isResending = true);
 
     try {
