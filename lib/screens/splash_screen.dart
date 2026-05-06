@@ -3,6 +3,7 @@ import 'package:animated_text_kit/animated_text_kit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../routes.dart';
+import '../shared/utils/app_navigator.dart';
 import '../auth/services/auth_service.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -63,7 +64,7 @@ class _SplashScreenState extends State<SplashScreen>
           await authService.canProceedPastEmailVerification(freshUser);
       if (!mounted) return;
       if (freshUser == null || !canEnter) {
-        Navigator.pushReplacementNamed(context, AppRoutes.verifyEmail);
+        AppNavigator.pushReplacementNamed(context, AppRoutes.verifyEmail);
         return;
       }
 
@@ -71,16 +72,16 @@ class _SplashScreenState extends State<SplashScreen>
       final role = await authService.readRole(freshUser.uid);
       if (!mounted) return;
 
-      Navigator.pushReplacementNamed(
+      AppNavigator.pushReplacementNamed(
         context,
         role == 'parent' ? AppRoutes.parentApprovals : AppRoutes.community,
       );
     } else if (onboardingCompleted) {
       if (!mounted) return;
-      Navigator.pushReplacementNamed(context, AppRoutes.login);
+      AppNavigator.pushReplacementNamed(context, AppRoutes.login);
     } else {
       if (!mounted) return;
-      Navigator.pushReplacementNamed(context, AppRoutes.onboarding);
+      AppNavigator.pushReplacementNamed(context, AppRoutes.onboarding);
     }
   }
 

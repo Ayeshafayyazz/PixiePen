@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../routes.dart';
+import '../shared/utils/app_navigator.dart';
+import '../shared/utils/responsive.dart';
 import 'widgets/auth_card.dart';
 
 class SignUpScreen extends StatelessWidget {
@@ -12,7 +14,7 @@ class SignUpScreen extends StatelessWidget {
       resizeToAvoidBottomInset: false,
       body: LayoutBuilder(
         builder: (context, constraints) {
-          final size = MediaQuery.sizeOf(context);
+          final size = Responsive.size(context);
           final safePadding = MediaQuery.paddingOf(context);
           final availableHeight =
               constraints.maxHeight - safePadding.top - safePadding.bottom;
@@ -74,7 +76,7 @@ class SignUpScreen extends StatelessWidget {
                           SizedBox(height: accountGap),
                           GestureDetector(
                             onTap: () {
-                              Navigator.pushReplacementNamed(
+                              AppNavigator.pushReplacementNamed(
                                 context,
                                 AppRoutes.login,
                               );

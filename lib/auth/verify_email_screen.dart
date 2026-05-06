@@ -2,6 +2,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../routes.dart';
+import '../shared/utils/app_navigator.dart';
+import '../shared/utils/message_helper.dart';
 import 'services/auth_service.dart';
 
 class VerifyEmailScreen extends StatefulWidget {
@@ -29,7 +31,7 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
       FirebaseAuth.instance.currentUser?.uid,
     );
     if (!mounted) return;
-    Navigator.pushReplacementNamed(
+    AppNavigator.pushReplacementNamed(
       context,
       role == 'parent' ? AppRoutes.parentApprovals : AppRoutes.community,
     );
@@ -43,9 +45,7 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
       if (!mounted) return;
 
       if (!isVerified) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Email is not verified yet.')),
-        );
+        MessageHelper.error(context, 'Email is not verified yet.');
         return;
       }
 
@@ -54,15 +54,13 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
       );
       if (!mounted) return;
 
-      Navigator.pushReplacementNamed(
+      AppNavigator.pushReplacementNamed(
         context,
         role == 'parent' ? AppRoutes.parentApprovals : AppRoutes.community,
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(e.toString())));
+      MessageHelper.error(context, e.toString());
     } finally {
       if (mounted) {
         setState(() => _isChecking = false);
@@ -75,12 +73,9 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
     if (u != null &&
         await _authService.shouldSkipEmailVerificationGate(u)) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'No inbox is linked for this account. Tap below if you are verified.',
-          ),
-        ),
+      MessageHelper.error(
+        context,
+        'No inbox is linked for this account. Tap below if you are verified.',
       );
       return;
     }
@@ -90,14 +85,10 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
     try {
       await _authService.sendEmailVerification();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Verification email sent again.')),
-      );
+      MessageHelper.success(context, 'Verification email sent again.');
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(e.toString())));
+      MessageHelper.error(context, e.toString());
     } finally {
       if (mounted) {
         setState(() => _isResending = false);
@@ -108,7 +99,7 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
   Future<void> _useAnotherAccount() async {
     await _authService.signOut();
     if (!mounted) return;
-    Navigator.pushReplacementNamed(context, AppRoutes.login);
+    AppNavigator.pushReplacementNamed(context, AppRoutes.login);
   }
 
   @override

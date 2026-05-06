@@ -10,6 +10,10 @@ import 'my_stories_screen.dart';
 import 'profile_screen.dart';
 import 'theme.dart';
 import 'write_story_screen.dart';
+import '../controllers/story_controller.dart';
+import '../data/mappers/story_post_mapper.dart';
+import '../domain/models/story_post.dart';
+import '../services/story_service.dart';
 import '../services/content_moderation_service.dart';
 import '../widgets/moderation_ui.dart';
 import '../utils/story_content.dart';
@@ -19,576 +23,6 @@ DateTime _readTimestamp(dynamic value) {
   if (value is Timestamp) return value.toDate();
   if (value is DateTime) return value;
   return DateTime.fromMillisecondsSinceEpoch(0);
-}
-
-/// =============================================================================
-/// FIRESTORE SERVICE
-/// =============================================================================
-
-class StoryService {
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
-
-  Future<void> toggleLike({
-    required String storyId,
-    required String userId,
-    required String userName,
-  }) async {
-    final ref = _db.collection('stories').doc(storyId);
-    final notificationRef = _db.collection('notifications').doc();
-    final likeEventRef = _db.collection('storyLikes').doc('${storyId}_$userId');
-
-    await _db.runTransaction((tx) async {
-      final snap = await tx.get(ref);
-      final data = snap.data() as Map<String, dynamic>;
-
-      final List likedBy = List.from(data['likedBy'] ?? []);
-      int likes = (data['likes'] ?? 0);
-      final ownerId = data['authorId'] as String?;
-      final title = (data['title'] as String?) ?? 'your story';
-      DocumentSnapshot<Map<String, dynamic>>? ownerSnap;
-      if (ownerId != null && ownerId != userId) {
-        ownerSnap = await tx.get(_db.collection('users').doc(ownerId));
-      }
-
-      if (likedBy.contains(userId)) {
-        likedBy.remove(userId);
-        likes--;
-        tx.delete(likeEventRef);
-      } else {
-        likedBy.add(userId);
-        likes++;
-        if (ownerId != null) {
-          tx.set(likeEventRef, {
-            'storyId': storyId,
-            'authorId': ownerId,
-            'userId': userId,
-            'userName': userName,
-            'createdAt': FieldValue.serverTimestamp(),
-          });
-        }
-
-        if (ownerId != null &&
-            ownerId != userId &&
-            _notificationsEnabled(ownerSnap?.data())) {
-          tx.set(notificationRef, {
-            'toUserId': ownerId,
-            'fromUserId': userId,
-            'fromUserName': userName,
-            'type': 'like',
-            'storyId': storyId,
-            'storyTitle': title,
-            'message': '$userName liked "$title"',
-            'isRead': false,
-            'createdAt': FieldValue.serverTimestamp(),
-          });
-        }
-      }
-
-      tx.set(
-          ref,
-          {
-            'likes': likes,
-            'likedBy': likedBy,
-          },
-          SetOptions(merge: true));
-    });
-  }
-
-  Future<bool> toggleSave({
-    required String storyId,
-    required String userId,
-  }) async {
-    final storyRef = _db.collection('stories').doc(storyId);
-    final savedRef = _db.collection('savedStories').doc('${userId}_$storyId');
-    final userRef = _db.collection('users').doc(userId);
-    var isNowSaved = false;
-
-    await _db.runTransaction((tx) async {
-      final userSnap = await tx.get(userRef);
-      final savedStoryIds = ((userSnap.data()?['savedStoryIds'] as List?) ??
-              const [])
-          .whereType<String>()
-          .toList();
-      final isSaved = savedStoryIds.contains(storyId);
-
-      if (isSaved) {
-        isNowSaved = false;
-        tx.set(
-          userRef,
-          {
-            'savedStoryIds': FieldValue.arrayRemove([storyId]),
-          },
-          SetOptions(merge: true),
-        );
-      } else {
-        isNowSaved = true;
-        tx.set(
-          userRef,
-          {
-            'savedStoryIds': FieldValue.arrayUnion([storyId]),
-          },
-          SetOptions(merge: true),
-        );
-      }
-    });
-
-    try {
-      if (!isNowSaved) {
-        await savedRef.delete();
-        await storyRef.set(
-          {
-            'saves': FieldValue.increment(-1),
-            'savedBy': FieldValue.arrayRemove([userId]),
-          },
-          SetOptions(merge: true),
-        );
-      } else {
-        final storySnap = await storyRef.get();
-        final data = storySnap.data();
-        if (data == null) {
-          throw StateError('This story is no longer available.');
-        }
-        await savedRef.set({
-          'storyId': storyId,
-          'userId': userId,
-          'authorId': data['authorId'] as String?,
-          'storyTitle': data['title'] as String? ?? 'Untitled',
-          'authorName': data['authorName'] as String? ?? 'Unknown',
-          'coverUrl': data['coverUrl'] as String? ?? '',
-          'savedAt': FieldValue.serverTimestamp(),
-        });
-        await storyRef.set(
-          {
-            'saves': FieldValue.increment(1),
-            'savedBy': FieldValue.arrayUnion([userId]),
-          },
-          SetOptions(merge: true),
-        );
-      }
-    } catch (error) {
-      debugPrint('Saved story mirror update skipped: $error');
-    }
-
-    return isNowSaved;
-  }
-
-  Future<void> addComment({
-    required String storyId,
-    required String userId,
-    required String userName,
-    required String text,
-  }) async {
-    final storyRef = _db.collection('stories').doc(storyId);
-    final storySnap = await storyRef.get();
-    final storyTitle = (storySnap.data()?['title'] as String?) ?? '';
-    final moderation = ContentModerationService().moderateWithSurface(
-      ModerationSurface.comment,
-      text,
-      storyExcerpt: storyTitle,
-    );
-    if (!moderation.isSafe) {
-      throw ArgumentError(ContentModerationService.childFriendlyWarning);
-    }
-
-    final commentRef = storyRef.collection('comments').doc();
-    final notificationRef = _db.collection('notifications').doc();
-
-    await _db.runTransaction((tx) async {
-      final storySnap = await tx.get(storyRef);
-      final storyData = storySnap.data() ?? {};
-      final ownerId = storyData['authorId'] as String?;
-      final title = (storyData['title'] as String?) ?? 'your story';
-      DocumentSnapshot<Map<String, dynamic>>? ownerSnap;
-      if (ownerId != null && ownerId != userId) {
-        ownerSnap = await tx.get(_db.collection('users').doc(ownerId));
-      }
-
-      tx.set(commentRef, {
-        'userId': userId,
-        'userName': userName,
-        'text': text,
-        'moderation': {
-          'isSafe': true,
-          'flagReason': null,
-        },
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-
-      tx.set(
-          storyRef,
-          {
-            'comments': FieldValue.increment(1),
-          },
-          SetOptions(merge: true));
-
-      if (ownerId != null &&
-          ownerId != userId &&
-          _notificationsEnabled(ownerSnap?.data())) {
-        tx.set(notificationRef, {
-          'toUserId': ownerId,
-          'fromUserId': userId,
-          'fromUserName': userName,
-          'type': 'comment',
-          'storyId': storyId,
-          'storyTitle': title,
-          'message': '$userName commented on "$title"',
-          'isRead': false,
-          'createdAt': FieldValue.serverTimestamp(),
-        });
-      }
-    });
-  }
-
-  Future<void> deleteComment({
-    required String storyId,
-    required String commentId,
-  }) async {
-    final storyRef = _db.collection('stories').doc(storyId);
-    final commentRef = storyRef.collection('comments').doc(commentId);
-
-    await _db.runTransaction((tx) async {
-      tx.delete(commentRef);
-      tx.set(
-          storyRef,
-          {
-            'comments': FieldValue.increment(-1),
-          },
-          SetOptions(merge: true));
-    });
-  }
-
-  Future<void> addCommentReply({
-    required String storyId,
-    required String commentId,
-    required String userId,
-    required String userName,
-    required String text,
-  }) async {
-    final storyRef = _db.collection('stories').doc(storyId);
-    final storySnapPre = await storyRef.get();
-    final storyTitle = (storySnapPre.data()?['title'] as String?) ?? '';
-    final moderation = ContentModerationService().moderateWithSurface(
-      ModerationSurface.reply,
-      text,
-      storyExcerpt: storyTitle,
-    );
-    if (!moderation.isSafe) {
-      throw ArgumentError(ContentModerationService.childFriendlyWarning);
-    }
-
-    final commentRef = storyRef.collection('comments').doc(commentId);
-    final notificationRef = _db.collection('notifications').doc();
-    final replyData = {
-      'id': _db.collection('replyIds').doc().id,
-      'userId': userId,
-      'userName': userName,
-      'text': text,
-      'createdAt': Timestamp.now(),
-    };
-
-    await _db.runTransaction((tx) async {
-      final storySnap = await tx.get(storyRef);
-      final commentSnap = await tx.get(commentRef);
-      final storyData = storySnap.data() ?? {};
-      final commentData = commentSnap.data() ?? {};
-      final commentOwnerId = commentData['userId'] as String?;
-      final title = (storyData['title'] as String?) ?? 'your story';
-      DocumentSnapshot<Map<String, dynamic>>? ownerSnap;
-      if (commentOwnerId != null && commentOwnerId != userId) {
-        ownerSnap = await tx.get(_db.collection('users').doc(commentOwnerId));
-      }
-
-      tx.set(
-        commentRef,
-        {
-          'replies': FieldValue.arrayUnion([replyData]),
-          'replyCount': FieldValue.increment(1),
-          'updatedAt': FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
-      );
-
-      if (commentOwnerId != null &&
-          commentOwnerId != userId &&
-          _notificationsEnabled(ownerSnap?.data())) {
-        tx.set(notificationRef, {
-          'toUserId': commentOwnerId,
-          'fromUserId': userId,
-          'fromUserName': userName,
-          'type': 'comment_reply',
-          'storyId': storyId,
-          'storyTitle': title,
-          'commentId': commentId,
-          'message': '$userName replied to your comment on "$title"',
-          'isRead': false,
-          'createdAt': FieldValue.serverTimestamp(),
-        });
-      }
-    });
-  }
-
-  Future<void> toggleCommentReaction({
-    required String storyId,
-    required String commentId,
-    required String userId,
-    required String userName,
-    required String emoji,
-  }) async {
-    final storyRef = _db.collection('stories').doc(storyId);
-    final commentRef = storyRef.collection('comments').doc(commentId);
-    final reactionRef = _db
-        .collection('stories')
-        .doc(storyId)
-        .collection('comments')
-        .doc(commentId)
-        .collection('reactions')
-        .doc(userId);
-    final notificationRef = _db.collection('notifications').doc();
-
-    await _db.runTransaction((tx) async {
-      final storySnap = await tx.get(storyRef);
-      final commentSnap = await tx.get(commentRef);
-      final reactionSnap = await tx.get(reactionRef);
-      final storyData = storySnap.data() ?? {};
-      final commentData = commentSnap.data() ?? {};
-      final commentOwnerId = commentData['userId'] as String?;
-      final title = (storyData['title'] as String?) ?? 'your story';
-      final previousEmoji = reactionSnap.data()?['emoji'] as String?;
-      DocumentSnapshot<Map<String, dynamic>>? ownerSnap;
-      if (commentOwnerId != null && commentOwnerId != userId) {
-        ownerSnap = await tx.get(_db.collection('users').doc(commentOwnerId));
-      }
-
-      if (reactionSnap.exists && previousEmoji == emoji) {
-        tx.delete(reactionRef);
-        return;
-      }
-
-      tx.set(
-        reactionRef,
-        {
-          'userId': userId,
-          'emoji': emoji,
-          'updatedAt': FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
-      );
-
-      if (commentOwnerId != null &&
-          commentOwnerId != userId &&
-          previousEmoji != emoji &&
-          _notificationsEnabled(ownerSnap?.data())) {
-        tx.set(notificationRef, {
-          'toUserId': commentOwnerId,
-          'fromUserId': userId,
-          'fromUserName': userName,
-          'type': 'comment_reaction',
-          'storyId': storyId,
-          'storyTitle': title,
-          'commentId': commentId,
-          'emoji': emoji,
-          'message': '$userName reacted $emoji to your comment on "$title"',
-          'isRead': false,
-          'createdAt': FieldValue.serverTimestamp(),
-        });
-      }
-    });
-  }
-
-  Stream<QuerySnapshot<Map<String, dynamic>>> getCommentReactions({
-    required String storyId,
-    required String commentId,
-  }) {
-    return _db
-        .collection('stories')
-        .doc(storyId)
-        .collection('comments')
-        .doc(commentId)
-        .collection('reactions')
-        .snapshots();
-  }
-
-  Future<void> rateStory({
-    required String storyId,
-    required String userId,
-    required String userName,
-    required int rating,
-  }) async {
-    if (rating < 1 || rating > 5) {
-      throw ArgumentError('Rating must be between 1 and 5.');
-    }
-
-    final storyRef = _db.collection('stories').doc(storyId);
-    final ratingRef = storyRef.collection('ratings').doc(userId);
-    final notificationRef = _db.collection('notifications').doc();
-
-    await _db.runTransaction((tx) async {
-      final storySnap = await tx.get(storyRef);
-      final storyData = storySnap.data() ?? {};
-      final ownerId = storyData['authorId'] as String?;
-      final title = (storyData['title'] as String?) ?? 'your story';
-      DocumentSnapshot<Map<String, dynamic>>? ownerSnap;
-      if (ownerId != null && ownerId != userId) {
-        ownerSnap = await tx.get(_db.collection('users').doc(ownerId));
-      }
-
-      if (ownerId == userId) {
-        throw StateError('You cannot rate your own story.');
-      }
-
-      final ratingSnap = await tx.get(ratingRef);
-      final oldRating =
-          ratingSnap.exists ? _readInt(ratingSnap.data()?['rating']) : null;
-      final currentTotal = _readInt(storyData['ratingTotal']);
-      final currentCount = _readInt(storyData['ratingCount']);
-
-      final nextTotal = oldRating == null
-          ? currentTotal + rating
-          : currentTotal - oldRating + rating;
-      final nextCount = oldRating == null ? currentCount + 1 : currentCount;
-      final nextAverage = nextCount == 0 ? 0.0 : nextTotal / nextCount;
-
-      tx.set(
-        ratingRef,
-        {
-          'userId': userId,
-          'rating': rating,
-          'createdAt': ratingSnap.exists
-              ? (ratingSnap.data()?['createdAt'])
-              : FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
-      );
-
-      tx.set(
-        storyRef,
-        {
-          'ratingTotal': nextTotal,
-          'ratingCount': nextCount,
-          'averageRating': nextAverage,
-        },
-        SetOptions(merge: true),
-      );
-
-      if (ownerId != null &&
-          ownerId != userId &&
-          _notificationsEnabled(ownerSnap?.data())) {
-        tx.set(notificationRef, {
-          'toUserId': ownerId,
-          'fromUserId': userId,
-          'fromUserName': userName,
-          'type': 'rating',
-          'storyId': storyId,
-          'storyTitle': title,
-          'message': '$userName rated "$title" $rating stars',
-          'isRead': false,
-          'createdAt': FieldValue.serverTimestamp(),
-        });
-      }
-    });
-  }
-
-  Stream<QuerySnapshot> getComments(String storyId) {
-    return _db
-        .collection('stories')
-        .doc(storyId)
-        .collection('comments')
-        .orderBy('createdAt', descending: true)
-        .snapshots();
-  }
-
-  Stream<DocumentSnapshot<Map<String, dynamic>>> getUserRating({
-    required String storyId,
-    required String userId,
-  }) {
-    return _db
-        .collection('stories')
-        .doc(storyId)
-        .collection('ratings')
-        .doc(userId)
-        .snapshots();
-  }
-
-  static int _readInt(dynamic value) {
-    if (value is int) return value;
-    if (value is num) return value.toInt();
-    if (value is String) return int.tryParse(value) ?? 0;
-    return 0;
-  }
-
-  static bool _notificationsEnabled(Map<String, dynamic>? userData) {
-    return userData?['notificationsEnabled'] != false;
-  }
-}
-
-/// =============================================================================
-/// MODELS
-/// =============================================================================
-
-class Comment {
-  final String user;
-  final String text;
-
-  Comment({required this.user, required this.text});
-}
-
-class StoryPost {
-  final String id;
-  final String author;
-  final String handle;
-  final String title;
-  final String excerpt;
-  final int likes;
-  final int comments;
-  final int saves;
-  final int ratingCount;
-  final double averageRating;
-  final bool likedByMe;
-  final bool savedByMe;
-  final Color accent;
-  final String imageUrl;
-  final List<Comment> commentList;
-  /// Ordered text/image blocks when loaded from Firestore `content`; null for legacy stories.
-  final List<Map<String, dynamic>>? contentBlocks;
-
-  const StoryPost({
-    required this.id,
-    required this.author,
-    required this.handle,
-    required this.title,
-    required this.excerpt,
-    required this.likes,
-    required this.comments,
-    this.saves = 0,
-    this.ratingCount = 0,
-    this.averageRating = 0,
-    required this.likedByMe,
-    this.savedByMe = false,
-    required this.accent,
-    required this.imageUrl,
-    this.commentList = const [],
-    this.contentBlocks,
-  });
-
-  StoryPost toggleLike() => StoryPost(
-        id: id,
-        author: author,
-        handle: handle,
-        title: title,
-        excerpt: excerpt,
-        likes: likedByMe ? likes - 1 : likes + 1,
-        comments: comments,
-        saves: saves,
-        ratingCount: ratingCount,
-        averageRating: averageRating,
-        likedByMe: !likedByMe,
-        savedByMe: savedByMe,
-        accent: accent,
-        imageUrl: imageUrl,
-        commentList: commentList,
-        contentBlocks: contentBlocks,
-      );
 }
 
 /// =============================================================================
@@ -918,8 +352,8 @@ class CommunityScreen extends StatefulWidget {
 
 class _CommunityScreenState extends State<CommunityScreen> {
   int _selectedIndex = 0;
-  static const String _storiesCollection = 'stories';
   final StoryService _service = StoryService();
+  final StoryController _storyController = StoryController();
   final ContentModerationService _moderationService =
       ContentModerationService();
   final TextEditingController _searchController = TextEditingController();
@@ -941,6 +375,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
   @override
   void initState() {
     super.initState();
+    _storyController.fetchStories(status: 'published');
     _user = FirebaseAuth.instance.currentUser;
     if (_user != null) {
       _userId = _user!.uid;
@@ -955,6 +390,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
 
   @override
   void dispose() {
+    _storyController.dispose();
     _searchDebounce?.cancel();
     _userDocSub?.cancel();
     _searchController.dispose();
@@ -1068,228 +504,235 @@ class _CommunityScreenState extends State<CommunityScreen> {
 
   Widget _buildCommunityFeed() {
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF7B1FA2),
-        title: const _BrandTitle(),
-        centerTitle: true,
-        actions: [
-          IconButton(
-            tooltip: _isSearchOpen ? 'Close search' : 'Search stories',
-            onPressed: _toggleSearch,
-            icon: Icon(
-              _isSearchOpen ? Icons.close : Icons.search,
-              color: Colors.white,
-            ),
-          ),
-          _NotificationBell(
-            userId: _userId,
-            onStoryNotificationTap: _handleStoryNotificationTap,
-          ),
-        ],
-      ),
+      appBar: _buildFeedHeaderSection(),
       body: RefreshIndicator(
         color: Colors.purple,
         onRefresh: () async {
+          await _storyController.fetchStories(status: 'published');
           await Future<void>.delayed(const Duration(milliseconds: 400));
           if (!mounted) return;
           setState(() {});
         },
-        child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          stream: FirebaseFirestore.instance
-              .collection(_storiesCollection)
-              .where('status', isEqualTo: 'published')
-              .snapshots(),
-          builder: (context, snapshot) {
-            if (!snapshot.hasData) {
-              return const Center(child: CircularProgressIndicator());
-            }
+        child: _buildFeedBodySection(),
+      ),
+    );
+  }
 
-            final publishedDocs = snapshot.data!.docs.toList()
-              ..sort((a, b) {
-                final aDate = _readTimestamp(a.data()['createdAt']);
-                final bDate = _readTimestamp(b.data()['createdAt']);
-                return bDate.compareTo(aDate);
-              });
-
-            if (publishedDocs.isEmpty) {
-              return const Center(child: Text('No stories yet'));
-            }
-
-            final docs = publishedDocs
-                .where((doc) => _matchesStorySearch(doc.data()))
-                .toList();
-            final hasActiveSearch = StorySearch.hasSearchTerms(_searchQuery);
-            if (_pendingCommunityHighlightScroll &&
-                _communityHighlightedStoryId != null &&
-                docs.any((doc) => doc.id == _communityHighlightedStoryId)) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                _scrollToCommunityStory(_communityHighlightedStoryId!);
-              });
-            }
-
-            return Column(
-              children: [
-                if (_isSearchOpen)
-                  _StorySearchSection(
-                    controller: _searchController,
-                    onChanged: _queueSearch,
-                    onClear: () {
-                      setState(() {
-                        _searchDebounce?.cancel();
-                        _searchController.clear();
-                        _searchQuery = "";
-                      });
-                    },
-                  ),
-                if (_isSearchOpen &&
-                    !hasActiveSearch &&
-                    _searchQuery.trim().isNotEmpty)
-                  const _SearchMinimumHint(),
-                if (docs.isEmpty)
-                  Expanded(
-                    child: _StorySearchEmptyState(query: _searchQuery),
-                  )
-                else
-                  Expanded(
-                    child: ListView.builder(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      itemCount: docs.length,
-                      itemBuilder: (context, index) {
-                        final doc = docs[index];
-                        final data = doc.data();
-                        final storyId = doc.id;
-
-                        final title =
-                            (data['title'] as String?) ?? 'Untitled';
-                        final body = (data['body'] as String?) ?? '';
-                        final cover = data['coverUrl'] as String?;
-                        final author = (data['authorName'] as String?) ??
-                            (data['authorId'] as String?) ??
-                            'Unknown';
-                        final handle = (data['handle'] as String?) ??
-                            author.replaceAll(' ', '').toLowerCase();
-                            final likes = (data['likes'] as int?) ?? 0;
-                            final comments = (data['comments'] as int?) ?? 0;
-                            final saves = _readInt(data['saves']);
-                            final imageUrl = cover != null && cover.isNotEmpty
-                                ? cover
-                                : 'https://picsum.photos/seed/$storyId/600/300';
-
-                            final likedBy = (data['likedBy'] as List?) ?? [];
-                            final likedByMe = likedBy.contains(_userId);
-                            final savedBy = (data['savedBy'] as List?) ?? [];
-                            final savedByMe =
-                                _savedStoryIds.contains(storyId) ||
-                                    savedBy.contains(_userId);
-
-                        final contentBlocks =
-                            StoryContentCodec.parseContent(data['content']);
-
-                        final post = StoryPost(
-                          id: storyId,
-                          author: author,
-                          handle: handle,
-                          title: title,
-                          excerpt: body,
-                          likes: likes,
-                          comments: comments,
-                          saves: saves,
-                          ratingCount: _readInt(data['ratingCount']),
-                          averageRating: _readDouble(data['averageRating']),
-                          likedByMe: likedByMe,
-                          savedByMe: savedByMe,
-                          accent: const Color(0xFF7B1FA2),
-                          imageUrl: imageUrl,
-                          contentBlocks: contentBlocks,
-                        );
-
-                        return Container(
-                          key: _communityStoryKey(storyId),
-                          child: StoryCard(
-                            post: post,
-                            service: _service,
-                            userId:
-                                _userId.isEmpty ? _user?.uid ?? '' : _userId,
-                            userName: _userName.isEmpty
-                                ? (_user?.displayName ?? 'User')
-                                : _userName,
-                            onLike: () async {
-                              if (_userId.isNotEmpty) {
-                                await _service.toggleLike(
-                                  storyId: storyId,
-                                  userId: _userId,
-                                  userName: _userName.isEmpty
-                                      ? (_user?.displayName ??
-                                          _user?.email?.split('@').first ??
-                                          'User')
-                                      : _userName,
-                                );
-                              }
-                            },
-                            onOpen: () {
-                              _clearCommunityHighlight();
-                              _openStory(context, post);
-                            },
-                            onComment: () {
-                              _clearCommunityHighlight();
-                              _openComments(context, storyId, storyTitle: title);
-                            },
-                            onSave: () async {
-                              final activeUserId =
-                                  _userId.isEmpty ? _user?.uid ?? '' : _userId;
-                              if (activeUserId.isEmpty) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content:
-                                        Text('Please log in to save stories.'),
-                                  ),
-                                );
-                                return;
-                              }
-
-                              try {
-                                final isSaved = await _service.toggleSave(
-                                  storyId: storyId,
-                                  userId: activeUserId,
-                                );
-                                if (!context.mounted) return;
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      isSaved
-                                          ? 'Story saved to your profile.'
-                                          : 'Story removed from Saved.',
-                                    ),
-                                    backgroundColor: isSaved
-                                        ? Colors.green
-                                        : Colors.grey.shade700,
-                                  ),
-                                );
-                              } catch (error, stackTrace) {
-                                debugPrint(
-                                  'Could not update saved story: $error',
-                                );
-                                debugPrintStack(stackTrace: stackTrace);
-                                if (!context.mounted) return;
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text(
-                                      'Could not update saved story. Please try again.',
-                                    ),
-                                  ),
-                                );
-                              }
-                            },
-                            highlighted: storyId == _communityHighlightedStoryId,
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-              ],
-            );
-          },
+  PreferredSizeWidget _buildFeedHeaderSection() {
+    return AppBar(
+      backgroundColor: const Color(0xFF7B1FA2),
+      title: const _BrandTitle(),
+      centerTitle: true,
+      actions: [
+        IconButton(
+          tooltip: _isSearchOpen ? 'Close search' : 'Search stories',
+          onPressed: _toggleSearch,
+          icon: Icon(
+            _isSearchOpen ? Icons.close : Icons.search,
+            color: Colors.white,
+          ),
         ),
+        _NotificationBell(
+          userId: _userId,
+          onStoryNotificationTap: _handleStoryNotificationTap,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFeedBodySection() {
+    return AnimatedBuilder(
+      animation: _storyController,
+      builder: (context, _) {
+        final availableDocs = _storyController.storyDocs;
+        if (_storyController.isLoading && availableDocs.isEmpty) {
+          return _buildFeedLoadingStateUi();
+        }
+        if (_storyController.errorMessage != null && availableDocs.isEmpty) {
+          return Center(
+            child: Text(
+              'Error loading stories',
+              style: TextStyle(color: Colors.grey[700]),
+            ),
+          );
+        }
+
+        final publishedDocs = availableDocs.toList()
+          ..sort((a, b) {
+            final aDate = _readTimestamp(a.data()['createdAt']);
+            final bDate = _readTimestamp(b.data()['createdAt']);
+            return bDate.compareTo(aDate);
+          });
+
+        if (publishedDocs.isEmpty) return _buildFeedEmptyStateUi();
+
+        final docs = publishedDocs
+            .where((doc) => _matchesStorySearch(doc.data()))
+            .toList();
+        final hasActiveSearch = StorySearch.hasSearchTerms(_searchQuery);
+        if (_pendingCommunityHighlightScroll &&
+            _communityHighlightedStoryId != null &&
+            docs.any((doc) => doc.id == _communityHighlightedStoryId)) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _scrollToCommunityStory(_communityHighlightedStoryId!);
+          });
+        }
+
+        return _buildSearchAndFeedSection(
+          docs: docs,
+          hasActiveSearch: hasActiveSearch,
+        );
+      },
+    );
+  }
+
+  Widget _buildFeedLoadingStateUi() {
+    return const Center(child: CircularProgressIndicator());
+  }
+
+  Widget _buildFeedEmptyStateUi() {
+    return const Center(child: Text('No stories yet'));
+  }
+
+  Widget _buildSearchAndFeedSection({
+    required List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+    required bool hasActiveSearch,
+  }) {
+    return Column(
+      children: [
+        if (_isSearchOpen)
+          _StorySearchSection(
+            controller: _searchController,
+            onChanged: _queueSearch,
+            onClear: () {
+              setState(() {
+                _searchDebounce?.cancel();
+                _searchController.clear();
+                _searchQuery = "";
+              });
+            },
+          ),
+        if (_isSearchOpen && !hasActiveSearch && _searchQuery.trim().isNotEmpty)
+          const _SearchMinimumHint(),
+        if (docs.isEmpty)
+          Expanded(child: _StorySearchEmptyState(query: _searchQuery))
+        else
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              itemCount: docs.length,
+              itemBuilder: (context, index) {
+                return _buildPostStoryCard(context, docs[index]);
+              },
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildPostStoryCard(
+    BuildContext context,
+    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+  ) {
+    final data = doc.data();
+    final storyId = doc.id;
+
+    final author =
+        (data['authorName'] as String?) ?? (data['authorId'] as String?) ?? 'Unknown';
+    final mappedPost = StoryPostMapper.fromFirestoreMap(
+      storyId: storyId,
+      data: data,
+      currentUserId: _userId,
+      accent: const Color(0xFF7B1FA2),
+      fallbackAuthor: author,
+    );
+    final savedBy = (data['savedBy'] as List?) ?? [];
+    final savedByMe = _savedStoryIds.contains(storyId) || savedBy.contains(_userId);
+    final post = StoryPost(
+      id: mappedPost.id,
+      author: mappedPost.author,
+      handle: mappedPost.handle,
+      title: mappedPost.title,
+      excerpt: mappedPost.excerpt,
+      likes: mappedPost.likes,
+      comments: mappedPost.comments,
+      saves: _readInt(data['saves']),
+      ratingCount: mappedPost.ratingCount,
+      averageRating: mappedPost.averageRating,
+      likedByMe: mappedPost.likedByMe,
+      savedByMe: savedByMe,
+      accent: mappedPost.accent,
+      imageUrl: mappedPost.imageUrl,
+      contentBlocks: mappedPost.contentBlocks,
+    );
+
+    return Container(
+      key: _communityStoryKey(storyId),
+      child: StoryCard(
+        post: post,
+        service: _service,
+        userId: _userId.isEmpty ? _user?.uid ?? '' : _userId,
+        userName: _userName.isEmpty ? (_user?.displayName ?? 'User') : _userName,
+        onLike: () async {
+          if (_userId.isNotEmpty) {
+            await _service.toggleLike(
+              storyId: storyId,
+              userId: _userId,
+              userName: _userName.isEmpty
+                  ? (_user?.displayName ?? _user?.email?.split('@').first ?? 'User')
+                  : _userName,
+            );
+          }
+        },
+        onOpen: () {
+          _clearCommunityHighlight();
+          _openStory(context, post);
+        },
+        onComment: () {
+          _clearCommunityHighlight();
+          _openComments(
+            context,
+            storyId,
+            storyTitle: post.title,
+          );
+        },
+        onSave: () async {
+          final activeUserId = _userId.isEmpty ? _user?.uid ?? '' : _userId;
+          if (activeUserId.isEmpty) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Please log in to save stories.')),
+            );
+            return;
+          }
+
+          try {
+            final isSaved = await _service.toggleSave(
+              storyId: storyId,
+              userId: activeUserId,
+            );
+            if (!context.mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  isSaved
+                      ? 'Story saved to your profile.'
+                      : 'Story removed from Saved.',
+                ),
+                backgroundColor: isSaved ? Colors.green : Colors.grey.shade700,
+              ),
+            );
+          } catch (error, stackTrace) {
+            debugPrint('Could not update saved story: $error');
+            debugPrintStack(stackTrace: stackTrace);
+            if (!context.mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Could not update saved story. Please try again.'),
+              ),
+            );
+          }
+        },
+        highlighted: storyId == _communityHighlightedStoryId,
       ),
     );
   }
@@ -1441,33 +884,16 @@ class _CommunityScreenState extends State<CommunityScreen> {
       return;
     }
 
-    final title = (data['title'] as String?) ?? 'Untitled';
-    final body = (data['body'] as String?) ?? '';
     final author = (data['authorName'] as String?) ?? authorId ?? 'Unknown';
-    final handle =
-        (data['handle'] as String?) ?? author.replaceAll(' ', '').toLowerCase();
-    final cover = data['coverUrl'] as String?;
-    final likedBy = (data['likedBy'] as List?) ?? [];
-    final contentBlocks = StoryContentCodec.parseContent(data['content']);
 
     _openStory(
       context,
-      StoryPost(
-        id: storyId,
-        author: author,
-        handle: handle,
-        title: title,
-        excerpt: body,
-        likes: _readInt(data['likes']),
-        comments: _readInt(data['comments']),
-        ratingCount: _readInt(data['ratingCount']),
-        averageRating: _readDouble(data['averageRating']),
-        likedByMe: likedBy.contains(_userId),
+      StoryPostMapper.fromFirestoreMap(
+        storyId: storyId,
+        data: data,
+        currentUserId: _userId,
         accent: kAppPrimary,
-        imageUrl: cover != null && cover.isNotEmpty
-            ? cover
-            : 'https://picsum.photos/seed/$storyId/600/300',
-        contentBlocks: contentBlocks,
+        fallbackAuthor: author,
       ),
     );
   }
@@ -1476,13 +902,6 @@ class _CommunityScreenState extends State<CommunityScreen> {
     if (value is int) return value;
     if (value is num) return value.toInt();
     if (value is String) return int.tryParse(value) ?? 0;
-    return 0;
-  }
-
-  double _readDouble(dynamic value) {
-    if (value is double) return value;
-    if (value is num) return value.toDouble();
-    if (value is String) return double.tryParse(value) ?? 0;
     return 0;
   }
 

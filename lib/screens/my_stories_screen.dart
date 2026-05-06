@@ -2,9 +2,14 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../data/mappers/story_post_mapper.dart';
 import '../services/content_moderation_service.dart';
+import '../domain/models/story_post.dart';
+import '../services/story_service.dart';
+import '../shared/ui/empty_widget.dart';
+import '../shared/ui/error_widget_custom.dart';
+import '../shared/ui/loading_widget.dart';
 import '../widgets/moderation_ui.dart';
-import '../utils/story_content.dart';
 import 'badge_screen.dart';
 import 'community.dart';
 import 'ebook_screen.dart';
@@ -66,7 +71,7 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
           backgroundColor: kAppPrimary,
           title: const Text('My Stories'),
         ),
-        body: const Center(child: Text('Please log in to view your stories')),
+        body: const EmptyWidget(message: 'Please log in to view your stories'),
       );
     }
 
@@ -111,13 +116,11 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
             .snapshots(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(
-              child: CircularProgressIndicator(color: kAppPrimary),
-            );
+            return const LoadingWidget(message: 'Loading your stories...');
           }
 
           if (snapshot.hasError) {
-            return Center(child: Text('Error: ${snapshot.error}'));
+            return ErrorWidgetCustom(message: 'Error: ${snapshot.error}');
           }
 
           final stories = (snapshot.data?.docs ?? [])
@@ -1111,30 +1114,36 @@ class _StoryDashboardItem {
     User user,
   ) {
     final data = doc.data();
-    final title = (data['title'] as String?)?.trim();
-    final body = (data['body'] as String?) ?? '';
-    final contentBlocks = StoryContentCodec.parseContent(data['content']);
     final authorName = (data['authorName'] as String?) ??
         user.displayName ??
         user.email?.split('@').first ??
         'You';
+    final mappedPost = StoryPostMapper.fromFirestoreMap(
+      storyId: doc.id,
+      data: data,
+      currentUserId: user.uid,
+      accent: kAppPrimary,
+      fallbackAuthor: authorName,
+    );
+    final title = mappedPost.title.trim();
+    final body = mappedPost.excerpt;
+    final contentBlocks = mappedPost.contentBlocks;
 
     return _StoryDashboardItem(
       id: doc.id,
-      title: title == null || title.isEmpty ? 'Untitled' : title,
+      title: title.isEmpty ? 'Untitled' : title,
       body: body,
       contentBlocks: contentBlocks,
-      authorName: authorName,
-      handle: (data['handle'] as String?) ??
-          authorName.replaceAll(' ', '').toLowerCase(),
+      authorName: mappedPost.author,
+      handle: mappedPost.handle,
       status: _readStatus(data['status']),
       approvalStatus: (data['approvalStatus'] as String?) ?? 'not_required',
       coverUrl: data['coverUrl'] as String?,
       wordCount: _readInt(data['wordCount'], fallback: _wordCount(body)),
-      likes: _readInt(data['likes']),
-      comments: _readInt(data['comments']),
-      ratingCount: _readInt(data['ratingCount']),
-      averageRating: _readDouble(data['averageRating']),
+      likes: mappedPost.likes,
+      comments: mappedPost.comments,
+      ratingCount: mappedPost.ratingCount,
+      averageRating: mappedPost.averageRating,
       likedBy: (data['likedBy'] as List?) ?? const [],
       parentFeedback: _readMap(data['parentFeedback']),
       createdAt: _readDate(data['createdAt']),
@@ -1182,22 +1191,24 @@ class _StoryDashboardItem {
   }
 
   StoryPost toPost({required String userId}) {
-    final imageUrl = coverUrl != null && coverUrl!.isNotEmpty
-        ? coverUrl!
-        : 'https://picsum.photos/seed/$id/600/300';
-
-    return StoryPost(
-      id: id,
-      author: authorName,
-      handle: handle,
-      title: title,
-      excerpt: body,
-      likes: likes,
-      comments: comments,
-      likedByMe: likedBy.contains(userId),
+    return StoryPostMapper.fromFirestoreMap(
+      storyId: id,
+      data: {
+        'authorName': authorName,
+        'handle': handle,
+        'title': title,
+        'body': body,
+        'likes': likes,
+        'comments': comments,
+        'ratingCount': ratingCount,
+        'averageRating': averageRating,
+        'likedBy': likedBy,
+        'coverUrl': coverUrl,
+        'content': contentBlocks,
+      },
+      currentUserId: userId,
       accent: kAppPrimary,
-      imageUrl: imageUrl,
-      contentBlocks: contentBlocks,
+      fallbackAuthor: authorName,
     );
   }
 
@@ -1205,13 +1216,6 @@ class _StoryDashboardItem {
     if (value is int) return value;
     if (value is num) return value.toInt();
     if (value is String) return int.tryParse(value) ?? fallback;
-    return fallback;
-  }
-
-  static double _readDouble(dynamic value, {double fallback = 0}) {
-    if (value is double) return value;
-    if (value is num) return value.toDouble();
-    if (value is String) return double.tryParse(value) ?? fallback;
     return fallback;
   }
 

@@ -4,6 +4,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_custom_clippers/flutter_custom_clippers.dart';
 import '../../routes.dart';
+import '../../shared/utils/app_navigator.dart';
+import '../../shared/utils/form_validation_helper.dart';
+import '../../shared/utils/message_helper.dart';
 import '../services/auth_service.dart';
 
 class AuthCard extends StatefulWidget {
@@ -191,20 +194,15 @@ class _AuthCardState extends State<AuthCard> {
         final isVerified = await _authService.reloadAndCheckEffectiveVerified();
         if (!isVerified) {
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(AuthService.emailNotVerifiedYet),
-                behavior: SnackBarBehavior.floating,
-              ),
-            );
-            Navigator.pushReplacementNamed(context, AppRoutes.verifyEmail);
+            MessageHelper.error(context, AuthService.emailNotVerifiedYet);
+            AppNavigator.pushReplacementNamed(context, AppRoutes.verifyEmail);
           }
           return;
         }
 
         final role = await _authService.readRole(user?.uid);
         if (mounted) {
-          Navigator.pushReplacementNamed(
+          AppNavigator.pushReplacementNamed(
             context,
             role == 'parent' ? AppRoutes.parentApprovals : AppRoutes.community,
           );
@@ -229,17 +227,13 @@ class _AuthCardState extends State<AuthCard> {
             password: signupPassword,
           );
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                  'Welcome! Your parent email is saved for safety notices.',
-                ),
-                backgroundColor: Colors.green,
-              ),
+            MessageHelper.success(
+              context,
+              'Welcome! Your parent email is saved for safety notices.',
             );
             final role = await _authService.readRole(cred.user?.uid);
             if (!mounted) return;
-            Navigator.pushReplacementNamed(
+            AppNavigator.pushReplacementNamed(
               context,
               role == 'parent'
                   ? AppRoutes.parentApprovals
@@ -258,14 +252,11 @@ class _AuthCardState extends State<AuthCard> {
                 _role == 'child' ? _parentEmailController.text.trim() : null,
           );
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content:
-                    Text('Verification email sent. Please check your inbox.'),
-                backgroundColor: Colors.green,
-              ),
+            MessageHelper.success(
+              context,
+              'Verification email sent. Please check your inbox.',
             );
-            Navigator.pushReplacementNamed(context, AppRoutes.verifyEmail);
+            AppNavigator.pushReplacementNamed(context, AppRoutes.verifyEmail);
           }
         }
       }
@@ -313,12 +304,7 @@ class _AuthCardState extends State<AuthCard> {
     try {
       await _authService.sendPasswordResetEmail(email);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Password reset link sent to your email.'),
-          backgroundColor: Colors.green,
-        ),
-      );
+      MessageHelper.success(context, 'Password reset link sent to your email.');
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -590,11 +576,9 @@ class _AuthCardState extends State<AuthCard> {
                         keyboardType: TextInputType.emailAddress,
                         validator: (value) {
                           if (_childUsernameLogin) return null;
-                          if (value == null || value.isEmpty) {
-                            return 'Please enter an email';
-                          }
-                          if (!_isValidEmail(value)) {
-                            return 'Enter a valid email address';
+                          final emailError = FormValidationHelper.email(value);
+                          if (emailError != null) {
+                            return emailError;
                           }
                           final liveError = _emailFieldErrors[_kLoginEmailField];
                           if (liveError != null) return liveError;
@@ -619,11 +603,9 @@ class _AuthCardState extends State<AuthCard> {
                         ),
                         keyboardType: TextInputType.emailAddress,
                         validator: (value) {
-                          if (value == null || value.isEmpty) {
-                            return 'Please enter an email';
-                          }
-                          if (!_isValidEmail(value)) {
-                            return 'Enter a valid email address';
+                          final emailError = FormValidationHelper.email(value);
+                          if (emailError != null) {
+                            return emailError;
                           }
                           final liveError = _emailFieldErrors[_kSignupEmailField];
                           if (liveError != null) return liveError;
@@ -651,13 +633,19 @@ class _AuthCardState extends State<AuthCard> {
                         ),
                       ),
                       validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Please enter a password';
+                        final requiredError = FormValidationHelper.requiredField(
+                          value,
+                          fieldName: 'a password',
+                        );
+                        if (requiredError != null) {
+                          return requiredError;
                         }
-                        final passwordRegex =
-                            RegExp(r'^.{6,}$'); // At least 6 characters
-                        if (!widget.isLogin && !passwordRegex.hasMatch(value)) {
-                          return 'Password must be at least 6 characters';
+                        if (!widget.isLogin) {
+                          return FormValidationHelper.minLength(
+                            value,
+                            min: 6,
+                            fieldName: 'password',
+                          );
                         }
                         return null;
                       },
@@ -682,12 +670,10 @@ class _AuthCardState extends State<AuthCard> {
                             },
                           ),
                         ),
-                        validator: (value) {
-                          if (value != _signupPasswordController.text) {
-                            return 'Passwords do not match';
-                          }
-                          return null;
-                        },
+                        validator: (value) => FormValidationHelper.confirmPassword(
+                          value: value,
+                          originalPassword: _signupPasswordController.text,
+                        ),
                       ),
                     ],
                     if (widget.isLogin && !_childUsernameLogin)

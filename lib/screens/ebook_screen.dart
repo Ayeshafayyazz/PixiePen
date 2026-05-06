@@ -202,74 +202,91 @@ class _EbookScreenState extends State<EbookScreen> {
   @override
   Widget build(BuildContext context) {
     if (_user == null) {
-      return Scaffold(
-        appBar: _buildAppBar('E-Book Creator'),
-        body: const Center(child: Text('Please log in to create an eBook.')),
-      );
+      return _buildLoggedOutScaffold();
     }
 
     return Scaffold(
       backgroundColor: _kEbookPageBackground,
       appBar: _buildAppBar('My E-Books'),
-      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: _db
-            .collection('ebooks')
-            .where('userId', isEqualTo: _user.uid)
-            .snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
+      body: _buildEbookLibrarySection(),
+    );
+  }
 
-          if (snapshot.hasError) {
-            return Center(
-                child: Text('Could not load eBooks: ${snapshot.error}'));
-          }
+  Widget _buildLoggedOutScaffold() {
+    return Scaffold(
+      appBar: _buildAppBar('E-Book Creator'),
+      body: const Center(child: Text('Please log in to create an eBook.')),
+    );
+  }
 
-          final ebooks = (snapshot.data?.docs ?? [])
-              .map(Ebook.fromDocument)
-              .toList()
-            ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  Widget _buildEbookLibrarySection() {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: _db
+          .collection('ebooks')
+          .where('userId', isEqualTo: _user!.uid)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
 
-          return ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: ebooks.length + 1,
-            separatorBuilder: (_, __) => const SizedBox(height: 14),
-            itemBuilder: (context, index) {
-              if (index == 0) {
-                return _CreateEbookCard(
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const EbookCreatorScreen(),
-                      ),
-                    );
-                  },
-                );
-              }
+        if (snapshot.hasError) {
+          return _buildErrorState(snapshot.error);
+        }
 
-              final ebook = ebooks[index - 1];
-              return _EbookLibraryCard(
-                ebook: ebook,
-                isExporting: _exportingEbookId == ebook.ebookId,
-                onRead: () => _openEbook(ebook),
-                onEdit: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => EbookCreatorScreen(editing: ebook),
-                    ),
-                  );
-                },
-                onDownload: () => _exportEbook(ebook, share: false),
-                onShare: () => _exportEbook(ebook, share: true),
-                onDelete: () => _confirmDeleteEbook(ebook),
-              );
-            },
-          );
-        },
-      ),
+        final ebooks = (snapshot.data?.docs ?? [])
+            .map(Ebook.fromDocument)
+            .toList()
+          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        return _buildLibraryList(ebooks);
+      },
+    );
+  }
+
+  Widget _buildErrorState(Object? error) {
+    return Center(child: Text('Could not load eBooks: $error'));
+  }
+
+  Widget _buildLibraryList(List<Ebook> ebooks) {
+    return ListView.separated(
+      padding: const EdgeInsets.all(16),
+      itemCount: ebooks.length + 1,
+      separatorBuilder: (_, __) => const SizedBox(height: 14),
+      itemBuilder: (context, index) {
+        if (index == 0) {
+          return _buildHeaderSection();
+        }
+        final ebook = ebooks[index - 1];
+        return _buildBookCard(ebook);
+      },
+    );
+  }
+
+  Widget _buildHeaderSection() {
+    return _CreateEbookCard(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const EbookCreatorScreen()),
+        );
+      },
+    );
+  }
+
+  Widget _buildBookCard(Ebook ebook) {
+    return _EbookLibraryCard(
+      ebook: ebook,
+      isExporting: _exportingEbookId == ebook.ebookId,
+      onRead: () => _openEbook(ebook),
+      onEdit: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => EbookCreatorScreen(editing: ebook)),
+        );
+      },
+      onDownload: () => _exportEbook(ebook, share: false),
+      onShare: () => _exportEbook(ebook, share: true),
+      onDelete: () => _confirmDeleteEbook(ebook),
     );
   }
 

@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:smooth_page_indicator/smooth_page_indicator.dart';
 
 import '../routes.dart';
+import '../shared/utils/app_navigator.dart';
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -54,7 +55,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('onboarding_completed', true);
     if (mounted) {
-      Navigator.pushReplacementNamed(context, AppRoutes.signup);
+      AppNavigator.pushReplacementNamed(context, AppRoutes.signup);
     }
   }
 

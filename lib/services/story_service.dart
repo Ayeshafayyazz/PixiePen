@@ -1,137 +1,147 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-import 'content_moderation_service.dart';
+import '../data/repositories/story_repository.dart';
 
 class StoryService {
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  StoryService({FirebaseFirestore? firestore})
+      : _repository = StoryRepository(firestore: firestore);
 
-  /// =========================
-  /// LIKE / UNLIKE (SAFE)
-  /// =========================
+  final StoryRepository _repository;
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> fetchStories({
+    String? authorId,
+    String? status,
+    String? parentEmail,
+  }) {
+    return _repository.fetchStories(
+      authorId: authorId,
+      status: status,
+      parentEmail: parentEmail,
+    );
+  }
+
+  Future<void> createStory({
+    required Map<String, dynamic> data,
+    String? storyId,
+  }) async {
+    await _repository.createStory(data: data, storyId: storyId);
+  }
+
+  Future<void> updateStory({
+    required String storyId,
+    required Map<String, dynamic> data,
+  }) async {
+    await _repository.updateStory(storyId: storyId, data: data);
+  }
+
+  Future<void> deleteStory(String storyId) async {
+    await _repository.deleteStory(storyId);
+  }
+
   Future<void> toggleLike({
     required String storyId,
     required String userId,
-    String userName = 'User',
+    required String userName,
   }) async {
-    final ref = _db.collection('stories').doc(storyId);
-    final notificationRef = _db.collection('notifications').doc();
-
-    await _db.runTransaction((tx) async {
-      final snap = await tx.get(ref);
-
-      final data = snap.data() as Map<String, dynamic>;
-
-      final List likedBy = List.from(data['likedBy'] ?? []);
-      int likes = (data['likes'] ?? 0);
-      final ownerId = data['authorId'] as String?;
-      final title = (data['title'] as String?) ?? 'your story';
-
-      if (likedBy.contains(userId)) {
-        likedBy.remove(userId);
-        likes = likes - 1;
-      } else {
-        likedBy.add(userId);
-        likes = likes + 1;
-
-        if (ownerId != null && ownerId != userId) {
-          tx.set(notificationRef, {
-            'toUserId': ownerId,
-            'fromUserId': userId,
-            'fromUserName': userName,
-            'type': 'like',
-            'storyId': storyId,
-            'storyTitle': title,
-            'message': '$userName liked "$title"',
-            'isRead': false,
-            'createdAt': FieldValue.serverTimestamp(),
-          });
-        }
-      }
-
-      tx.set(
-          ref,
-          {
-            'likes': likes,
-            'likedBy': likedBy,
-          },
-          SetOptions(merge: true));
-    });
+    await _repository.toggleLike(
+      storyId: storyId,
+      userId: userId,
+      userName: userName,
+    );
   }
 
-  /// =========================
-  /// ADD COMMENT
-  /// =========================
+  Future<bool> toggleSave({
+    required String storyId,
+    required String userId,
+  }) async {
+    return _repository.toggleSave(storyId: storyId, userId: userId);
+  }
+
   Future<void> addComment({
     required String storyId,
     required String userId,
     required String userName,
     required String text,
   }) async {
-    final storyRef = _db.collection('stories').doc(storyId);
-    final storySnap = await storyRef.get();
-    final storyTitle = (storySnap.data()?['title'] as String?) ?? '';
-    final moderation = ContentModerationService().moderateWithSurface(
-      ModerationSurface.comment,
-      text,
-      storyExcerpt: storyTitle,
+    await _repository.addComment(
+      storyId: storyId,
+      userId: userId,
+      userName: userName,
+      text: text,
     );
-    if (!moderation.isSafe) {
-      throw ArgumentError(ContentModerationService.childFriendlyWarning);
-    }
-
-
-    final commentRef = storyRef.collection('comments').doc();
-    final notificationRef = _db.collection('notifications').doc();
-
-    await _db.runTransaction((tx) async {
-      final storySnap = await tx.get(storyRef);
-      final storyData = storySnap.data() ?? {};
-      final ownerId = storyData['authorId'] as String?;
-      final title = (storyData['title'] as String?) ?? 'your story';
-
-      tx.set(commentRef, {
-        'userId': userId,
-        'userName': userName,
-        'text': text,
-        'moderation': {
-          'isSafe': true,
-          'flagReason': null,
-        },
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-
-      tx.set(
-          storyRef,
-          {
-            'comments': FieldValue.increment(1),
-          },
-          SetOptions(merge: true));
-
-      if (ownerId != null && ownerId != userId) {
-        tx.set(notificationRef, {
-          'toUserId': ownerId,
-          'fromUserId': userId,
-          'fromUserName': userName,
-          'type': 'comment',
-          'storyId': storyId,
-          'storyTitle': title,
-          'message': '$userName commented on "$title"',
-          'isRead': false,
-          'createdAt': FieldValue.serverTimestamp(),
-        });
-      }
-    });
   }
 
-  /// =========================
-  /// LIVE COMMENTS STREAM
-  /// =========================
+  Future<void> deleteComment({
+    required String storyId,
+    required String commentId,
+  }) async {
+    await _repository.deleteComment(storyId: storyId, commentId: commentId);
+  }
+
+  Future<void> addCommentReply({
+    required String storyId,
+    required String commentId,
+    required String userId,
+    required String userName,
+    required String text,
+  }) async {
+    await _repository.addCommentReply(
+      storyId: storyId,
+      commentId: commentId,
+      userId: userId,
+      userName: userName,
+      text: text,
+    );
+  }
+
+  Future<void> toggleCommentReaction({
+    required String storyId,
+    required String commentId,
+    required String userId,
+    required String userName,
+    required String emoji,
+  }) async {
+    await _repository.toggleCommentReaction(
+      storyId: storyId,
+      commentId: commentId,
+      userId: userId,
+      userName: userName,
+      emoji: emoji,
+    );
+  }
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> getCommentReactions({
+    required String storyId,
+    required String commentId,
+  }) {
+    return _repository.getCommentReactions(
+      storyId: storyId,
+      commentId: commentId,
+    );
+  }
+
+  Future<void> rateStory({
+    required String storyId,
+    required String userId,
+    required String userName,
+    required int rating,
+  }) async {
+    await _repository.rateStory(
+      storyId: storyId,
+      userId: userId,
+      userName: userName,
+      rating: rating,
+    );
+  }
+
   Stream<QuerySnapshot> getComments(String storyId) {
-    return _db
-        .collection('stories')
-        .doc(storyId)
-        .collection('comments')
-        .orderBy('createdAt', descending: true)
-        .snapshots();
+    return _repository.getComments(storyId);
+  }
+
+  Stream<DocumentSnapshot<Map<String, dynamic>>> getUserRating({
+    required String storyId,
+    required String userId,
+  }) {
+    return _repository.getUserRating(storyId: storyId, userId: userId);
   }
 }

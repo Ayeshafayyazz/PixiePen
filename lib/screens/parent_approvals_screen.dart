@@ -4,10 +4,14 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-import '../utils/story_content.dart';
+import '../data/mappers/story_post_mapper.dart';
+import '../domain/models/story_post.dart';
 import '../services/content_moderation_service.dart';
+import '../services/story_service.dart';
+import '../shared/utils/app_navigator.dart';
 import '../widgets/moderation_ui.dart';
 import '../utils/story_search.dart';
+import '../routes.dart';
 import 'community.dart';
 import 'theme.dart';
 
@@ -97,17 +101,7 @@ class _ParentApprovalsScreenState extends State<ParentApprovalsScreen>
     final parentEmail = user?.email?.trim().toLowerCase();
 
     if (parentEmail == null) {
-      return Scaffold(
-        resizeToAvoidBottomInset: false,
-        backgroundColor: const Color(0xFFF9F7FF),
-        appBar: AppBar(
-          title: const Text(
-            'Parent Approvals',
-            style: TextStyle(color: Colors.white),
-          ),
-          backgroundColor: kAppPrimary,
-          iconTheme: const IconThemeData(color: Colors.white),
-        ),
+      return _buildSimpleScaffoldFrame(
         body: const Center(child: Text('Please log in as a parent.')),
       );
     }
@@ -119,17 +113,7 @@ class _ParentApprovalsScreenState extends State<ParentApprovalsScreen>
           .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          return Scaffold(
-            resizeToAvoidBottomInset: false,
-            backgroundColor: const Color(0xFFF9F7FF),
-            appBar: AppBar(
-              title: const Text(
-                'Parent Approvals',
-                style: TextStyle(color: Colors.white),
-              ),
-              backgroundColor: kAppPrimary,
-              iconTheme: const IconThemeData(color: Colors.white),
-            ),
+          return _buildSimpleScaffoldFrame(
             body: Center(
               child: Padding(
                 padding: const EdgeInsets.all(24),
@@ -144,17 +128,7 @@ class _ParentApprovalsScreenState extends State<ParentApprovalsScreen>
 
         if (snapshot.connectionState == ConnectionState.waiting &&
             !snapshot.hasData) {
-          return Scaffold(
-            resizeToAvoidBottomInset: false,
-            backgroundColor: const Color(0xFFF9F7FF),
-            appBar: AppBar(
-              title: const Text(
-                'Parent Approvals',
-                style: TextStyle(color: Colors.white),
-              ),
-              backgroundColor: kAppPrimary,
-              iconTheme: const IconThemeData(color: Colors.white),
-            ),
+          return _buildSimpleScaffoldFrame(
             body: const Center(
               child: CircularProgressIndicator(color: kAppPrimary),
             ),
@@ -202,130 +176,116 @@ class _ParentApprovalsScreenState extends State<ParentApprovalsScreen>
             ? 'No history items match your search.'
             : 'No approval history yet.';
 
-        return Scaffold(
-          resizeToAvoidBottomInset: _isSearchOpen,
-          backgroundColor: const Color(0xFFF9F7FF),
-          appBar: AppBar(
-            title: const Text(
-              'Parent Approvals',
-              style: TextStyle(color: Colors.white),
-            ),
-            backgroundColor: kAppPrimary,
-            iconTheme: const IconThemeData(color: Colors.white),
-            actions: [
-              IconButton(
-                tooltip: _isSearchOpen ? 'Close search' : 'Search this tab',
-                onPressed: _toggleSearch,
-                icon: Icon(
-                  _isSearchOpen ? Icons.close : Icons.search,
-                  color: Colors.white,
-                ),
-              ),
-              if (user != null) _ParentNotificationButton(userId: user.uid),
-              IconButton(
-                tooltip: 'Logout',
-                onPressed: () async {
-                  final shouldLogout = await showDialog<bool>(
-                    context: context,
-                    builder: (_) => AlertDialog(
-                      title: const Text("Confirm Logout"),
-                      content: const Text("Are you sure you want to logout?"),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(context, false),
-                          child: const Text("Cancel"),
-                        ),
-                        TextButton(
-                          onPressed: () => Navigator.pop(context, true),
-                          child: const Text("Logout"),
-                        ),
-                      ],
-                    ),
-                  );
-                  if (shouldLogout == true) {
-                    await FirebaseAuth.instance.signOut();
-                    if (context.mounted) {
-                      Navigator.of(context)
-                          .pushNamedAndRemoveUntil('/login', (route) => false);
-                    }
-                  }
-                },
-                icon: const Icon(Icons.logout, color: Colors.white),
-              ),
-            ],
-            bottom: TabBar(
-              controller: _tabController,
-              indicatorColor: Colors.white,
-              labelColor: Colors.white,
-              unselectedLabelColor: Colors.white70,
-              tabs: [
-                Tab(
-                  child: _PendingTabTitle(count: pendingCount),
-                ),
-                const Tab(text: 'History'),
-              ],
-            ),
-          ),
-          body: Column(
-            children: [
-              if (_isSearchOpen) ...[
-                if (_tabController.index == 0)
-                  _ParentApprovalSearchBar(
-                    controller: _pendingSearchController,
-                    onChanged: _queuePendingSearch,
-                    onClear: () {
-                      setState(() {
-                        _pendingSearchDebounce?.cancel();
-                        _pendingSearchController.clear();
-                        _pendingSearchQuery = '';
-                      });
-                    },
-                  )
-                else
-                  _ParentApprovalSearchBar(
-                    controller: _historySearchController,
-                    onChanged: _queueHistorySearch,
-                    onClear: () {
-                      setState(() {
-                        _historySearchDebounce?.cancel();
-                        _historySearchController.clear();
-                        _historySearchQuery = '';
-                      });
-                    },
-                  ),
-                if (_tabController.index == 0 &&
-                    !hasActivePendingSearch &&
-                    _pendingSearchQuery.trim().isNotEmpty)
-                  const _ParentSearchMinimumHint(),
-                if (_tabController.index == 1 &&
-                    !hasActiveHistorySearch &&
-                    _historySearchQuery.trim().isNotEmpty)
-                  const _ParentSearchMinimumHint(),
-              ],
-              Expanded(
-                child: TabBarView(
-                  controller: _tabController,
-                  children: [
-                    _ParentApprovalList(
-                      docs: pendingPrioritized,
-                      emptyText: pendingEmptyText,
-                      showActions: true,
-                      highlightStoryId: widget.highlightStoryId,
-                    ),
-                    _ParentApprovalList(
-                      docs: historyFiltered,
-                      emptyText: historyEmptyText,
-                      showActions: false,
-                      highlightStoryId: widget.highlightStoryId,
-                    ),
-                  ],
-                ),
-              ),
-            ],
+        return _buildScaffoldFrame(
+          user: user,
+          pendingCount: pendingCount,
+          body: _ParentApprovalsBody(
+            isSearchOpen: _isSearchOpen,
+            currentTabIndex: _tabController.index,
+            pendingController: _pendingSearchController,
+            historyController: _historySearchController,
+            onPendingChanged: _queuePendingSearch,
+            onHistoryChanged: _queueHistorySearch,
+            onPendingClear: () {
+              setState(() {
+                _pendingSearchDebounce?.cancel();
+                _pendingSearchController.clear();
+                _pendingSearchQuery = '';
+              });
+            },
+            onHistoryClear: () {
+              setState(() {
+                _historySearchDebounce?.cancel();
+                _historySearchController.clear();
+                _historySearchQuery = '';
+              });
+            },
+            showPendingHint:
+                _tabController.index == 0 &&
+                !hasActivePendingSearch &&
+                _pendingSearchQuery.trim().isNotEmpty,
+            showHistoryHint:
+                _tabController.index == 1 &&
+                !hasActiveHistorySearch &&
+                _historySearchQuery.trim().isNotEmpty,
+            tabController: _tabController,
+            pendingDocs: pendingPrioritized,
+            pendingEmptyText: pendingEmptyText,
+            historyDocs: historyFiltered,
+            historyEmptyText: historyEmptyText,
+            highlightStoryId: widget.highlightStoryId,
           ),
         );
       },
     );
+  }
+
+  Scaffold _buildScaffoldFrame({
+    required User? user,
+    required int pendingCount,
+    required Widget body,
+  }) {
+    return Scaffold(
+      resizeToAvoidBottomInset: _isSearchOpen,
+      backgroundColor: const Color(0xFFF9F7FF),
+      appBar: _ParentApprovalsAppBar(
+        tabController: _tabController,
+        pendingCount: pendingCount,
+        isSearchOpen: _isSearchOpen,
+        userId: user?.uid,
+        onToggleSearch: _toggleSearch,
+        onLogout: _handleLogout,
+      ),
+      body: body,
+    );
+  }
+
+  Scaffold _buildSimpleScaffoldFrame({
+    required Widget body,
+  }) {
+    return Scaffold(
+      resizeToAvoidBottomInset: false,
+      backgroundColor: const Color(0xFFF9F7FF),
+      appBar: AppBar(
+        title: const Text(
+          'Parent Approvals',
+          style: TextStyle(color: Colors.white),
+        ),
+        backgroundColor: kAppPrimary,
+        iconTheme: const IconThemeData(color: Colors.white),
+      ),
+      body: body,
+    );
+  }
+
+  Future<void> _handleLogout() async {
+    final shouldLogout = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text("Confirm Logout"),
+        content: const Text("Are you sure you want to logout?"),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text("Logout"),
+          ),
+        ],
+      ),
+    );
+    if (shouldLogout == true) {
+      await FirebaseAuth.instance.signOut();
+      if (context.mounted) {
+        AppNavigator.pushNamedAndRemoveUntil(
+          context,
+          AppRoutes.login,
+          (route) => false,
+        );
+      }
+    }
   }
 
   DateTime _readDate(dynamic value) {
@@ -410,6 +370,147 @@ class _PendingTabTitle extends StatelessWidget {
             ),
           ),
         ],
+      ],
+    );
+  }
+}
+
+class _ParentApprovalsAppBar extends StatelessWidget
+    implements PreferredSizeWidget {
+  final TabController tabController;
+  final int pendingCount;
+  final bool isSearchOpen;
+  final String? userId;
+  final VoidCallback onToggleSearch;
+  final Future<void> Function() onLogout;
+
+  const _ParentApprovalsAppBar({
+    required this.tabController,
+    required this.pendingCount,
+    required this.isSearchOpen,
+    required this.userId,
+    required this.onToggleSearch,
+    required this.onLogout,
+  });
+
+  @override
+  Size get preferredSize => const Size.fromHeight(kToolbarHeight + 48);
+
+  @override
+  Widget build(BuildContext context) {
+    return AppBar(
+      title: const Text(
+        'Parent Approvals',
+        style: TextStyle(color: Colors.white),
+      ),
+      backgroundColor: kAppPrimary,
+      iconTheme: const IconThemeData(color: Colors.white),
+      actions: [
+        IconButton(
+          tooltip: isSearchOpen ? 'Close search' : 'Search this tab',
+          onPressed: onToggleSearch,
+          icon: Icon(
+            isSearchOpen ? Icons.close : Icons.search,
+            color: Colors.white,
+          ),
+        ),
+        if (userId != null) _ParentNotificationButton(userId: userId!),
+        IconButton(
+          tooltip: 'Logout',
+          onPressed: onLogout,
+          icon: const Icon(Icons.logout, color: Colors.white),
+        ),
+      ],
+      bottom: TabBar(
+        controller: tabController,
+        indicatorColor: Colors.white,
+        labelColor: Colors.white,
+        unselectedLabelColor: Colors.white70,
+        tabs: [
+          Tab(child: _PendingTabTitle(count: pendingCount)),
+          const Tab(text: 'History'),
+        ],
+      ),
+    );
+  }
+}
+
+class _ParentApprovalsBody extends StatelessWidget {
+  final bool isSearchOpen;
+  final int currentTabIndex;
+  final TextEditingController pendingController;
+  final TextEditingController historyController;
+  final ValueChanged<String> onPendingChanged;
+  final ValueChanged<String> onHistoryChanged;
+  final VoidCallback onPendingClear;
+  final VoidCallback onHistoryClear;
+  final bool showPendingHint;
+  final bool showHistoryHint;
+  final TabController tabController;
+  final List<QueryDocumentSnapshot<Map<String, dynamic>>> pendingDocs;
+  final String pendingEmptyText;
+  final List<QueryDocumentSnapshot<Map<String, dynamic>>> historyDocs;
+  final String historyEmptyText;
+  final String? highlightStoryId;
+
+  const _ParentApprovalsBody({
+    required this.isSearchOpen,
+    required this.currentTabIndex,
+    required this.pendingController,
+    required this.historyController,
+    required this.onPendingChanged,
+    required this.onHistoryChanged,
+    required this.onPendingClear,
+    required this.onHistoryClear,
+    required this.showPendingHint,
+    required this.showHistoryHint,
+    required this.tabController,
+    required this.pendingDocs,
+    required this.pendingEmptyText,
+    required this.historyDocs,
+    required this.historyEmptyText,
+    required this.highlightStoryId,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        if (isSearchOpen) ...[
+          if (currentTabIndex == 0)
+            _ParentApprovalSearchBar(
+              controller: pendingController,
+              onChanged: onPendingChanged,
+              onClear: onPendingClear,
+            )
+          else
+            _ParentApprovalSearchBar(
+              controller: historyController,
+              onChanged: onHistoryChanged,
+              onClear: onHistoryClear,
+            ),
+          if (showPendingHint) const _ParentSearchMinimumHint(),
+          if (showHistoryHint) const _ParentSearchMinimumHint(),
+        ],
+        Expanded(
+          child: TabBarView(
+            controller: tabController,
+            children: [
+              _ParentApprovalList(
+                docs: pendingDocs,
+                emptyText: pendingEmptyText,
+                showActions: true,
+                highlightStoryId: highlightStoryId,
+              ),
+              _ParentApprovalList(
+                docs: historyDocs,
+                emptyText: historyEmptyText,
+                showActions: false,
+                highlightStoryId: highlightStoryId,
+              ),
+            ],
+          ),
+        ),
       ],
     );
   }
@@ -572,6 +673,13 @@ class _ParentApprovalList extends StatelessWidget {
           itemBuilder: (context, index) {
             final doc = docs[index];
             final data = doc.data();
+            final mappedPost = StoryPostMapper.fromFirestoreMap(
+              storyId: doc.id,
+              data: data,
+              currentUserId: '',
+              accent: kAppPrimary,
+              fallbackAuthor: 'Child',
+            );
             return Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 720),
@@ -579,12 +687,11 @@ class _ParentApprovalList extends StatelessWidget {
                   width: double.infinity,
                   child: _ParentApprovalCard(
                     storyId: doc.id,
-                    title: (data['title'] as String?) ?? 'Untitled',
-                    body: (data['body'] as String?) ?? '',
-                    contentBlocks:
-                        StoryContentCodec.parseContent(data['content']),
+                    title: mappedPost.title,
+                    body: mappedPost.excerpt,
+                    contentBlocks: mappedPost.contentBlocks,
                     childId: data['authorId'] as String?,
-                    childName: (data['authorName'] as String?) ?? 'Child',
+                    childName: mappedPost.author,
                     approvalStatus:
                         (data['approvalStatus'] as String?) ?? 'pending',
                     coverUrl: data['coverUrl'] as String?,

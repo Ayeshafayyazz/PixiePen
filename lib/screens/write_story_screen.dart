@@ -8,6 +8,8 @@ import 'ai_image_generator_screen.dart';
 import '../services/content_moderation_service.dart';
 import '../widgets/moderation_ui.dart';
 import '../services/story_inline_image_service.dart';
+import '../shared/utils/form_validation_helper.dart';
+import '../shared/utils/message_helper.dart';
 import '../utils/story_content.dart';
 
 class WriteStoryScreen extends StatefulWidget {
@@ -416,18 +418,23 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     FocusScope.of(context).unfocus();
     final title = _titleController.text.trim();
     final body = _plainBody.trim();
-    if (requireComplete && (title.isEmpty || body.isEmpty)) {
+    final titleError = FormValidationHelper.requiredField(
+      title,
+      fieldName: 'title',
+    );
+    final bodyError = FormValidationHelper.requiredField(
+      body,
+      fieldName: 'story body',
+    );
+    if (requireComplete && (titleError != null || bodyError != null)) {
       final missingFields = [
-        if (title.isEmpty) 'title',
-        if (body.isEmpty) 'story body',
+        if (titleError != null) 'title',
+        if (bodyError != null) 'story body',
       ].join(' and ');
       if (!silent) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              "Please add a $missingFields before ${publish ? 'publishing' : 'saving your draft'}.",
-            ),
-          ),
+        MessageHelper.error(
+          context,
+          "Please add a $missingFields before ${publish ? 'publishing' : 'saving your draft'}.",
         );
       }
       return;
@@ -841,20 +848,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     return Scaffold(
       resizeToAvoidBottomInset: true,
       backgroundColor: const Color(0xFFF9F7FF),
-      appBar: AppBar(
-        backgroundColor: kAppPrimary,
-        centerTitle: true,
-        leading: IconButton(
-          tooltip: 'Back to Community',
-          onPressed: _handleBack,
-          icon: const Icon(Icons.arrow_back),
-        ),
-        title: Text(
-            widget.storyId != null ? "Edit Story ✏️" : "Write Your Story ✏️",
-            style: const TextStyle(
-                color: Colors.white, fontWeight: FontWeight.bold)),
-        iconTheme: const IconThemeData(color: Colors.white),
-      ),
+      appBar: _buildWriteStoryAppBar(),
       body: SafeArea(
         child: Builder(
           builder: (context) {
@@ -865,82 +859,136 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
 
             return Stack(
               children: [
-                Scrollbar(
-                  controller: _storyScrollController,
-                  thumbVisibility: mq.size.width >= 600,
-                  child: ListView(
-                    controller: _storyScrollController,
-                    keyboardDismissBehavior:
-                        ScrollViewKeyboardDismissBehavior.onDrag,
-                    padding: EdgeInsets.fromLTRB(
-                      horizontalPad,
-                      16,
-                      horizontalPad,
-                      24 + bottomInset,
-                    ),
-                    children: [
-                      _buildTextField(
-                        controller: _titleController,
-                        hint: "Enter story title...",
-                        icon: Icons.title,
-                        maxLines: 1,
-                        onChanged: (_) => setState(() {}),
-                      ),
-                      if (_storyCoverUrl != null) ...[
-                        const SizedBox(height: 10),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(10),
-                          child: AspectRatio(
-                            aspectRatio: 16 / 9,
-                            child: Image.network(
-                              _storyCoverUrl!,
-                              width: double.infinity,
-                              fit: BoxFit.cover,
-                            ),
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 8),
-                      Text(
-                        'Story',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.grey.shade700,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      ..._buildSegmentEditorRows(context),
-                      const SizedBox(height: 16),
-                      _buildWordProgressSection(),
-                      const SizedBox(height: 16),
-                      _buildToolbarActions(context),
-                      const SizedBox(height: 20),
-                      _buildDraftPublishRow(),
-                    ],
-                  ),
+                _buildStoryEditorSection(
+                  context: context,
+                  mq: mq,
+                  horizontalPad: horizontalPad,
+                  bottomInset: bottomInset,
                 ),
-                if (_isUploadingInlineImage)
-                  Positioned.fill(
-                    child: AbsorbPointer(
-                      child: Material(
-                        color: Colors.white.withValues(alpha: 0.55),
-                        child: const Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              CircularProgressIndicator(color: kAppPrimary),
-                              SizedBox(height: 12),
-                              Text('Adding photo…'),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
+                _buildValidationFeedbackOverlay(),
               ],
             );
           },
+        ),
+      ),
+    );
+  }
+
+  PreferredSizeWidget _buildWriteStoryAppBar() {
+    return AppBar(
+      backgroundColor: kAppPrimary,
+      centerTitle: true,
+      leading: IconButton(
+        tooltip: 'Back to Community',
+        onPressed: _handleBack,
+        icon: const Icon(Icons.arrow_back),
+      ),
+      title: Text(
+        widget.storyId != null ? "Edit Story ✏️" : "Write Your Story ✏️",
+        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+      ),
+      iconTheme: const IconThemeData(color: Colors.white),
+    );
+  }
+
+  Widget _buildStoryEditorSection({
+    required BuildContext context,
+    required MediaQueryData mq,
+    required double horizontalPad,
+    required double bottomInset,
+  }) {
+    return Scrollbar(
+      controller: _storyScrollController,
+      thumbVisibility: mq.size.width >= 600,
+      child: ListView(
+        controller: _storyScrollController,
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        padding: EdgeInsets.fromLTRB(
+          horizontalPad,
+          16,
+          horizontalPad,
+          24 + bottomInset,
+        ),
+        children: [
+          _buildHeaderSection(),
+          const SizedBox(height: 8),
+          _buildStoryLabelSection(),
+          const SizedBox(height: 6),
+          ..._buildSegmentEditorRows(context),
+          const SizedBox(height: 16),
+          _buildValidationFeedbackSection(),
+          const SizedBox(height: 16),
+          _buildToolbarActions(context),
+          const SizedBox(height: 20),
+          _buildActionButtonsSection(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeaderSection() {
+    return Column(
+      children: [
+        _buildTextField(
+          controller: _titleController,
+          hint: "Enter story title...",
+          icon: Icons.title,
+          maxLines: 1,
+          onChanged: (_) => setState(() {}),
+        ),
+        if (_storyCoverUrl != null) ...[
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: AspectRatio(
+              aspectRatio: 16 / 9,
+              child: Image.network(
+                _storyCoverUrl!,
+                width: double.infinity,
+                fit: BoxFit.cover,
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildStoryLabelSection() {
+    return Text(
+      'Story',
+      style: TextStyle(
+        fontSize: 13,
+        fontWeight: FontWeight.w600,
+        color: Colors.grey.shade700,
+      ),
+    );
+  }
+
+  Widget _buildValidationFeedbackSection() {
+    return _buildWordProgressSection();
+  }
+
+  Widget _buildActionButtonsSection() {
+    return _buildDraftPublishRow();
+  }
+
+  Widget _buildValidationFeedbackOverlay() {
+    if (!_isUploadingInlineImage) return const SizedBox.shrink();
+    return Positioned.fill(
+      child: AbsorbPointer(
+        child: Material(
+          color: Colors.white.withValues(alpha: 0.55),
+          child: const Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(color: kAppPrimary),
+                SizedBox(height: 12),
+                Text('Adding photo…'),
+              ],
+            ),
+          ),
         ),
       ),
     );

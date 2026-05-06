@@ -11,7 +11,15 @@ import 'write_story_screen.dart';
 import 'community.dart';
 import 'parent_approvals_screen.dart';
 import 'theme.dart';
-import '../utils/story_content.dart';
+import '../routes.dart';
+import '../shared/utils/app_navigator.dart';
+import '../shared/utils/form_validation_helper.dart';
+import '../shared/utils/message_helper.dart';
+import '../data/firestore_keys.dart';
+import '../data/mappers/story_post_mapper.dart';
+import '../domain/models/story_post.dart';
+import '../controllers/story_controller.dart';
+import '../services/story_service.dart';
 import '../services/content_moderation_service.dart';
 import '../widgets/moderation_ui.dart';
 
@@ -628,8 +636,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (result == true) {
       await FirebaseAuth.instance.signOut();
       if (mounted) {
-        Navigator.of(context)
-            .pushNamedAndRemoveUntil('/login', (route) => false);
+        AppNavigator.pushNamedAndRemoveUntil(
+          context,
+          AppRoutes.login,
+          (route) => false,
+        );
       }
     }
   }
@@ -657,35 +668,44 @@ class _ProfileScreenState extends State<ProfileScreen> {
       child: Scaffold(
         key: _profileScaffoldKey,
         drawer: _buildDrawer(context),
-        appBar: AppBar(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          iconTheme: const IconThemeData(color: Colors.white),
-        ),
+        appBar: _buildProfileAppBar(),
         extendBodyBehindAppBar: true,
-        body: Column(
-          children: [
-            _buildHeader(context, userId),
-            const TabBar(
-              tabs: [
-                Tab(text: "My Stories"),
-                Tab(text: "Drafts"),
-                Tab(text: "Saved"),
-              ],
-            ),
-            Expanded(
-              child: TabBarView(
-                children: [
-                  _StoriesTab(
-                      title: "My Stories", status: "published", userId: userId),
-                  _StoriesTab(title: "Drafts", status: "draft", userId: userId),
-                  _SavedStoriesProfileTab(userId: userId),
-                ],
-              ),
-            ),
+        body: _buildProfileContentSection(context, userId),
+      ),
+    );
+  }
+
+  PreferredSizeWidget _buildProfileAppBar() {
+    return AppBar(
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      iconTheme: const IconThemeData(color: Colors.white),
+    );
+  }
+
+  Widget _buildProfileContentSection(BuildContext context, String? userId) {
+    return Column(
+      children: [
+        _buildHeader(context, userId),
+        const TabBar(
+          tabs: [
+            Tab(text: "My Stories"),
+            Tab(text: "Drafts"),
+            Tab(text: "Saved"),
           ],
         ),
-      ),
+        Expanded(child: _buildProfileStoryContentSection(userId)),
+      ],
+    );
+  }
+
+  Widget _buildProfileStoryContentSection(String? userId) {
+    return TabBarView(
+      children: [
+        _StoriesTab(title: "My Stories", status: "published", userId: userId),
+        _StoriesTab(title: "Drafts", status: "draft", userId: userId),
+        _SavedStoriesProfileTab(userId: userId),
+      ],
     );
   }
 
@@ -1008,185 +1028,202 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return Drawer(
       child: Column(
         children: [
-          StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-            stream: _user != null
-                ? _db.collection('users').doc(_user!.uid).snapshots()
-                : const Stream.empty(),
-            builder: (context, snap) {
-              String displayName = _user?.displayName ?? "Guest User";
-              Map<String, dynamic>? userData;
-              if (snap.hasData && snap.data!.exists) {
-                userData = snap.data!.data() ?? {};
-                final username = (userData['username'] as String?)?.trim();
-                if (username != null && username.isNotEmpty) {
-                  displayName = username;
-                } else if (_user?.displayName != null &&
-                    _user!.displayName!.trim().isNotEmpty) {
-                  displayName = _user!.displayName!.trim();
-                } else {
-                  displayName = email.split('@').first;
-                }
-              } else {
-                if (_user?.displayName != null &&
-                    _user!.displayName!.trim().isNotEmpty) {
-                  displayName = _user!.displayName!.trim();
-                } else {
-                  displayName = email.split('@').first;
-                }
-              }
-
-              return UserAccountsDrawerHeader(
-                decoration: const BoxDecoration(color: kAppPrimary),
-                currentAccountPicture: _ProfileAvatar(
-                  photoUrl: _profilePhotoUrl(userData),
-                  avatarId: _profileAvatarId(userData),
-                  radius: 36,
-                ),
-                accountName: Text(displayName),
-                accountEmail: Text(email),
-              );
-            },
-          ),
+          _buildDrawerHeader(email),
           Expanded(
-            child: ListView(
-              padding: EdgeInsets.zero,
-              children: [
-                _buildDrawerSectionTitle("Account"),
-                _buildDrawerItem(Icons.emoji_events, "Badges", () {
-                  _openDrawerRoute(
-                    context,
-                    builder: (_) => const BadgeScreen(),
-                  );
-                }),
-                _buildParentApprovalDrawerItem(context),
-                _buildDrawerItem(Icons.settings, "Settings", () {
-                  _openDrawerRoute(
-                    context,
-                    builder: (_) => const SettingsScreen(),
-                  );
-                }),
-                _buildDrawerSectionTitle("Support"),
-                _buildDrawerItem(Icons.help_outline, "Help Guide", () {
-                  _openInfoPage(
-                    context,
-                    title: "Help Guide",
-                    icon: Icons.help_outline,
-                    sections: const [
-                      _InfoSection(
-                        title: "Write",
-                        body:
-                            "Use Write to create a story title, body, and cover image.",
-                      ),
-                      _InfoSection(
-                        title: "Publish",
-                        body:
-                            "Drafts stay private until you publish them. Published stories appear in Community.",
-                      ),
-                      _InfoSection(
-                        title: "Badges",
-                        body:
-                            "Earn badges by writing stories and collecting likes from readers.",
-                      ),
-                      _InfoSection(
-                        title: "E-Books",
-                        body:
-                            "Turn one or more published stories into an eBook from the E-Books area.",
-                      ),
-                    ],
-                  );
-                }),
-                _buildDrawerItem(Icons.family_restroom, "Parent Info", () {
-                  _openInfoPage(
-                    context,
-                    title: "Parent Info",
-                    icon: Icons.family_restroom,
-                    sections: const [
-                      _InfoSection(
-                        title: "Creative Writing",
-                        body:
-                            "PixiePen is designed to help kids practice storytelling, reading, and imagination.",
-                      ),
-                      _InfoSection(
-                        title: "Content Safety",
-                        body:
-                            "Stories and comments are checked with local rule-based moderation before saving.",
-                      ),
-                      _InfoSection(
-                        title: "Guidance",
-                        body:
-                            "Children should avoid sharing phone numbers, emails, addresses, or private details.",
-                      ),
-                    ],
-                  );
-                }),
-                _buildDrawerItem(
-                  Icons.verified_user_outlined,
-                  "Privacy & Safety",
-                  () {
-                    _openInfoPage(
-                      context,
-                      title: "Privacy & Safety",
-                      icon: Icons.verified_user_outlined,
-                      sections: const [
-                        _InfoSection(
-                          title: "Safe Words",
-                          body:
-                              "The app blocks unsafe words, bullying terms, violent terms, and drug or alcohol references.",
-                        ),
-                        _InfoSection(
-                          title: "Personal Information",
-                          body:
-                              "Phone numbers and email addresses are blocked before stories or comments are saved.",
-                        ),
-                        _InfoSection(
-                          title: "Community",
-                          body:
-                              "Published stories should be kind, age-appropriate, and safe for kids.",
-                        ),
-                      ],
-                    );
-                  },
-                ),
-                _buildDrawerItem(Icons.feedback_outlined, "Feedback", () {
-                  _openDrawerRoute(
-                    context,
-                    builder: (_) => const FeedbackScreen(),
-                  );
-                }),
-                _buildDrawerItem(Icons.info_outline, "About PixiePen", () {
-                  _openInfoPage(
-                    context,
-                    title: "About PixiePen",
-                    icon: Icons.auto_stories,
-                    sections: const [
-                      _InfoSection(
-                        title: "PixiePen",
-                        body:
-                            "A kids storytelling app for writing, sharing, earning badges, and creating eBooks.",
-                      ),
-                      _InfoSection(
-                        title: "Version",
-                        body: "1.0.0",
-                      ),
-                    ],
-                  );
-                }),
-              ],
-            ),
+            child: _buildDrawerOptionsSection(context),
           ),
-          const Divider(height: 1),
-          _buildDrawerItem(
-            Icons.logout,
-            "Logout",
-            () {
-              Navigator.pop(context);
-              _logout();
-            },
-            color: Colors.redAccent,
-          ),
-          const SizedBox(height: 16),
+          _buildDrawerLogoutSection(context),
         ],
       ),
+    );
+  }
+
+  Widget _buildDrawerHeader(String email) {
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: _user != null
+          ? _db.collection('users').doc(_user!.uid).snapshots()
+          : const Stream.empty(),
+      builder: (context, snap) {
+        String displayName = _user?.displayName ?? "Guest User";
+        Map<String, dynamic>? userData;
+        if (snap.hasData && snap.data!.exists) {
+          userData = snap.data!.data() ?? {};
+          final username = (userData['username'] as String?)?.trim();
+          if (username != null && username.isNotEmpty) {
+            displayName = username;
+          } else if (_user?.displayName != null &&
+              _user!.displayName!.trim().isNotEmpty) {
+            displayName = _user!.displayName!.trim();
+          } else {
+            displayName = email.split('@').first;
+          }
+        } else {
+          if (_user?.displayName != null &&
+              _user!.displayName!.trim().isNotEmpty) {
+            displayName = _user!.displayName!.trim();
+          } else {
+            displayName = email.split('@').first;
+          }
+        }
+
+        return UserAccountsDrawerHeader(
+          decoration: const BoxDecoration(color: kAppPrimary),
+          currentAccountPicture: _ProfileAvatar(
+            photoUrl: _profilePhotoUrl(userData),
+            avatarId: _profileAvatarId(userData),
+            radius: 36,
+          ),
+          accountName: Text(displayName),
+          accountEmail: Text(email),
+        );
+      },
+    );
+  }
+
+  Widget _buildDrawerOptionsSection(BuildContext context) {
+    return ListView(
+      padding: EdgeInsets.zero,
+      children: [
+        _buildDrawerSectionTitle("Account"),
+        _buildDrawerItem(Icons.emoji_events, "Badges", () {
+          _openDrawerRoute(
+            context,
+            builder: (_) => const BadgeScreen(),
+          );
+        }),
+        _buildParentApprovalDrawerItem(context),
+        _buildDrawerItem(Icons.settings, "Settings", () {
+          _openDrawerRoute(
+            context,
+            builder: (_) => const SettingsScreen(),
+          );
+        }),
+        _buildDrawerSectionTitle("Support"),
+        _buildDrawerItem(Icons.help_outline, "Help Guide", () {
+          _openInfoPage(
+            context,
+            title: "Help Guide",
+            icon: Icons.help_outline,
+            sections: const [
+              _InfoSection(
+                title: "Write",
+                body:
+                    "Use Write to create a story title, body, and cover image.",
+              ),
+              _InfoSection(
+                title: "Publish",
+                body:
+                    "Drafts stay private until you publish them. Published stories appear in Community.",
+              ),
+              _InfoSection(
+                title: "Badges",
+                body:
+                    "Earn badges by writing stories and collecting likes from readers.",
+              ),
+              _InfoSection(
+                title: "E-Books",
+                body:
+                    "Turn one or more published stories into an eBook from the E-Books area.",
+              ),
+            ],
+          );
+        }),
+        _buildDrawerItem(Icons.family_restroom, "Parent Info", () {
+          _openInfoPage(
+            context,
+            title: "Parent Info",
+            icon: Icons.family_restroom,
+            sections: const [
+              _InfoSection(
+                title: "Creative Writing",
+                body:
+                    "PixiePen is designed to help kids practice storytelling, reading, and imagination.",
+              ),
+              _InfoSection(
+                title: "Content Safety",
+                body:
+                    "Stories and comments are checked with local rule-based moderation before saving.",
+              ),
+              _InfoSection(
+                title: "Guidance",
+                body:
+                    "Children should avoid sharing phone numbers, emails, addresses, or private details.",
+              ),
+            ],
+          );
+        }),
+        _buildDrawerItem(
+          Icons.verified_user_outlined,
+          "Privacy & Safety",
+          () {
+            _openInfoPage(
+              context,
+              title: "Privacy & Safety",
+              icon: Icons.verified_user_outlined,
+              sections: const [
+                _InfoSection(
+                  title: "Safe Words",
+                  body:
+                      "The app blocks unsafe words, bullying terms, violent terms, and drug or alcohol references.",
+                ),
+                _InfoSection(
+                  title: "Personal Information",
+                  body:
+                      "Phone numbers and email addresses are blocked before stories or comments are saved.",
+                ),
+                _InfoSection(
+                  title: "Community",
+                  body:
+                      "Published stories should be kind, age-appropriate, and safe for kids.",
+                ),
+              ],
+            );
+          },
+        ),
+        _buildDrawerItem(Icons.feedback_outlined, "Feedback", () {
+          _openDrawerRoute(
+            context,
+            builder: (_) => const FeedbackScreen(),
+          );
+        }),
+        _buildDrawerItem(Icons.info_outline, "About PixiePen", () {
+          _openInfoPage(
+            context,
+            title: "About PixiePen",
+            icon: Icons.auto_stories,
+            sections: const [
+              _InfoSection(
+                title: "PixiePen",
+                body:
+                    "A kids storytelling app for writing, sharing, earning badges, and creating eBooks.",
+              ),
+              _InfoSection(
+                title: "Version",
+                body: "1.0.0",
+              ),
+            ],
+          );
+        }),
+      ],
+    );
+  }
+
+  Widget _buildDrawerLogoutSection(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Divider(height: 1),
+        _buildDrawerItem(
+          Icons.logout,
+          "Logout",
+          () {
+            Navigator.pop(context);
+            _logout();
+          },
+          color: Colors.redAccent,
+        ),
+        const SizedBox(height: 16),
+      ],
     );
   }
 
@@ -1719,18 +1756,22 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Future<void> _saveChanges() async {
     if (_user == null) return;
     final newName = _nameController.text.trim();
-    if (newName.isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Name cannot be empty')));
+    final nameError = FormValidationHelper.requiredField(
+      newName,
+      fieldName: 'name',
+    );
+    if (nameError != null) {
+      MessageHelper.error(context, 'Name cannot be empty');
       return;
     }
     final parentEmail = _parentEmailController.text.trim().toLowerCase();
     if (_role == 'child' && parentEmail.isNotEmpty) {
-      final emailRegex = RegExp(r'^[\w-.]+@([\w-]+\.)+[\w-]{2,}$');
-      if (!emailRegex.hasMatch(parentEmail)) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Enter a valid parent email')),
-        );
+      final parentEmailError = FormValidationHelper.email(
+        parentEmail,
+        label: 'parent email',
+      );
+      if (parentEmailError != null) {
+        MessageHelper.error(context, 'Enter a valid parent email');
         return;
       }
     }
@@ -2310,6 +2351,33 @@ class _StoriesTab extends StatefulWidget {
 
 class _StoriesTabState extends State<_StoriesTab> {
   final StoryService _storyService = StoryService();
+  final StoryController _storyController = StoryController();
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchStories();
+  }
+
+  @override
+  void didUpdateWidget(covariant _StoriesTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.userId != widget.userId || oldWidget.status != widget.status) {
+      _fetchStories();
+    }
+  }
+
+  @override
+  void dispose() {
+    _storyController.dispose();
+    super.dispose();
+  }
+
+  void _fetchStories() {
+    final userId = widget.userId;
+    if (userId == null || userId.isEmpty) return;
+    _storyController.fetchStories(authorId: userId, status: widget.status);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2319,26 +2387,24 @@ class _StoriesTabState extends State<_StoriesTab> {
       );
     }
 
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('stories')
-          .where('authorId', isEqualTo: widget.userId)
-          .where('status', isEqualTo: widget.status)
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
+    return AnimatedBuilder(
+      animation: _storyController,
+      builder: (context, _) {
+        if (_storyController.isLoading && _storyController.storyDocs.isEmpty) {
           return const Center(
             child: CircularProgressIndicator(color: kAppPrimary),
           );
         }
 
-        if (snapshot.hasError) {
+        if (_storyController.errorMessage != null &&
+            _storyController.storyDocs.isEmpty) {
           return Center(
-            child: Text('Error: ${snapshot.error}'),
+            child: Text('Error: ${_storyController.errorMessage}'),
           );
         }
 
-        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+        final stories = _storyController.storyDocs;
+        if (stories.isEmpty) {
           return Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -2358,14 +2424,12 @@ class _StoriesTabState extends State<_StoriesTab> {
           );
         }
 
-        final stories = snapshot.data!.docs;
-
         return ListView.builder(
           padding: const EdgeInsets.all(16),
           itemCount: stories.length,
           itemBuilder: (context, index) {
             final story = stories[index];
-            final data = story.data() as Map<String, dynamic>;
+            final data = story.data();
             final post = _buildStoryPost(story.id, data);
             final likes = _readInt(data['likes']);
 
@@ -2450,35 +2514,15 @@ class _StoriesTabState extends State<_StoriesTab> {
   }
 
   StoryPost _buildStoryPost(String storyId, Map<String, dynamic> data) {
-    final title = (data['title'] as String?) ?? 'Untitled';
-    final body = (data['body'] as String?) ?? '';
-    final cover = (data['coverUrl'] as String?);
     final authorName = (data['authorName'] as String?) ??
         FirebaseAuth.instance.currentUser?.displayName ??
         'You';
-    final handle = (data['handle'] as String?) ??
-        authorName.replaceAll(' ', '').toLowerCase();
-    final likes = _readInt(data['likes']);
-    final comments = _readInt(data['comments']);
-    final likedBy = (data['likedBy'] as List?) ?? [];
-    final likedByMe = widget.userId != null && likedBy.contains(widget.userId);
-    final imageUrl = cover != null && cover.isNotEmpty
-        ? cover
-        : 'https://picsum.photos/seed/$storyId/600/300';
-    final contentBlocks = StoryContentCodec.parseContent(data['content']);
-
-    return StoryPost(
-      id: storyId,
-      author: authorName,
-      handle: handle,
-      title: title,
-      excerpt: body,
-      likes: likes,
-      comments: comments,
-      likedByMe: likedByMe,
+    return StoryPostMapper.fromFirestoreMap(
+      storyId: storyId,
+      data: data,
+      currentUserId: widget.userId ?? '',
       accent: kAppPrimary,
-      imageUrl: imageUrl,
-      contentBlocks: contentBlocks,
+      fallbackAuthor: authorName,
     );
   }
 
@@ -2518,7 +2562,7 @@ class _StoriesTabState extends State<_StoriesTab> {
           TextButton(
             onPressed: () {
               FirebaseFirestore.instance
-                  .collection('stories')
+                  .collection(FirestoreCollections.stories)
                   .doc(storyId)
                   .delete();
               Navigator.pop(context);
@@ -2644,26 +2688,26 @@ class _SavedStoriesProfileTab extends StatelessWidget {
           (data['authorName'] as String?)?.trim().isNotEmpty == true
               ? (data['authorName'] as String).trim()
               : 'Unknown';
-      final coverUrl = data['coverUrl'] as String?;
-      final likedBy = (data['likedBy'] as List?) ?? const [];
-
-      final contentBlocks = StoryContentCodec.parseContent(data['content']);
+      final mappedPost = StoryPostMapper.fromFirestoreMap(
+        storyId: storyDoc.id,
+        data: data,
+        currentUserId: uid,
+        accent: kAppPrimary,
+        fallbackAuthor: authorName,
+      );
       posts.add(
         StoryPost(
-          id: storyDoc.id,
-          author: authorName,
-          handle: (data['handle'] as String?) ??
-              authorName.replaceAll(' ', '').toLowerCase(),
-          title: (data['title'] as String?) ?? 'Untitled',
-          excerpt: (data['body'] as String?) ?? '',
-          likes: _readInt(data['likes']),
-          comments: _readInt(data['comments']),
-          likedByMe: likedBy.contains(uid),
-          accent: kAppPrimary,
-          imageUrl: coverUrl != null && coverUrl.isNotEmpty
-              ? coverUrl
-              : 'https://picsum.photos/seed/${storyDoc.id}/600/300',
-          contentBlocks: contentBlocks,
+          id: mappedPost.id,
+          author: mappedPost.author,
+          handle: mappedPost.handle,
+          title: mappedPost.title,
+          excerpt: mappedPost.excerpt,
+          likes: mappedPost.likes,
+          comments: mappedPost.comments,
+          likedByMe: mappedPost.likedByMe,
+          accent: mappedPost.accent,
+          imageUrl: mappedPost.imageUrl,
+          contentBlocks: mappedPost.contentBlocks,
         ),
       );
     }
@@ -2703,13 +2747,6 @@ class _SavedStoriesProfileTab extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  static int _readInt(dynamic value) {
-    if (value is int) return value;
-    if (value is num) return value.toInt();
-    if (value is String) return int.tryParse(value) ?? 0;
-    return 0;
   }
 
   static List<String> _readStringList(dynamic value) {
