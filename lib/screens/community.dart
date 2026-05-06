@@ -7,12 +7,15 @@ import 'package:flutter_tts/flutter_tts.dart';
 
 import 'ebook_screen.dart';
 import 'my_stories_screen.dart';
+import 'pixie_dash_screen.dart';
 import 'profile_screen.dart';
+import 'public_profile_screen.dart';
 import 'theme.dart';
 import 'write_story_screen.dart';
 import '../controllers/story_controller.dart';
 import '../data/mappers/story_post_mapper.dart';
 import '../domain/models/story_post.dart';
+import '../services/follow_service.dart';
 import '../services/story_service.dart';
 import '../services/content_moderation_service.dart';
 import '../widgets/moderation_ui.dart';
@@ -199,6 +202,7 @@ class StoryReaderViewModel extends ChangeNotifier {
 
     displayPost = StoryPost(
       id: originalPost.id,
+      authorId: originalPost.authorId,
       author: originalPost.author,
       handle: originalPost.handle,
       title: originalPost.title,
@@ -353,6 +357,7 @@ class CommunityScreen extends StatefulWidget {
 class _CommunityScreenState extends State<CommunityScreen> {
   int _selectedIndex = 0;
   final StoryService _service = StoryService();
+  final FollowService _followService = FollowService();
   final StoryController _storyController = StoryController();
   final ContentModerationService _moderationService =
       ContentModerationService();
@@ -441,6 +446,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
         },
       ),
       const EbookScreen(),
+      const PixieDashScreen(),
       MyStoriesScreen(
         key: ValueKey(
           '${_myStoriesInitialStatus ?? 'published'}-${_myStoriesHighlightedStoryId ?? ''}',
@@ -486,6 +492,11 @@ class _CommunityScreenState extends State<CommunityScreen> {
             icon: Icon(Icons.menu_book_outlined),
             activeIcon: Icon(Icons.menu_book),
             label: 'E-Books',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.auto_awesome_outlined),
+            activeIcon: Icon(Icons.auto_awesome),
+            label: 'Play',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.bookmarks_outlined),
@@ -637,8 +648,9 @@ class _CommunityScreenState extends State<CommunityScreen> {
     final data = doc.data();
     final storyId = doc.id;
 
-    final author =
-        (data['authorName'] as String?) ?? (data['authorId'] as String?) ?? 'Unknown';
+    final author = (data['authorName'] as String?) ??
+        (data['authorId'] as String?) ??
+        'Unknown';
     final mappedPost = StoryPostMapper.fromFirestoreMap(
       storyId: storyId,
       data: data,
@@ -647,9 +659,11 @@ class _CommunityScreenState extends State<CommunityScreen> {
       fallbackAuthor: author,
     );
     final savedBy = (data['savedBy'] as List?) ?? [];
-    final savedByMe = _savedStoryIds.contains(storyId) || savedBy.contains(_userId);
+    final savedByMe =
+        _savedStoryIds.contains(storyId) || savedBy.contains(_userId);
     final post = StoryPost(
       id: mappedPost.id,
+      authorId: mappedPost.authorId,
       author: mappedPost.author,
       handle: mappedPost.handle,
       title: mappedPost.title,
@@ -672,14 +686,19 @@ class _CommunityScreenState extends State<CommunityScreen> {
         post: post,
         service: _service,
         userId: _userId.isEmpty ? _user?.uid ?? '' : _userId,
-        userName: _userName.isEmpty ? (_user?.displayName ?? 'User') : _userName,
+        userName:
+            _userName.isEmpty ? (_user?.displayName ?? 'User') : _userName,
+        followService: _followService,
+        onAuthorTap: () => _openAuthorProfile(post),
         onLike: () async {
           if (_userId.isNotEmpty) {
             await _service.toggleLike(
               storyId: storyId,
               userId: _userId,
               userName: _userName.isEmpty
-                  ? (_user?.displayName ?? _user?.email?.split('@').first ?? 'User')
+                  ? (_user?.displayName ??
+                      _user?.email?.split('@').first ??
+                      'User')
                   : _userName,
             );
           }
@@ -727,12 +746,27 @@ class _CommunityScreenState extends State<CommunityScreen> {
             if (!context.mounted) return;
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('Could not update saved story. Please try again.'),
+                content:
+                    Text('Could not update saved story. Please try again.'),
               ),
             );
           }
         },
         highlighted: storyId == _communityHighlightedStoryId,
+      ),
+    );
+  }
+
+  void _openAuthorProfile(StoryPost post) {
+    final authorId = post.authorId;
+    if (authorId.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PublicProfileScreen(
+          userId: authorId,
+          fallbackName: post.author,
+          fallbackHandle: post.handle,
+        ),
       ),
     );
   }
@@ -1190,7 +1224,8 @@ class _CommunityScreenState extends State<CommunityScreen> {
               moderationListenerAttached = true;
               controller.addListener(() {
                 moderationDebounce?.cancel();
-                moderationDebounce = Timer(const Duration(milliseconds: 240), () {
+                moderationDebounce =
+                    Timer(const Duration(milliseconds: 240), () {
                   if (isSheetClosing || !sheetContext.mounted) return;
                   final surface = replyTarget == null
                       ? ModerationSurface.comment
@@ -2352,6 +2387,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
     if (type == 'comment_reply') return 'Someone replied to your comment';
     if (type == 'comment_reaction') return 'Someone reacted to your comment';
     if (type == 'rating') return 'Someone rated your story';
+    if (type == 'follow') return 'Someone started following you';
     if (type == 'parent_approval') return 'A story is waiting for approval';
     if (type == 'approval_result') return 'Your story approval was updated';
     return 'Someone liked your story';
@@ -2362,6 +2398,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
     if (type == 'comment_reply') return Icons.reply;
     if (type == 'comment_reaction') return Icons.add_reaction_outlined;
     if (type == 'rating') return Icons.star_outline;
+    if (type == 'follow') return Icons.person_add_alt_1;
     if (type == 'parent_approval') return Icons.fact_check_outlined;
     if (type == 'approval_result') return Icons.verified_outlined;
     return Icons.favorite;
@@ -2372,6 +2409,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
     if (type == 'comment_reply') return kAppPrimary;
     if (type == 'comment_reaction') return kAppPrimary;
     if (type == 'rating') return Colors.amber.shade800;
+    if (type == 'follow') return Colors.pink.shade600;
     if (type == 'parent_approval') return Colors.orange.shade800;
     if (type == 'approval_result') return Colors.green.shade700;
     return Colors.redAccent;
@@ -2385,24 +2423,28 @@ class _NotificationScreenState extends State<NotificationScreen> {
 class StoryCard extends StatelessWidget {
   final StoryPost post;
   final StoryService service;
+  final FollowService followService;
   final String userId;
   final String userName;
   final VoidCallback onLike;
   final VoidCallback onOpen;
   final VoidCallback onComment;
   final VoidCallback onSave;
+  final VoidCallback? onAuthorTap;
   final bool highlighted;
 
   const StoryCard({
     super.key,
     required this.post,
     required this.service,
+    required this.followService,
     required this.userId,
     required this.userName,
     required this.onLike,
     required this.onOpen,
     required this.onComment,
     required this.onSave,
+    this.onAuthorTap,
     this.highlighted = false,
   });
 
@@ -2413,7 +2455,8 @@ class StoryCard extends StatelessWidget {
     final imageHeight = (screenWidth * 0.48).clamp(155.0, 220.0).toDouble();
 
     return Padding(
-      padding: EdgeInsets.symmetric(horizontal: horizontalPadding, vertical: 10),
+      padding:
+          EdgeInsets.symmetric(horizontal: horizontalPadding, vertical: 10),
       child: Container(
         decoration: BoxDecoration(
           color: highlighted ? const Color(0xFFFFFBEB) : Colors.white,
@@ -2463,37 +2506,64 @@ class StoryCard extends StatelessWidget {
                     right: 12,
                     child: Row(
                       children: [
-                        CircleAvatar(
-                          radius: 18,
-                          backgroundColor: const Color(0xFF7B1FA2),
-                          child: Text(
-                            post.author.isNotEmpty ? post.author[0] : '?',
-                            style: const TextStyle(color: Colors.white),
+                        Expanded(
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(22),
+                            onTap: onAuthorTap,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 2,
+                                vertical: 2,
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  CircleAvatar(
+                                    radius: 18,
+                                    backgroundColor: const Color(0xFF7B1FA2),
+                                    child: Text(
+                                      post.author.isNotEmpty
+                                          ? post.author[0]
+                                          : '?',
+                                      style:
+                                          const TextStyle(color: Colors.white),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Flexible(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          post.author,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.white,
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        Text(
+                                          '@${post.handle}',
+                                          style: const TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.white70,
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           ),
                         ),
                         const SizedBox(width: 8),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                post.author,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              Text(
-                                '@${post.handle}',
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.white70,
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
-                          ),
+                        _StoryFollowButton(
+                          followService: followService,
+                          currentUserId: userId,
+                          targetUserId: post.authorId,
                         ),
                       ],
                     ),
@@ -2585,6 +2655,110 @@ class StoryCard extends StatelessWidget {
   }
 }
 
+class _StoryFollowButton extends StatefulWidget {
+  final FollowService followService;
+  final String currentUserId;
+  final String targetUserId;
+
+  const _StoryFollowButton({
+    required this.followService,
+    required this.currentUserId,
+    required this.targetUserId,
+  });
+
+  @override
+  State<_StoryFollowButton> createState() => _StoryFollowButtonState();
+}
+
+class _StoryFollowButtonState extends State<_StoryFollowButton> {
+  bool _isSaving = false;
+
+  bool get _canFollow =>
+      widget.currentUserId.isNotEmpty &&
+      widget.targetUserId.isNotEmpty &&
+      widget.currentUserId != widget.targetUserId;
+
+  Future<void> _toggleFollow() async {
+    if (!_canFollow || _isSaving) return;
+    setState(() => _isSaving = true);
+    try {
+      final isFollowing = await widget.followService.toggleFollow(
+        currentUserId: widget.currentUserId,
+        targetUserId: widget.targetUserId,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(isFollowing ? 'Following author' : 'Unfollowed author'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not update follow: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_canFollow) return const SizedBox.shrink();
+
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: widget.followService.followStream(
+        currentUserId: widget.currentUserId,
+        targetUserId: widget.targetUserId,
+      ),
+      builder: (context, snapshot) {
+        final isFollowing = snapshot.data?.exists == true;
+        final foreground = isFollowing ? kAppPrimary : Colors.white;
+        final background =
+            isFollowing ? Colors.white : kAppPrimary.withValues(alpha: 0.96);
+
+        return SizedBox.square(
+          dimension: 34,
+          child: IconButton(
+            tooltip: isFollowing ? 'Unfollow' : 'Follow',
+            onPressed: _isSaving ? null : _toggleFollow,
+            icon: _isSaving
+                ? SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: foreground,
+                    ),
+                  )
+                : Icon(
+                    isFollowing
+                        ? Icons.person_remove_alt_1
+                        : Icons.person_add_alt_1,
+                    size: 18,
+                  ),
+            style: IconButton.styleFrom(
+              backgroundColor: background,
+              foregroundColor: foreground,
+              disabledBackgroundColor: background.withValues(alpha: 0.82),
+              disabledForegroundColor: foreground.withValues(alpha: 0.7),
+              side: BorderSide(
+                color: isFollowing
+                    ? kAppPrimary.withValues(alpha: 0.34)
+                    : Colors.white.withValues(alpha: 0.36),
+              ),
+              padding: EdgeInsets.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              visualDensity: VisualDensity.compact,
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
 class _StoryActionCount extends StatelessWidget {
   final IconData icon;
   final Color color;
@@ -2628,6 +2802,7 @@ class _ReaderLayoutPiece {
   final bool isImage;
   final String? text;
   final String? imageUrl;
+
   /// Index into [_paragraphs] / [_paragraphKeys]; -1 for images.
   final int speechIndex;
 }
@@ -3094,6 +3269,7 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
                                 _AuthorRow(
                                   name: viewModel.displayPost.author,
                                   handle: viewModel.displayPost.handle,
+                                  onTap: _openAuthorProfile,
                                 ),
                                 const SizedBox(height: 6),
                                 if (viewModel.displayPost.imageUrl.isNotEmpty)
@@ -3197,6 +3373,20 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
             },
           );
         },
+      ),
+    );
+  }
+
+  void _openAuthorProfile() {
+    final post = viewModel.displayPost;
+    if (post.authorId.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PublicProfileScreen(
+          userId: post.authorId,
+          fallbackName: post.author,
+          fallbackHandle: post.handle,
+        ),
       ),
     );
   }
@@ -3322,45 +3512,54 @@ class _ReadAloudBar extends StatelessWidget {
 class _AuthorRow extends StatelessWidget {
   final String name;
   final String handle;
+  final VoidCallback? onTap;
 
-  const _AuthorRow({required this.name, required this.handle});
+  const _AuthorRow({
+    required this.name,
+    required this.handle,
+    this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Row(
-        children: [
-          CircleAvatar(
-            radius: 18,
-            backgroundColor: const Color(0xFF7B1FA2),
-            child: Text(
-              name.isNotEmpty ? name[0] : '?',
-              style: const TextStyle(color: Colors.white),
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 18,
+              backgroundColor: const Color(0xFF7B1FA2),
+              child: Text(
+                name.isNotEmpty ? name[0] : '?',
+                style: const TextStyle(color: Colors.white),
+              ),
             ),
-          ),
-          const SizedBox(width: 10),
-          Flexible(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  name,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    overflow: TextOverflow.ellipsis,
+            const SizedBox(width: 10),
+            Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    name,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                ),
-                Text(
-                  '@$handle',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                ),
-              ],
+                  Text(
+                    '@$handle',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
