@@ -1362,9 +1362,31 @@ extension _ProfileScreenDrawerSection on _ProfileScreenState {
                     "Drafts stay private until you publish them. Published stories appear in Community.",
               ),
               _InfoSection(
-                title: "Badges",
+                title: "Community",
                 body:
-                    "Earn badges by writing stories and collecting likes from readers.",
+                    "Read published stories, like, comment, save, rate, and follow authors.",
+              ),
+              _InfoSection(
+                title: "Badges",
+                bullets: [
+                  "Rookie: Write 1 story",
+                  "Weekly Spark: Write 2 stories in 7 days",
+                  "Fast Writer: Write 5 stories in 7 days",
+                  "Explorer: Write 10 stories in 7 days",
+                  "Loved: Get 10 likes in 7 days",
+                  "Bookmarked: Get 5 saves in 7 days",
+                  "Story Builder: Write 3 total stories",
+                  "Fan Favourite: Get 50 total likes",
+                ],
+              ),
+              _InfoSection(
+                title: "Pixie Dash",
+                bullets: [
+                  "Mini-game in Play tab",
+                  "Swipe to dodge",
+                  "Collect stars and gems",
+                  "Unlock pixie skins",
+                ],
               ),
               _InfoSection(
                 title: "E-Books",
@@ -1664,13 +1686,47 @@ class _InfoPage extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 6),
-                  Text(
-                    section.body,
-                    style: TextStyle(
-                      color: Colors.grey.shade700,
-                      height: 1.35,
+                  if (section.bullets.isEmpty)
+                    Text(
+                      section.body ?? '',
+                      style: TextStyle(
+                        color: Colors.grey.shade700,
+                        height: 1.35,
+                      ),
+                    )
+                  else
+                    Column(
+                      children: section.bullets
+                          .map(
+                            (bullet) => Padding(
+                              padding: const EdgeInsets.only(bottom: 5),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Padding(
+                                    padding: EdgeInsets.only(top: 6),
+                                    child: Icon(
+                                      Icons.circle,
+                                      size: 6,
+                                      color: kAppPrimary,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      bullet,
+                                      style: TextStyle(
+                                        color: Colors.grey.shade700,
+                                        height: 1.25,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          )
+                          .toList(),
                     ),
-                  ),
                 ],
               ),
             ),
@@ -1683,11 +1739,13 @@ class _InfoPage extends StatelessWidget {
 
 class _InfoSection {
   final String title;
-  final String body;
+  final String? body;
+  final List<String> bullets;
 
   const _InfoSection({
     required this.title,
-    required this.body,
+    this.body,
+    this.bullets = const [],
   });
 }
 

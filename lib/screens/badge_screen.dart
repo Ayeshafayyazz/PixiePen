@@ -46,7 +46,7 @@ class _BadgeScreenState extends State<BadgeScreen> {
         ),
         content: Text(
           unlocked
-              ? 'Congratulations. You unlocked this badge.'
+              ? 'Congratulations. You unlocked this badge.\n\n${badge['desc']}'
               : badge['desc'] as String,
           textAlign: TextAlign.center,
         ),
@@ -269,16 +269,13 @@ class _BadgeGrid extends StatelessWidget {
                           ),
                           const SizedBox(height: 6),
                           Text(
-                            isUnlocked
-                                ? 'Unlocked'
-                                : badge['desc'] as String,
+                            badge['desc'] as String,
                             textAlign: TextAlign.center,
                             maxLines: 3,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 12,
-                              color:
-                                  isUnlocked ? Colors.white70 : Colors.grey,
+                              color: isUnlocked ? Colors.white70 : Colors.grey,
                             ),
                           ),
                         ],
@@ -308,42 +305,42 @@ class BadgeEngine {
         'id': 'rookie',
         'icon': Icons.star,
         'label': 'Rookie',
-        'desc': 'Write your first story',
+        'desc': 'Write 1 story',
         'unlocked': storyCount >= 1,
       },
       {
         'id': 'weekly_spark',
         'icon': Icons.edit_calendar,
         'label': 'Weekly Spark',
-        'desc': 'Write 2 stories in a week',
+        'desc': 'Write 2 stories in 7 days',
         'unlocked': storiesThisWeek >= 2,
       },
       {
         'id': 'fast_writer',
         'icon': Icons.bolt,
         'label': 'Fast Writer',
-        'desc': 'Write 5 stories in a week',
+        'desc': 'Write 5 stories in 7 days',
         'unlocked': storiesThisWeek >= 5,
       },
       {
         'id': 'explorer',
         'icon': Icons.public,
         'label': 'Explorer',
-        'desc': 'Write 10 stories in a week',
+        'desc': 'Write 10 stories in 7 days',
         'unlocked': storiesThisWeek >= 10,
       },
       {
         'id': 'loved',
         'icon': Icons.favorite,
         'label': 'Loved',
-        'desc': 'Get 10 likes in a week',
+        'desc': 'Get 10 likes in 7 days',
         'unlocked': likesThisWeek >= 10,
       },
       {
         'id': 'bookmarked',
         'icon': Icons.bookmark,
         'label': 'Bookmarked',
-        'desc': 'Have 5 story saves in a week',
+        'desc': 'Get 5 saves in 7 days',
         'unlocked': savesThisWeek >= 5,
       },
       {
@@ -356,7 +353,7 @@ class BadgeEngine {
       {
         'id': 'fan_favorite',
         'icon': Icons.local_fire_department,
-        'label': 'Fan Favorite',
+        'label': 'Fan Favourite',
         'desc': 'Get 50 total likes',
         'unlocked': likes >= 50,
       },
