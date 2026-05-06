@@ -104,6 +104,23 @@ service cloud.firestore {
       allow create, update: if isOwner(userId);
     }
 
+    match /follows/{followId} {
+      allow read: if signedIn();
+      allow create: if signedIn() &&
+        request.resource.data.followerId == request.auth.uid &&
+        request.resource.data.targetId is string &&
+        request.resource.data.targetId != request.auth.uid &&
+        followId == request.auth.uid + '_' + request.resource.data.targetId &&
+        request.resource.data.keys().hasOnly([
+          'followerId',
+          'targetId',
+          'createdAt'
+        ]);
+      allow update: if false;
+      allow delete: if signedIn() &&
+        resource.data.followerId == request.auth.uid;
+    }
+
     match /stories/{storyId} {
       allow read: if signedIn() && (
         resource.data.status == 'published' ||
