@@ -620,6 +620,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     final parentSnap = await FirebaseFirestore.instance
         .collection('users')
         .where('email', isEqualTo: parentEmail.trim().toLowerCase())
+        .where('role', isEqualTo: 'parent')
         .limit(1)
         .get();
 

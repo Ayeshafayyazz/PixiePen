@@ -344,6 +344,7 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
     final parentSnap = await _db
         .collection('users')
         .where('email', isEqualTo: parentEmail.trim().toLowerCase())
+        .where('role', isEqualTo: 'parent')
         .limit(1)
         .get();
 
