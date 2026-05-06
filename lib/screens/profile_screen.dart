@@ -10,6 +10,7 @@ import 'badge_screen.dart';
 import 'write_story_screen.dart';
 import 'community.dart';
 import 'parent_approvals_screen.dart';
+import 'public_profile_screen.dart';
 import 'theme.dart';
 import '../routes.dart';
 import '../shared/utils/app_navigator.dart';
@@ -21,6 +22,7 @@ import '../domain/models/story_post.dart';
 import '../controllers/story_controller.dart';
 import '../services/story_service.dart';
 import '../services/content_moderation_service.dart';
+import '../services/follow_service.dart';
 import '../widgets/moderation_ui.dart';
 
 const List<_AvatarChoice> _avatarChoices = [
@@ -560,6 +562,7 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FollowService _followService = FollowService();
   final GlobalKey<ScaffoldState> _profileScaffoldKey =
       GlobalKey<ScaffoldState>();
   User? _user;
@@ -607,8 +610,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       }
       final preserveContactEmail = data['childLoginWithoutOwnEmail'] == true;
       await docRef.set({
-        if (!preserveContactEmail)
-          'email': _user!.email?.trim().toLowerCase(),
+        if (!preserveContactEmail) 'email': _user!.email?.trim().toLowerCase(),
         if (data['role'] == null) 'role': 'child',
         if (data['avatarId'] == null) 'avatarId': _avatarChoices.first.id,
       }, SetOptions(merge: true));
@@ -709,53 +711,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildBadgeStatCard(String? userId) {
-    if (userId == null) {
-      return _buildStatCard(Icons.emoji_events, "0", "Badges", Colors.orange);
-    }
-
-    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: _db
-          .collection('stories')
-          .where('authorId', isEqualTo: userId)
-          .snapshots(),
-      builder: (context, snapshot) {
-        int storyCount = 0;
-        int totalLikes = 0;
-
-        if (snapshot.hasData) {
-          final stories = snapshot.data!.docs;
-          storyCount = stories.length;
-
-          for (final story in stories) {
-            final data = story.data();
-            final likes = data['likes'];
-            if (likes is int) {
-              totalLikes += likes;
-            } else if (likes is num) {
-              totalLikes += likes.toInt();
-            } else if (likes is String) {
-              totalLikes += int.tryParse(likes) ?? 0;
-            }
-          }
-        }
-
-        final badges = BadgeEngine.getBadges(
-          storyCount: storyCount,
-          likes: totalLikes,
-        );
-        final count = badges.where((badge) => badge['unlocked'] == true).length;
-
-        return _buildStatCard(
-          Icons.emoji_events,
-          count.toString(),
-          "Badges",
-          Colors.orange,
-        );
-      },
-    );
-  }
-
   Widget _buildHeader(BuildContext context, String? userId) {
     final String authFallbackEmail = _user?.email ?? "no-email@example.com";
 
@@ -850,27 +805,53 @@ class _ProfileScreenState extends State<ProfileScreen> {
             },
           ),
 
-          const SizedBox(height: 20),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Flexible(child: _buildLikesStatCard(userId)),
-                const SizedBox(width: 10),
-                Flexible(
-                  child: _buildStatCardStream(
-                    icon: Icons.book,
-                    label: "Stories",
-                    color: Colors.blue,
-                    userId: userId,
-                    isLikes: false,
-                  ),
+          const SizedBox(height: 18),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final maxWidth = constraints.maxWidth;
+              final horizontalPadding = maxWidth < 330
+                  ? 16.0
+                  : maxWidth < 420
+                      ? 28.0
+                      : 56.0;
+              final gap = maxWidth < 330 ? 5.0 : 8.0;
+              final availableWidth = maxWidth - (horizontalPadding * 2);
+              final cardWidth =
+                  ((availableWidth - (gap * 2)) / 3).clamp(64.0, 76.0);
+
+              return Padding(
+                padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Flexible(
+                      child: _buildStatCardStream(
+                        icon: Icons.book,
+                        label: "Stories",
+                        color: Colors.blue,
+                        userId: userId,
+                        isLikes: false,
+                        width: cardWidth,
+                      ),
+                    ),
+                    SizedBox(width: gap),
+                    Flexible(
+                      child: _buildFollowersStatCard(
+                        userId,
+                        width: cardWidth,
+                      ),
+                    ),
+                    SizedBox(width: gap),
+                    Flexible(
+                      child: _buildFollowingStatCard(
+                        userId,
+                        width: cardWidth,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 10),
-                Flexible(child: _buildBadgeStatCard(userId)),
-              ],
-            ),
+              );
+            },
           ),
           const SizedBox(height: 20),
           ElevatedButton.icon(
@@ -892,46 +873,82 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildLikesStatCard(String? userId) {
-    if (userId == null) {
-      return _buildStatCard(Icons.favorite, "0", "Likes", Colors.red);
+  Widget _buildFollowersStatCard(String? userId, {required double width}) {
+    return _buildFollowStatCard(
+      userId: userId,
+      icon: Icons.people_alt_outlined,
+      label: 'Followers',
+      color: Colors.pink,
+      streamBuilder: (id) => _followService.followersStream(id),
+      idField: 'followerId',
+      width: width,
+    );
+  }
+
+  Widget _buildFollowingStatCard(String? userId, {required double width}) {
+    return _buildFollowStatCard(
+      userId: userId,
+      icon: Icons.person_add_alt_1,
+      label: 'Following',
+      color: Colors.orange,
+      streamBuilder: (id) => _followService.followingStream(id),
+      idField: 'targetId',
+      width: width,
+    );
+  }
+
+  Widget _buildFollowStatCard({
+    required String? userId,
+    required IconData icon,
+    required String label,
+    required Color color,
+    required Stream<QuerySnapshot<Map<String, dynamic>>> Function(String userId)
+        streamBuilder,
+    required String idField,
+    required double width,
+  }) {
+    if (userId == null || userId.isEmpty) {
+      return _buildStatCard(icon, '0', label, color, width: width);
     }
 
-    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-      stream: _db.collection('users').doc(userId).snapshots(),
-      builder: (context, userSnap) {
-        if (userSnap.hasError) {
-          return _buildStatCardStream(
-            icon: Icons.favorite,
-            label: "Likes",
-            color: Colors.red,
-            userId: userId,
-            isLikes: true,
-          );
-        }
-
-        if (userSnap.hasData && userSnap.data!.exists) {
-          final userData = userSnap.data!.data() ?? {};
-          final dynamic totalLikesRaw = userData['totalLikes'];
-          if (totalLikesRaw is int) {
-            return _buildStatCard(
-                Icons.favorite, totalLikesRaw.toString(), "Likes", Colors.red);
-          }
-          if (totalLikesRaw is String) {
-            final parsed = int.tryParse(totalLikesRaw) ?? 0;
-            return _buildStatCard(
-                Icons.favorite, parsed.toString(), "Likes", Colors.red);
-          }
-        }
-
-        return _buildStatCardStream(
-          icon: Icons.favorite,
-          label: "Likes",
-          color: Colors.red,
-          userId: userId,
-          isLikes: true,
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: streamBuilder(userId),
+      builder: (context, snapshot) {
+        final count = snapshot.data?.docs.length ?? 0;
+        return _buildStatCard(
+          icon,
+          '$count',
+          label,
+          color,
+          width: width,
+          onTap: () => _openFollowList(
+            title: label,
+            emptyText: label == 'Followers'
+                ? 'No followers yet'
+                : 'Not following anyone yet',
+            stream: streamBuilder(userId),
+            idField: idField,
+          ),
         );
       },
+    );
+  }
+
+  void _openFollowList({
+    required String title,
+    required String emptyText,
+    required Stream<QuerySnapshot<Map<String, dynamic>>> stream,
+    required String idField,
+  }) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _FollowListScreen(
+          title: title,
+          emptyText: emptyText,
+          stream: stream,
+          idField: idField,
+        ),
+      ),
     );
   }
 
@@ -941,9 +958,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     required Color color,
     required String? userId,
     required bool isLikes,
+    double? width,
   }) {
     if (userId == null) {
-      return _buildStatCard(icon, "0", label, color);
+      return _buildStatCard(icon, "0", label, color, width: width);
     }
 
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -954,11 +972,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
           .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          return _buildStatCard(icon, "0", label, color);
+          return _buildStatCard(icon, "0", label, color, width: width);
         }
 
         if (!snapshot.hasData) {
-          return _buildStatCard(icon, "0", label, color);
+          return _buildStatCard(icon, "0", label, color, width: width);
         }
 
         final stories = snapshot.data!.docs;
@@ -974,54 +992,282 @@ class _ProfileScreenState extends State<ProfileScreen> {
               totalLikes += int.tryParse(likesRaw) ?? 0;
             }
           }
-          return _buildStatCard(icon, totalLikes.toString(), label, color);
+          return _buildStatCard(
+            icon,
+            totalLikes.toString(),
+            label,
+            color,
+            width: width,
+          );
         } else {
-          return _buildStatCard(icon, stories.length.toString(), label, color);
+          return _buildStatCard(
+            icon,
+            stories.length.toString(),
+            label,
+            color,
+            width: width,
+          );
         }
       },
     );
   }
 
   Widget _buildStatCard(
-      IconData icon, String value, String label, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      width: 95,
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.9),
+    IconData icon,
+    String value,
+    String label,
+    Color color, {
+    double? width,
+    VoidCallback? onTap,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: color.withValues(alpha: 0.4),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 7),
+          width: width ?? 72,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.9),
+            borderRadius: BorderRadius.circular(10),
+            boxShadow: [
+              BoxShadow(
+                color: color.withValues(alpha: 0.32),
+                blurRadius: 6,
+                offset: const Offset(0, 3),
+              ),
+            ],
           ),
-        ],
-      ),
-      child: Column(
-        children: [
-          Icon(icon, color: Colors.white, size: 26),
-          const SizedBox(height: 6),
-          Text(
-            value,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-            ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: Colors.white, size: 18),
+              const SizedBox(height: 2),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  value,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
           ),
-          Text(
-            label,
-            style: const TextStyle(
-              color: Colors.white70,
-              fontSize: 12,
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
+}
 
+class _FollowListScreen extends StatelessWidget {
+  final String title;
+  final String emptyText;
+  final Stream<QuerySnapshot<Map<String, dynamic>>> stream;
+  final String idField;
+
+  const _FollowListScreen({
+    required this.title,
+    required this.emptyText,
+    required this.stream,
+    required this.idField,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF9F7FF),
+      appBar: AppBar(
+        title: Text(title),
+        backgroundColor: kAppPrimary,
+        foregroundColor: Colors.white,
+      ),
+      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: stream,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting &&
+              !snapshot.hasData) {
+            return const Center(
+              child: CircularProgressIndicator(color: kAppPrimary),
+            );
+          }
+
+          if (snapshot.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  'Could not load $title.\n${snapshot.error}',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            );
+          }
+
+          final docs = snapshot.data?.docs ?? [];
+          if (docs.isEmpty) {
+            return Center(
+              child: Text(
+                emptyText,
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+            );
+          }
+
+          return ListView.separated(
+            padding: const EdgeInsets.all(16),
+            itemCount: docs.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 10),
+            itemBuilder: (context, index) {
+              final userId = docs[index].data()[idField] as String? ?? '';
+              return _FollowUserTile(userId: userId);
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _FollowUserTile extends StatelessWidget {
+  final String userId;
+
+  const _FollowUserTile({required this.userId});
+
+  @override
+  Widget build(BuildContext context) {
+    if (userId.isEmpty) return const SizedBox.shrink();
+
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection(FirestoreCollections.users)
+          .doc(userId)
+          .snapshots(),
+      builder: (context, snapshot) {
+        final data = snapshot.data?.data() ?? {};
+        final name = _displayName(data);
+        final handle = _handle(data, name);
+        final photoUrl = _photoUrl(data);
+
+        return Material(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => PublicProfileScreen(
+                    userId: userId,
+                    fallbackName: name,
+                    fallbackHandle: handle,
+                  ),
+                ),
+              );
+            },
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 24,
+                    backgroundColor: kAppPrimary,
+                    backgroundImage:
+                        photoUrl == null ? null : NetworkImage(photoUrl),
+                    child: photoUrl == null
+                        ? Text(
+                            name.isNotEmpty ? name[0].toUpperCase() : '?',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          )
+                        : null,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 15,
+                          ),
+                        ),
+                        Text(
+                          '@$handle',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.grey.shade700,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right, color: kAppPrimary),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  String _displayName(Map<String, dynamic> data) {
+    final username = data['username'] ?? data['displayName'];
+    if (username is String && username.trim().isNotEmpty) {
+      return username.trim();
+    }
+    final email = data['email'];
+    if (email is String && email.trim().contains('@')) {
+      return email.trim().split('@').first;
+    }
+    return 'PixiePen User';
+  }
+
+  String _handle(Map<String, dynamic> data, String name) {
+    final handle = data['handle'];
+    if (handle is String && handle.trim().isNotEmpty) {
+      return handle.trim().replaceFirst('@', '');
+    }
+    final email = data['email'];
+    if (email is String && email.trim().contains('@')) {
+      return email.trim().split('@').first;
+    }
+    return name.replaceAll(' ', '').toLowerCase();
+  }
+
+  String? _photoUrl(Map<String, dynamic> data) {
+    final photoUrl = data['photoURL'] ?? data['profileImageUrl'];
+    if (photoUrl is String && photoUrl.trim().isNotEmpty) {
+      return photoUrl.trim();
+    }
+    return null;
+  }
+}
+
+extension _ProfileScreenDrawerSection on _ProfileScreenState {
   Widget _buildDrawer(BuildContext context) {
     final String email = _user?.email ?? "no-email@example.com";
 
@@ -2217,9 +2463,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                               runSpacing: 8,
                               children: [
                                 OutlinedButton.icon(
-                                  onPressed: _photoSaving
-                                      ? null
-                                      : _showAvatarPicker,
+                                  onPressed:
+                                      _photoSaving ? null : _showAvatarPicker,
                                   icon: const Icon(Icons.face),
                                   label: const Text('Choose Avatar'),
                                 ),
@@ -2362,7 +2607,8 @@ class _StoriesTabState extends State<_StoriesTab> {
   @override
   void didUpdateWidget(covariant _StoriesTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.userId != widget.userId || oldWidget.status != widget.status) {
+    if (oldWidget.userId != widget.userId ||
+        oldWidget.status != widget.status) {
       _fetchStories();
     }
   }
@@ -2698,6 +2944,7 @@ class _SavedStoriesProfileTab extends StatelessWidget {
       posts.add(
         StoryPost(
           id: mappedPost.id,
+          authorId: mappedPost.authorId,
           author: mappedPost.author,
           handle: mappedPost.handle,
           title: mappedPost.title,
