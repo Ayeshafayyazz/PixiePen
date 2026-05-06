@@ -9,6 +9,7 @@ import 'auth/verify_email_screen.dart';
 import 'screens/community.dart';
 import 'screens/ebook_screen.dart';
 import 'screens/parent_approvals_screen.dart';
+import 'screens/pixie_dash_screen.dart';
 import 'screens/profile_screen.dart';
 
 class AppRoutes {
@@ -21,6 +22,7 @@ class AppRoutes {
   static const String ebook = '/ebook';
   static const String profile = '/profile';
   static const String parentApprovals = '/parent-approvals';
+  static const String pixieDash = '/pixie-dash';
   static const String rewards = '/rewards';
   static const String myStories = '/my-stories';
   static const String writeStory = '/write-story';
@@ -37,4 +39,5 @@ final Map<String, WidgetBuilder> appRoutes = {
   AppRoutes.ebook: (_) => const EbookScreen(),
   AppRoutes.profile: (_) => const ProfileScreen(),
   AppRoutes.parentApprovals: (_) => const ParentApprovalsScreen(),
+  AppRoutes.pixieDash: (_) => const PixieDashScreen(),
 };
