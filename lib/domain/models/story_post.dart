@@ -9,6 +9,7 @@ class Comment {
 
 class StoryPost {
   final String id;
+  final String authorId;
   final String author;
   final String handle;
   final String title;
@@ -27,6 +28,7 @@ class StoryPost {
 
   const StoryPost({
     required this.id,
+    this.authorId = '',
     required this.author,
     required this.handle,
     required this.title,
@@ -46,6 +48,7 @@ class StoryPost {
 
   StoryPost toggleLike() => StoryPost(
         id: id,
+        authorId: authorId,
         author: author,
         handle: handle,
         title: title,

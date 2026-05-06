@@ -25,6 +25,7 @@ class StoryPostMapper {
 
     return StoryPost(
       id: storyId,
+      authorId: (data[FirestoreStoryFields.authorId] as String?) ?? '',
       author: authorName,
       handle: handle,
       title: title,
