@@ -71,6 +71,9 @@ class _PixieDashScreenState extends State<PixieDashScreen>
     if (storedDailyDate != today) {
       await prefs.setString(_dailyDateKey, today);
       await prefs.setInt(_dailyScoreKey, 0);
+      await prefs.setInt(_gemsKey, 0);
+      await prefs.setInt(_selectedSkinKey, 0);
+      await prefs.setStringList(_unlockedSkinsKey, ['0']);
     }
 
     final unlocked = prefs
@@ -146,7 +149,7 @@ class _PixieDashScreenState extends State<PixieDashScreen>
   Future<void> _unlockEarnedSkins() async {
     var changed = false;
     for (var index = 0; index < _skins.length; index++) {
-      if (_gems >= _skins[index].cost && _unlockedSkins.add(index)) {
+      if (_gems >= _skins[index].dailyCost && _unlockedSkins.add(index)) {
         changed = true;
       }
     }
@@ -408,14 +411,14 @@ class _DashSkin {
   final Color body;
   final Color wing;
   final Color trail;
-  final int cost;
+  final int dailyCost;
 
   const _DashSkin({
     required this.name,
     required this.body,
     required this.wing,
     required this.trail,
-    required this.cost,
+    required this.dailyCost,
   });
 }
 
@@ -425,28 +428,28 @@ const _skins = [
     body: Color(0xFF8E24AA),
     wing: Color(0xFFE1BEE7),
     trail: Color(0xFFCE93D8),
-    cost: 0,
+    dailyCost: 0,
   ),
   _DashSkin(
     name: 'Mint',
     body: Color(0xFF00897B),
     wing: Color(0xFFB2DFDB),
     trail: Color(0xFF80CBC4),
-    cost: 25,
+    dailyCost: 80,
   ),
   _DashSkin(
     name: 'Sunny',
     body: Color(0xFFF9A825),
     wing: Color(0xFFFFECB3),
     trail: Color(0xFFFFD54F),
-    cost: 60,
+    dailyCost: 180,
   ),
   _DashSkin(
     name: 'Rose',
     body: Color(0xFFD81B60),
     wing: Color(0xFFF8BBD0),
     trail: Color(0xFFF48FB1),
-    cost: 110,
+    dailyCost: 350,
   ),
 ];
 
@@ -1033,7 +1036,9 @@ class _SkinShelf extends StatelessWidget {
                             ),
                           ),
                           Text(
-                            unlocked ? 'Ready' : '${skin.cost - gems} gems',
+                            unlocked
+                                ? 'Ready today'
+                                : '${skin.dailyCost - gems} gems today',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
