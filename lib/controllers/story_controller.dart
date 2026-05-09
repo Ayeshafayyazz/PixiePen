@@ -44,7 +44,11 @@ class StoryController extends ChangeNotifier {
             _stories = snapshot.docs
                 .map((doc) => <String, dynamic>{'id': doc.id, ...doc.data()})
                 .toList();
-            _setLoading(false);
+            if (_isLoading) {
+              _setLoading(false);
+            } else {
+              notifyListeners();
+            }
           },
           onError: (Object error) {
             _setError(error.toString());

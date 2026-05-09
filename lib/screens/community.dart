@@ -16,6 +16,7 @@ import '../controllers/story_controller.dart';
 import '../data/mappers/story_post_mapper.dart';
 import '../domain/models/story_post.dart';
 import '../services/follow_service.dart';
+import '../services/gemini_service.dart';
 import '../services/story_service.dart';
 import '../services/content_moderation_service.dart';
 import '../widgets/moderation_ui.dart';
@@ -175,6 +176,45 @@ class StoryReaderViewModel extends ChangeNotifier {
     currentPerspectiveIndex = 0;
     currentMapping = PerspectiveEngine.getDefaultMapping(0);
     _updateDisplayPost();
+  }
+
+  void setGeneratedPerspective({
+    required int index,
+    required String label,
+    required String text,
+  }) {
+    currentPerspectiveIndex = index;
+    currentMapping = CharacterMapping(
+      pronounMap: const {},
+      nameMap: const {},
+      label: label,
+    );
+    final shiftedText = text.trim();
+    displayPost = StoryPost(
+      id: originalPost.id,
+      authorId: originalPost.authorId,
+      author: originalPost.author,
+      handle: originalPost.handle,
+      title: originalPost.title,
+      excerpt: shiftedText,
+      likes: originalPost.likes,
+      comments: originalPost.comments,
+      saves: originalPost.saves,
+      ratingCount: originalPost.ratingCount,
+      averageRating: originalPost.averageRating,
+      likedByMe: originalPost.likedByMe,
+      savedByMe: originalPost.savedByMe,
+      accent: originalPost.accent,
+      imageUrl: originalPost.imageUrl,
+      commentList: originalPost.commentList,
+      contentBlocks: [
+        {
+          'type': StoryContentCodec.typeText,
+          'text': shiftedText,
+        },
+      ],
+    );
+    notifyListeners();
   }
 
   void _updateDisplayPost() {
@@ -2564,6 +2604,7 @@ class StoryCard extends StatelessWidget {
                           followService: followService,
                           currentUserId: userId,
                           targetUserId: post.authorId,
+                          targetUserName: post.author,
                         ),
                       ],
                     ),
@@ -2659,11 +2700,13 @@ class _StoryFollowButton extends StatefulWidget {
   final FollowService followService;
   final String currentUserId;
   final String targetUserId;
+  final String targetUserName;
 
   const _StoryFollowButton({
     required this.followService,
     required this.currentUserId,
     required this.targetUserId,
+    required this.targetUserName,
   });
 
   @override
@@ -2687,9 +2730,12 @@ class _StoryFollowButtonState extends State<_StoryFollowButton> {
         targetUserId: widget.targetUserId,
       );
       if (!mounted) return;
+      final name = widget.targetUserName.trim().isEmpty
+          ? 'this user'
+          : widget.targetUserName.trim();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(isFollowing ? 'Following author' : 'Unfollowed author'),
+          content: Text(isFollowing ? 'Following $name' : 'Unfollowed $name'),
           duration: const Duration(seconds: 2),
         ),
       );
@@ -2834,12 +2880,14 @@ class StoryReaderPage extends StatefulWidget {
 class _StoryReaderPageState extends State<StoryReaderPage> {
   late StoryReaderViewModel viewModel;
   final FlutterTts _tts = FlutterTts();
+  final GeminiService _geminiService = GeminiService();
   final ScrollController _storyScrollController = ScrollController();
   final List<GlobalKey> _paragraphKeys = [];
   List<String> _paragraphs = [];
   List<_ReaderLayoutPiece> _layoutPieces = [];
   bool _isSpeaking = false;
   bool _isPreparingSpeech = false;
+  bool _isShiftingPerspective = false;
   bool _isPaused = false;
   int? _activeParagraphIndex;
   int _speechSession = 0;
@@ -3124,6 +3172,55 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
     });
   }
 
+  String _sourceStoryText() {
+    final blocks = widget.post.contentBlocks;
+    if (blocks != null && blocks.isNotEmpty) {
+      final text = StoryContentCodec.joinPlainText(blocks).trim();
+      if (text.isNotEmpty) return text;
+    }
+    return widget.post.excerpt.trim();
+  }
+
+  Future<void> _applyGeminiPerspective({
+    required int index,
+    required String label,
+    required String shiftType,
+  }) async {
+    Navigator.pop(context);
+    final sourceText = _sourceStoryText();
+    if (sourceText.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No story text to shift.')),
+      );
+      return;
+    }
+
+    await _stopReadAloud();
+    setState(() => _isShiftingPerspective = true);
+
+    try {
+      final shifted = await _geminiService.shiftPerspective(
+        shiftType,
+        sourceText,
+      );
+      if (!mounted) return;
+      viewModel.setGeneratedPerspective(
+        index: index,
+        label: label,
+        text: shifted,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not shift perspective: $error')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isShiftingPerspective = false);
+      }
+    }
+  }
+
   void _showPerspectiveMenu() {
     showModalBottomSheet(
       context: context,
@@ -3132,48 +3229,111 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (context) {
-        return Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text(
-                'Choose Perspective',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 16),
-              _perspectiveButton(
-                label: 'First Person (I)',
-                index: 0,
-              ),
-              _perspectiveButton(
-                label: 'Second Person (You)',
-                index: 1,
-              ),
-              _perspectiveButton(
-                label: 'Third Person (They)',
-                index: 2,
-              ),
-              const SizedBox(height: 12),
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.grey[600],
-                  padding: const EdgeInsets.symmetric(vertical: 12),
+        return SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'Choose Perspective',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
-                icon: const Icon(Icons.refresh, color: Colors.white),
-                label:
-                    const Text('Reset', style: TextStyle(color: Colors.white)),
-                onPressed: () {
-                  _stopReadAloud();
-                  viewModel.resetPerspective();
-                  Navigator.pop(context);
-                },
-              ),
-            ],
+                const SizedBox(height: 16),
+                _perspectiveButton(
+                  label: 'First Person (I)',
+                  index: 0,
+                ),
+                _perspectiveButton(
+                  label: 'Second Person (You)',
+                  index: 1,
+                ),
+                _perspectiveButton(
+                  label: 'Third Person (They)',
+                  index: 2,
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'AI Story Shift',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 8),
+                _aiPerspectiveButton(
+                  label: 'Villain View',
+                  index: 10,
+                  shiftType: 'villain',
+                ),
+                _aiPerspectiveButton(
+                  label: 'Side Character',
+                  index: 11,
+                  shiftType: 'side_character',
+                ),
+                _aiPerspectiveButton(
+                  label: '10 Years Later',
+                  index: 12,
+                  shiftType: 'time_shift',
+                ),
+                _aiPerspectiveButton(
+                  label: 'Joy + Fear',
+                  index: 13,
+                  shiftType: 'emotional_lens',
+                ),
+                const SizedBox(height: 12),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.grey[600],
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  icon: const Icon(Icons.refresh, color: Colors.white),
+                  label: const Text(
+                    'Reset',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                  onPressed: () {
+                    _stopReadAloud();
+                    viewModel.resetPerspective();
+                    Navigator.pop(context);
+                  },
+                ),
+              ],
+            ),
           ),
         );
       },
+    );
+  }
+
+  Widget _aiPerspectiveButton({
+    required String label,
+    required int index,
+    required String shiftType,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: ElevatedButton.icon(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: viewModel.currentPerspectiveIndex == index
+              ? Colors.purple
+              : Colors.purple.shade50,
+          foregroundColor: viewModel.currentPerspectiveIndex == index
+              ? Colors.white
+              : Colors.purple.shade800,
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+        icon: const Icon(Icons.auto_awesome),
+        label: Text(label),
+        onPressed: _isShiftingPerspective
+            ? null
+            : () => _applyGeminiPerspective(
+                  index: index,
+                  label: label,
+                  shiftType: shiftType,
+                ),
+      ),
     );
   }
 

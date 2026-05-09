@@ -22,7 +22,9 @@ import '../domain/models/story_post.dart';
 import '../controllers/story_controller.dart';
 import '../services/story_service.dart';
 import '../services/content_moderation_service.dart';
+import '../services/gemini_service.dart';
 import '../services/follow_service.dart';
+import '../utils/story_search.dart';
 import '../widgets/moderation_ui.dart';
 
 const List<_AvatarChoice> _avatarChoices = [
@@ -1074,7 +1076,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 }
 
-class _FollowListScreen extends StatelessWidget {
+class _FollowListScreen extends StatefulWidget {
   final String title;
   final String emptyText;
   final Stream<QuerySnapshot<Map<String, dynamic>>> stream;
@@ -1088,16 +1090,32 @@ class _FollowListScreen extends StatelessWidget {
   });
 
   @override
+  State<_FollowListScreen> createState() => _FollowListScreenState();
+}
+
+class _FollowListScreenState extends State<_FollowListScreen> {
+  final TextEditingController _searchController = TextEditingController();
+  String _query = '';
+  String? _loadedUserIdsKey;
+  Future<List<_FollowUserResult>>? _usersFuture;
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF9F7FF),
       appBar: AppBar(
-        title: Text(title),
+        title: Text(widget.title),
         backgroundColor: kAppPrimary,
         foregroundColor: Colors.white,
       ),
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: stream,
+        stream: widget.stream,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting &&
               !snapshot.hasData) {
@@ -1111,7 +1129,7 @@ class _FollowListScreen extends StatelessWidget {
               child: Padding(
                 padding: const EdgeInsets.all(24),
                 child: Text(
-                  'Could not load $title.\n${snapshot.error}',
+                  'Could not load ${widget.title}.\n${snapshot.error}',
                   textAlign: TextAlign.center,
                 ),
               ),
@@ -1120,121 +1138,399 @@ class _FollowListScreen extends StatelessWidget {
 
           final docs = snapshot.data?.docs ?? [];
           if (docs.isEmpty) {
-            return Center(
-              child: Text(
-                emptyText,
-                style: const TextStyle(fontWeight: FontWeight.w800),
+            return _FollowListScaffold(
+              searchController: _searchController,
+              query: _query,
+              onSearchChanged: _setSearchQuery,
+              onClearSearch: _clearSearch,
+              child: _FollowListEmptyState(
+                icon: Icons.people_alt_outlined,
+                title: widget.emptyText,
               ),
             );
           }
 
-          return ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: docs.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 10),
-            itemBuilder: (context, index) {
-              final userId = docs[index].data()[idField] as String? ?? '';
-              return _FollowUserTile(userId: userId);
+          final userIds = docs
+              .map((doc) => doc.data()[widget.idField])
+              .whereType<String>()
+              .where((id) => id.isNotEmpty)
+              .toSet()
+              .toList()
+            ..sort();
+
+          return FutureBuilder<List<_FollowUserResult>>(
+            future: _followUsersFuture(userIds),
+            builder: (context, userSnapshot) {
+              if (userSnapshot.connectionState == ConnectionState.waiting &&
+                  !userSnapshot.hasData) {
+                return _FollowListScaffold(
+                  searchController: _searchController,
+                  query: _query,
+                  onSearchChanged: _setSearchQuery,
+                  onClearSearch: _clearSearch,
+                  child: const Center(
+                    child: CircularProgressIndicator(color: kAppPrimary),
+                  ),
+                );
+              }
+
+              if (userSnapshot.hasError) {
+                return _FollowListScaffold(
+                  searchController: _searchController,
+                  query: _query,
+                  onSearchChanged: _setSearchQuery,
+                  onClearSearch: _clearSearch,
+                  child: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(
+                        'Could not load people.\n${userSnapshot.error}',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+                );
+              }
+
+              final users = userSnapshot.data ?? const <_FollowUserResult>[];
+              final filteredUsers = _filterUsers(users, _query);
+              final hasSearch = StorySearch.hasSearchTerms(_query);
+
+              return _FollowListScaffold(
+                searchController: _searchController,
+                query: _query,
+                onSearchChanged: _setSearchQuery,
+                onClearSearch: _clearSearch,
+                showMinimumHint: !hasSearch && _query.trim().isNotEmpty,
+                child: filteredUsers.isEmpty
+                    ? _FollowListEmptyState(
+                        icon: hasSearch
+                            ? Icons.search_off
+                            : Icons.people_alt_outlined,
+                        title: hasSearch ? 'No people found' : widget.emptyText,
+                        message: hasSearch
+                            ? 'No ${widget.title.toLowerCase()} match "${_query.trim()}".'
+                            : null,
+                      )
+                    : ListView.separated(
+                        padding: const EdgeInsets.all(16),
+                        itemCount: filteredUsers.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 10),
+                        itemBuilder: (context, index) {
+                          return _FollowUserTile(user: filteredUsers[index]);
+                        },
+                      ),
+              );
             },
           );
         },
       ),
     );
   }
+
+  void _setSearchQuery(String value) {
+    setState(() => _query = value);
+  }
+
+  void _clearSearch() {
+    _searchController.clear();
+    setState(() => _query = '');
+  }
+
+  Future<List<_FollowUserResult>> _loadFollowUsers(List<String> userIds) async {
+    if (userIds.isEmpty) return const [];
+
+    final usersById = <String, Map<String, dynamic>>{};
+    for (var i = 0; i < userIds.length; i += 10) {
+      final chunk = userIds.skip(i).take(10).toList();
+      final snapshot = await FirebaseFirestore.instance
+          .collection(FirestoreCollections.users)
+          .where(FieldPath.documentId, whereIn: chunk)
+          .get();
+      for (final doc in snapshot.docs) {
+        usersById[doc.id] = doc.data();
+      }
+    }
+
+    final users = userIds
+        .map(
+          (id) => _FollowUserResult.fromData(
+            id,
+            usersById[id] ?? const <String, dynamic>{},
+          ),
+        )
+        .toList();
+    users.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    return users;
+  }
+
+  Future<List<_FollowUserResult>> _followUsersFuture(List<String> userIds) {
+    final key = userIds.join('|');
+    if (_usersFuture == null || _loadedUserIdsKey != key) {
+      _loadedUserIdsKey = key;
+      _usersFuture = _loadFollowUsers(userIds);
+    }
+    return _usersFuture!;
+  }
+
+  List<_FollowUserResult> _filterUsers(
+    List<_FollowUserResult> users,
+    String query,
+  ) {
+    if (!StorySearch.hasSearchTerms(query)) return users;
+    return users
+        .where(
+          (user) => StorySearch.matchesStory(
+            {
+              'authorName': user.name,
+              'username': user.name,
+              'handle': user.handle,
+              'body': user.email,
+            },
+            query,
+          ),
+        )
+        .toList(growable: false);
+  }
 }
 
 class _FollowUserTile extends StatelessWidget {
-  final String userId;
+  final _FollowUserResult user;
 
-  const _FollowUserTile({required this.userId});
+  const _FollowUserTile({required this.user});
 
   @override
   Widget build(BuildContext context) {
-    if (userId.isEmpty) return const SizedBox.shrink();
-
-    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance
-          .collection(FirestoreCollections.users)
-          .doc(userId)
-          .snapshots(),
-      builder: (context, snapshot) {
-        final data = snapshot.data?.data() ?? {};
-        final name = _displayName(data);
-        final handle = _handle(data, name);
-        final photoUrl = _photoUrl(data);
-
-        return Material(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(8),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(8),
-            onTap: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => PublicProfileScreen(
-                    userId: userId,
-                    fallbackName: name,
-                    fallbackHandle: handle,
-                  ),
-                ),
-              );
-            },
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Row(
-                children: [
-                  CircleAvatar(
-                    radius: 24,
-                    backgroundColor: kAppPrimary,
-                    backgroundImage:
-                        photoUrl == null ? null : NetworkImage(photoUrl),
-                    child: photoUrl == null
-                        ? Text(
-                            name.isNotEmpty ? name[0].toUpperCase() : '?',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          )
-                        : null,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w900,
-                            fontSize: 15,
-                          ),
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => PublicProfileScreen(
+                userId: user.id,
+                fallbackName: user.name,
+                fallbackHandle: user.handle,
+              ),
+            ),
+          );
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 24,
+                backgroundColor: kAppPrimary,
+                backgroundImage:
+                    user.photoUrl == null ? null : NetworkImage(user.photoUrl!),
+                child: user.photoUrl == null
+                    ? Text(
+                        user.name.isNotEmpty ? user.name[0].toUpperCase() : '?',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w900,
                         ),
-                        Text(
-                          '@$handle',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: Colors.grey.shade700,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
+                      )
+                    : null,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      user.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 15,
+                      ),
                     ),
-                  ),
-                  const Icon(Icons.chevron_right, color: kAppPrimary),
-                ],
+                    Text(
+                      '@${user.handle}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.grey.shade700,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: kAppPrimary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FollowListScaffold extends StatelessWidget {
+  final TextEditingController searchController;
+  final String query;
+  final ValueChanged<String> onSearchChanged;
+  final VoidCallback onClearSearch;
+  final bool showMinimumHint;
+  final Widget child;
+
+  const _FollowListScaffold({
+    required this.searchController,
+    required this.query,
+    required this.onSearchChanged,
+    required this.onClearSearch,
+    required this.child,
+    this.showMinimumHint = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Container(
+          color: Colors.white,
+          padding: EdgeInsets.fromLTRB(
+            MediaQuery.sizeOf(context).width < 380 ? 12.0 : 16.0,
+            12.0,
+            MediaQuery.sizeOf(context).width < 380 ? 12.0 : 16.0,
+            8.0,
+          ),
+          child: TextField(
+            controller: searchController,
+            textInputAction: TextInputAction.search,
+            decoration: InputDecoration(
+              hintText: 'Search name or username',
+              prefixIcon: const Icon(Icons.search, color: kAppPrimary),
+              suffixIcon: query.trim().isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Clear search',
+                      onPressed: onClearSearch,
+                      icon: const Icon(Icons.close),
+                    ),
+              filled: true,
+              fillColor: const Color(0xFFF7F3FF),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 12,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: Color(0xFFE2D9F3)),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: Color(0xFFE2D9F3)),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: kAppPrimary, width: 1.4),
+              ),
+            ),
+            onChanged: onSearchChanged,
+          ),
+        ),
+        if (showMinimumHint)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Enter at least ${StorySearch.minTermLength} characters to search.',
+                style: TextStyle(
+                  color: Colors.grey.shade700,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
           ),
-        );
-      },
+        Expanded(child: child),
+      ],
+    );
+  }
+}
+
+class _FollowListEmptyState extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String? message;
+
+  const _FollowListEmptyState({
+    required this.icon,
+    required this.title,
+    this.message,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 58, color: Colors.grey.shade500),
+            const SizedBox(height: 14),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                color: Colors.black87,
+              ),
+            ),
+            if (message != null) ...[
+              const SizedBox(height: 6),
+              Text(
+                message!,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.grey.shade700,
+                  height: 1.35,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FollowUserResult {
+  final String id;
+  final String name;
+  final String handle;
+  final String email;
+  final String? photoUrl;
+
+  const _FollowUserResult({
+    required this.id,
+    required this.name,
+    required this.handle,
+    required this.email,
+    this.photoUrl,
+  });
+
+  factory _FollowUserResult.fromData(String id, Map<String, dynamic> data) {
+    final name = _displayName(data);
+    return _FollowUserResult(
+      id: id,
+      name: name,
+      handle: _handle(data, name),
+      email: _email(data),
+      photoUrl: _photoUrl(data),
     );
   }
 
-  String _displayName(Map<String, dynamic> data) {
+  static String _displayName(Map<String, dynamic> data) {
     final username = data['username'] ?? data['displayName'];
     if (username is String && username.trim().isNotEmpty) {
       return username.trim();
@@ -1246,7 +1542,7 @@ class _FollowUserTile extends StatelessWidget {
     return 'PixiePen User';
   }
 
-  String _handle(Map<String, dynamic> data, String name) {
+  static String _handle(Map<String, dynamic> data, String name) {
     final handle = data['handle'];
     if (handle is String && handle.trim().isNotEmpty) {
       return handle.trim().replaceFirst('@', '');
@@ -1258,7 +1554,15 @@ class _FollowUserTile extends StatelessWidget {
     return name.replaceAll(' ', '').toLowerCase();
   }
 
-  String? _photoUrl(Map<String, dynamic> data) {
+  static String _email(Map<String, dynamic> data) {
+    final email = data['email'];
+    if (email is String && email.trim().isNotEmpty) {
+      return email.trim();
+    }
+    return '';
+  }
+
+  static String? _photoUrl(Map<String, dynamic> data) {
     final photoUrl = data['photoURL'] ?? data['profileImageUrl'];
     if (photoUrl is String && photoUrl.trim().isNotEmpty) {
       return photoUrl.trim();
@@ -1759,6 +2063,7 @@ class FeedbackScreen extends StatefulWidget {
 class _FeedbackScreenState extends State<FeedbackScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ContentModerationService _moderation = ContentModerationService();
+  final GeminiService _geminiService = GeminiService();
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   Timer? _moderationDebounce;
   ModerationLiveFeedback? _liveModeration;
@@ -1819,6 +2124,19 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
       await ModerationUi.showBlockDialog(
         context,
         result: moderation,
+        surface: ModerationSurface.appFeedback,
+      );
+      return;
+    }
+
+    final geminiSafe = await _geminiService.moderateContent(
+      '$_category $message',
+    );
+    if (!geminiSafe) {
+      if (!mounted) return;
+      await ModerationUi.showPlainMessage(
+        context,
+        message: ContentModerationService.childFriendlyWarning,
         surface: ModerationSurface.appFeedback,
       );
       return;
@@ -2707,7 +3025,10 @@ class _StoriesTabState extends State<_StoriesTab> {
           );
         }
 
-        final stories = _storyController.storyDocs;
+        final stories = _storyController.storyDocs.toList()
+          ..sort((a, b) => _storySortDate(b.data()).compareTo(
+                _storySortDate(a.data()),
+              ));
         if (stories.isEmpty) {
           return Center(
             child: Column(
@@ -2885,6 +3206,17 @@ class _StoriesTabState extends State<_StoriesTab> {
   }
 }
 
+DateTime _storySortDate(Map<String, dynamic> data) {
+  return _readProfileDate(data['updatedAt'], fallback: data['createdAt']);
+}
+
+DateTime _readProfileDate(dynamic value, {dynamic fallback}) {
+  if (value is Timestamp) return value.toDate();
+  if (value is DateTime) return value;
+  if (fallback != null) return _readProfileDate(fallback);
+  return DateTime.fromMillisecondsSinceEpoch(0);
+}
+
 class _SavedStoriesProfileTab extends StatelessWidget {
   final String? userId;
 
@@ -2910,7 +3242,7 @@ class _SavedStoriesProfileTab extends StatelessWidget {
         );
         if (savedStoryIds.isEmpty) return _emptyState();
 
-        return FutureBuilder<List<StoryPost>>(
+        return FutureBuilder<List<_SavedStoryPost>>(
           future: _loadSavedPosts(savedStoryIds, uid),
           builder: (context, postSnap) {
             if (postSnap.connectionState == ConnectionState.waiting) {
@@ -2919,7 +3251,8 @@ class _SavedStoriesProfileTab extends StatelessWidget {
               );
             }
 
-            final posts = postSnap.data ?? const <StoryPost>[];
+            final savedPosts = postSnap.data ?? const <_SavedStoryPost>[];
+            final posts = savedPosts.map((saved) => saved.post).toList();
             if (posts.isEmpty) return _emptyState();
 
             return ListView.builder(
@@ -2972,13 +3305,17 @@ class _SavedStoriesProfileTab extends StatelessWidget {
     );
   }
 
-  Future<List<StoryPost>> _loadSavedPosts(
+  Future<List<_SavedStoryPost>> _loadSavedPosts(
     List<String> storyIds,
     String uid,
   ) async {
-    final posts = <StoryPost>[];
+    final posts = <_SavedStoryPost>[];
 
     for (final storyId in storyIds) {
+      final savedDoc = await FirebaseFirestore.instance
+          .collection(FirestoreCollections.savedStories)
+          .doc('${uid}_$storyId')
+          .get();
       final storyDoc = await FirebaseFirestore.instance
           .collection('stories')
           .doc(storyId)
@@ -3000,23 +3337,27 @@ class _SavedStoriesProfileTab extends StatelessWidget {
         fallbackAuthor: authorName,
       );
       posts.add(
-        StoryPost(
-          id: mappedPost.id,
-          authorId: mappedPost.authorId,
-          author: mappedPost.author,
-          handle: mappedPost.handle,
-          title: mappedPost.title,
-          excerpt: mappedPost.excerpt,
-          likes: mappedPost.likes,
-          comments: mappedPost.comments,
-          likedByMe: mappedPost.likedByMe,
-          accent: mappedPost.accent,
-          imageUrl: mappedPost.imageUrl,
-          contentBlocks: mappedPost.contentBlocks,
+        _SavedStoryPost(
+          savedAt: _readProfileDate(savedDoc.data()?['savedAt']),
+          post: StoryPost(
+            id: mappedPost.id,
+            authorId: mappedPost.authorId,
+            author: mappedPost.author,
+            handle: mappedPost.handle,
+            title: mappedPost.title,
+            excerpt: mappedPost.excerpt,
+            likes: mappedPost.likes,
+            comments: mappedPost.comments,
+            likedByMe: mappedPost.likedByMe,
+            accent: mappedPost.accent,
+            imageUrl: mappedPost.imageUrl,
+            contentBlocks: mappedPost.contentBlocks,
+          ),
         ),
       );
     }
 
+    posts.sort((a, b) => b.savedAt.compareTo(a.savedAt));
     return posts;
   }
 
@@ -3058,6 +3399,16 @@ class _SavedStoriesProfileTab extends StatelessWidget {
     if (value is! List) return const [];
     return value.whereType<String>().where((id) => id.isNotEmpty).toList();
   }
+}
+
+class _SavedStoryPost {
+  final StoryPost post;
+  final DateTime savedAt;
+
+  const _SavedStoryPost({
+    required this.post,
+    required this.savedAt,
+  });
 }
 
 /// =============================================================================

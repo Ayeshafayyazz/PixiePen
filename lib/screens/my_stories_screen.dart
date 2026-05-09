@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../data/mappers/story_post_mapper.dart';
 import '../services/content_moderation_service.dart';
+import '../services/gemini_service.dart';
 import '../domain/models/story_post.dart';
 import '../services/story_service.dart';
 import '../shared/ui/empty_widget.dart';
@@ -36,6 +37,7 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   final ContentModerationService _moderationService =
       ContentModerationService();
+  final GeminiService _geminiService = GeminiService();
   User? _user;
 
   @override
@@ -126,7 +128,7 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
           final stories = (snapshot.data?.docs ?? [])
               .map((doc) => _StoryDashboardItem.fromDoc(doc, user))
               .toList()
-            ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+            ..sort(_compareRecentStoryActivity);
 
           final published =
               stories.where((story) => story.status == 'published').toList();
@@ -138,113 +140,148 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
               .toList();
           final totalLikes =
               stories.fold(0, (total, story) => total + story.likes);
-          final badges = BadgeEngine.getBadges(
-            storyCount: stories.length,
-            likes: totalLikes,
-            storiesThisWeek: stories
-                .where((story) => story.createdAt.isAfter(
-                      DateTime.now().subtract(const Duration(days: 7)),
-                    ))
-                .length,
-          );
-          final unlockedBadges =
-              badges.where((badge) => badge['unlocked'] == true).length;
-          final nextBadge = badges
-              .where((badge) => badge['unlocked'] != true)
-              .cast<Map<String, dynamic>?>()
-              .firstWhere((_) => true, orElse: () => null);
+          final weekStart = DateTime.now().subtract(const Duration(days: 7));
+          final storiesThisWeek = stories
+              .where((story) => story.createdAt.isAfter(weekStart))
+              .length;
 
-          return Column(
-            children: [
-              _BadgeHeader(
-                badges: badges,
-                unlockedBadges: unlockedBadges,
-                nextBadge: nextBadge,
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: Material(
-                  color: Colors.white,
-                  child: TabBar(
-                    controller: _tabController,
-                    isScrollable: false,
-                    padding: EdgeInsets.zero,
-                    labelPadding: EdgeInsets.zero,
-                    indicatorColor: kAppPrimary,
-                    labelColor: kAppPrimary,
-                    unselectedLabelColor: Colors.grey.shade600,
-                    labelStyle: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800,
-                    ),
-                    unselectedLabelStyle: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    tabs: [
-                      Tab(
-                        child: FittedBox(
-                          fit: BoxFit.scaleDown,
-                          child: Text('Published (${published.length})'),
+          return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: _db
+                .collection('storyLikes')
+                .where('authorId', isEqualTo: user.uid)
+                .snapshots(),
+            builder: (context, likeSnap) {
+              final likesThisWeek = (likeSnap.data?.docs ?? [])
+                  .where(
+                    (doc) => _readBadgeDate(doc.data()['createdAt'])
+                        .isAfter(weekStart),
+                  )
+                  .length;
+
+              return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                stream: _db
+                    .collection('savedStories')
+                    .where('authorId', isEqualTo: user.uid)
+                    .snapshots(),
+                builder: (context, saveSnap) {
+                  final savesThisWeek = (saveSnap.data?.docs ?? [])
+                      .where(
+                        (doc) =>
+                            _readBadgeDate(doc.data()['savedAt']).isAfter(
+                          weekStart,
+                        ),
+                      )
+                      .length;
+                  final badges = BadgeEngine.getBadges(
+                    storyCount: stories.length,
+                    likes: totalLikes,
+                    storiesThisWeek: storiesThisWeek,
+                    likesThisWeek: likesThisWeek,
+                    savesThisWeek: savesThisWeek,
+                  );
+                  final unlockedBadges =
+                      badges.where((badge) => badge['unlocked'] == true).length;
+                  final nextBadge = badges
+                      .where((badge) => badge['unlocked'] != true)
+                      .cast<Map<String, dynamic>?>()
+                      .firstWhere((_) => true, orElse: () => null);
+
+                  return Column(
+                    children: [
+                      _BadgeHeader(
+                        badges: badges,
+                        unlockedBadges: unlockedBadges,
+                        nextBadge: nextBadge,
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: Material(
+                          color: Colors.white,
+                          child: TabBar(
+                            controller: _tabController,
+                            isScrollable: false,
+                            padding: EdgeInsets.zero,
+                            labelPadding: EdgeInsets.zero,
+                            indicatorColor: kAppPrimary,
+                            labelColor: kAppPrimary,
+                            unselectedLabelColor: Colors.grey.shade600,
+                            labelStyle: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                            ),
+                            unselectedLabelStyle: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            tabs: [
+                              Tab(
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child:
+                                      Text('Published (${published.length})'),
+                                ),
+                              ),
+                              Tab(
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Text('Pending (${pending.length})'),
+                                ),
+                              ),
+                              Tab(
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Text('Sent Back (${rejected.length})'),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                      Tab(
-                        child: FittedBox(
-                          fit: BoxFit.scaleDown,
-                          child: Text('Pending (${pending.length})'),
-                        ),
-                      ),
-                      Tab(
-                        child: FittedBox(
-                          fit: BoxFit.scaleDown,
-                          child: Text('Sent Back (${rejected.length})'),
+                      Expanded(
+                        child: TabBarView(
+                          controller: _tabController,
+                          children: [
+                            _StoryList(
+                              status: 'published',
+                              stories: published,
+                              onOpen: _openStory,
+                              onEdit: _editStory,
+                              onPublish: _publishStory,
+                              onMakeEbook: _openEbookCreator,
+                              onDelete: _deleteStory,
+                              onViewFeedback: _showParentFeedback,
+                              highlightedStoryId: widget.highlightedStoryId,
+                            ),
+                            _StoryList(
+                              status: 'pending_parent_approval',
+                              stories: pending,
+                              onOpen: _openStory,
+                              onEdit: _editStory,
+                              onPublish: _publishStory,
+                              onMakeEbook: _openEbookCreator,
+                              onDelete: _deleteStory,
+                              onViewFeedback: _showParentFeedback,
+                              highlightedStoryId: widget.highlightedStoryId,
+                            ),
+                            _StoryList(
+                              status: 'rejected',
+                              stories: rejected,
+                              onOpen: _openStory,
+                              onEdit: _editStory,
+                              onPublish: _publishStory,
+                              onMakeEbook: _openEbookCreator,
+                              onDelete: _deleteStory,
+                              onViewFeedback: _showParentFeedback,
+                              highlightedStoryId: widget.highlightedStoryId,
+                            ),
+                          ],
                         ),
                       ),
                     ],
-                  ),
-                ),
-              ),
-              Expanded(
-                child: TabBarView(
-                  controller: _tabController,
-                  children: [
-                    _StoryList(
-                      status: 'published',
-                      stories: published,
-                      onOpen: _openStory,
-                      onEdit: _editStory,
-                      onPublish: _publishStory,
-                      onMakeEbook: _openEbookCreator,
-                      onDelete: _deleteStory,
-                      onViewFeedback: _showParentFeedback,
-                      highlightedStoryId: widget.highlightedStoryId,
-                    ),
-                    _StoryList(
-                      status: 'pending_parent_approval',
-                      stories: pending,
-                      onOpen: _openStory,
-                      onEdit: _editStory,
-                      onPublish: _publishStory,
-                      onMakeEbook: _openEbookCreator,
-                      onDelete: _deleteStory,
-                      onViewFeedback: _showParentFeedback,
-                      highlightedStoryId: widget.highlightedStoryId,
-                    ),
-                    _StoryList(
-                      status: 'rejected',
-                      stories: rejected,
-                      onOpen: _openStory,
-                      onEdit: _editStory,
-                      onPublish: _publishStory,
-                      onMakeEbook: _openEbookCreator,
-                      onDelete: _deleteStory,
-                      onViewFeedback: _showParentFeedback,
-                      highlightedStoryId: widget.highlightedStoryId,
-                    ),
-                  ],
-                ),
-              ),
-            ],
+                  );
+                },
+              );
+            },
           );
         },
       ),
@@ -276,6 +313,19 @@ class _MyStoriesScreenState extends State<MyStoriesScreen>
       await ModerationUi.showBlockDialog(
         context,
         result: moderation,
+        surface: ModerationSurface.story,
+      );
+      return;
+    }
+
+    final geminiSafe = await _geminiService.moderateContent(
+      '${story.title}\n\n${story.body}',
+    );
+    if (!geminiSafe) {
+      if (!mounted) return;
+      await ModerationUi.showPlainMessage(
+        context,
+        message: ContentModerationService.childFriendlyWarning,
         surface: ModerationSurface.story,
       );
       return;
@@ -1242,4 +1292,17 @@ class _StoryDashboardItem {
     if (value == 'pending_parent_approval') return 'pending_parent_approval';
     return 'draft';
   }
+}
+
+int _compareRecentStoryActivity(
+  _StoryDashboardItem a,
+  _StoryDashboardItem b,
+) {
+  return b.updatedAt.compareTo(a.updatedAt);
+}
+
+DateTime _readBadgeDate(dynamic value) {
+  if (value is Timestamp) return value.toDate();
+  if (value is DateTime) return value;
+  return DateTime.fromMillisecondsSinceEpoch(0);
 }
