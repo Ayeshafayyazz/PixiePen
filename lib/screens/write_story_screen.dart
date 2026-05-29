@@ -1,11 +1,19 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_quill/flutter_quill.dart' as quill;
 import 'speech_to_text_screen.dart';
 import 'theme.dart';
 import 'ai_image_generator_screen.dart';
+import '../models/generated_story_image.dart';
 import '../services/content_moderation_service.dart';
+import '../widgets/storage_image.dart';
+import '../services/gemini_service.dart';
+import '../services/story_image_generation_service.dart';
 import '../widgets/moderation_ui.dart';
 import '../services/story_inline_image_service.dart';
 import '../shared/utils/form_validation_helper.dart';
@@ -32,16 +40,24 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
   final ScrollController _storyScrollController = ScrollController();
   final ContentModerationService _moderationService =
       ContentModerationService();
+  final GeminiService _geminiService = GeminiService();
+  final StoryImageGenerationService _imageGen = StoryImageGenerationService();
   final StoryInlineImageService _inlineImageService = StoryInlineImageService();
   final List<_WriteSeg> _segments = [];
   /// Last text block that had focus; used by toolbar "Gallery" insert.
   int _lastActiveTextSegmentIndex = 0;
   String? _storyCoverUrl;
+  Uint8List? _storyCoverPreviewBytes;
   bool _isSaving = false;
   bool _isPublishing = false;
   bool _isUploadingInlineImage = false;
   /// Last removed inline image (SnackBar Undo restores it at [insertIndex]).
   _PendingImageRemoval? _pendingImageRemoval;
+
+  /// Real-time content-safety feedback while the writer types (lenient,
+  /// fiction-friendly — see ContentModerationService.previewStoryTyping).
+  ModerationLiveFeedback? _liveModeration;
+  Timer? _moderationDebounce;
 
   int get _wordCount {
     final plain = _plainBody.trim();
@@ -49,7 +65,8 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     return plain.split(RegExp(r"\s+")).length;
   }
 
-  String get _plainBody => _joinSegmentTexts();
+  String get _plainBody =>
+      StoryContentCodec.plainTextFromFormatted(_joinSegmentTexts());
 
   double get _wordProgress => (_wordCount / 200).clamp(0.0, 1.0);
 
@@ -58,6 +75,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     super.initState();
     _segments.add(_newTextSegment());
     HardwareKeyboard.instance.addHandler(_onStoryEditorHardwareKey);
+    _titleController.addListener(_scheduleModerationCheck);
 
     if (widget.storyId != null) {
       _loadExistingStory();
@@ -65,7 +83,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
   }
 
   _WriteSeg _newTextSegment([String initialText = '']) {
-    final c = TextEditingController(text: initialText);
+    final c = _quillControllerFromText(initialText);
     final focus = FocusNode();
     _attachListener(c);
     focus.addListener(() {
@@ -78,16 +96,85 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     return _WriteSeg.text(c, focus);
   }
 
-  void _attachListener(TextEditingController c) {
+  _WriteSeg _newTextSegmentFromDelta(List<dynamic> delta) {
+    final c = _quillControllerFromDelta(delta);
+    final focus = FocusNode();
+    _attachListener(c);
+    focus.addListener(() {
+      if (!focus.hasFocus) return;
+      final i = _segments.indexWhere(
+        (s) => !s.isImage && identical(s.focusNode, focus),
+      );
+      if (i >= 0) _lastActiveTextSegmentIndex = i;
+    });
+    return _WriteSeg.text(c, focus);
+  }
+
+  quill.QuillController _quillControllerFromText(String text) {
+    return quill.QuillController(
+      document: quill.Document.fromJson([
+        {'insert': text.isEmpty ? '\n' : '$text\n'},
+      ]),
+      selection: const TextSelection.collapsed(offset: 0),
+    );
+  }
+
+  quill.QuillController _quillControllerFromDelta(List<dynamic> delta) {
+    try {
+      return quill.QuillController(
+        document: quill.Document.fromJson(delta),
+        selection: const TextSelection.collapsed(offset: 0),
+      );
+    } catch (_) {
+      return _quillControllerFromText('');
+    }
+  }
+
+  String _plainTextFromController(quill.QuillController controller) {
+    return controller.document.toPlainText().trimRight();
+  }
+
+  List<dynamic> _deltaFromController(quill.QuillController controller) {
+    return controller.document.toDelta().toJson();
+  }
+
+  void _setControllerPlainText(
+    quill.QuillController controller,
+    String text,
+  ) {
+    controller.document = quill.Document.fromJson([
+      {'insert': text.isEmpty ? '\n' : '$text\n'},
+    ]);
+    controller.updateSelection(
+      TextSelection.collapsed(offset: text.length),
+      quill.ChangeSource.local,
+    );
+  }
+
+  void _attachListener(quill.QuillController c) {
     c.addListener(_onSegmentTextChanged);
   }
 
-  void _detachListener(TextEditingController c) {
+  void _detachListener(quill.QuillController c) {
     c.removeListener(_onSegmentTextChanged);
   }
 
   void _onSegmentTextChanged() {
     setState(() {});
+    _scheduleModerationCheck();
+  }
+
+  /// Debounces the lenient story-typing moderation check (~450ms idle).
+  void _scheduleModerationCheck() {
+    _moderationDebounce?.cancel();
+    _moderationDebounce = Timer(const Duration(milliseconds: 450), () {
+      if (!mounted) return;
+      final combined =
+          '${_titleController.text.trim()}\n\n${_plainBody.trim()}';
+      final feedback = _moderationService.previewStoryTyping(combined);
+      if (!mounted) return;
+      setState(() => _liveModeration = feedback);
+    });
   }
 
   void _scrollStoryToEnd() {
@@ -103,7 +190,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
   String _joinSegmentTexts() {
     final parts = <String>[];
     for (final s in _segments) {
-      if (!s.isImage) parts.add(s.controller!.text);
+      if (!s.isImage) parts.add(_plainTextFromController(s.controller!));
     }
     return parts.map((e) => e.trim()).where((e) => e.isNotEmpty).join('\n\n');
   }
@@ -141,22 +228,26 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
 
     final prevCtrl = prev.controller!;
     final currCtrl = curr.controller!;
-    final joinAt = prevCtrl.text.length;
-    final merged = prevCtrl.text + currCtrl.text;
+    final prevText = _plainTextFromController(prevCtrl);
+    final joinAt = prevText.length;
+    final merged = prevText + _plainTextFromController(currCtrl);
 
     _detachListener(currCtrl);
     curr.focusNode?.dispose();
     currCtrl.dispose();
 
     setState(() {
-      prevCtrl.text = merged;
+      _setControllerPlainText(prevCtrl, merged);
       _segments.removeAt(index);
       _lastActiveTextSegmentIndex = index - 1;
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      prevCtrl.selection = TextSelection.collapsed(offset: joinAt);
+      prevCtrl.updateSelection(
+        TextSelection.collapsed(offset: joinAt),
+        quill.ChangeSource.local,
+      );
       prev.focusNode?.requestFocus();
     });
   }
@@ -196,7 +287,12 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
           ),
         );
       } else {
-        out.add(StoryContentCodec.textBlock(s.controller!.text));
+        out.add(
+          StoryContentCodec.textBlock(
+            _plainTextFromController(s.controller!),
+            delta: _deltaFromController(s.controller!),
+          ),
+        );
       }
     }
     return out;
@@ -269,7 +365,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     if (old.isImage) return;
 
     final c = old.controller!;
-    final text = c.text;
+    final text = _plainTextFromController(c);
     final off = splitOffset.clamp(0, text.length);
     final leftText = text.substring(0, off);
     final rightText = text.substring(off);
@@ -380,6 +476,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     final data = doc.data()!;
     _titleController.text = data['title'] ?? '';
     _storyCoverUrl = data['coverUrl'];
+    _storyCoverPreviewBytes = null;
 
     _disposeAllSegments();
     final raw = StoryContentCodec.parseContent(data['content']);
@@ -394,7 +491,10 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
           }
         } else {
           final t = m['text'] as String? ?? '';
-          _segments.add(_newTextSegment(t));
+          final delta = m['delta'];
+          _segments.add(
+            delta is List ? _newTextSegmentFromDelta(delta) : _newTextSegment(t),
+          );
         }
       }
       if (_segments.isEmpty || _segments.every((s) => s.isImage)) {
@@ -455,6 +555,25 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
           await _showModerationWarning(moderation);
           return;
         }
+
+        final geminiSafe = await _geminiService.moderateContent(
+          '$title\n\n$body',
+        );
+        if (!geminiSafe) {
+          if (!mounted) return;
+          await ModerationUi.showPlainMessage(
+            context,
+            message: ContentModerationService.childFriendlyWarning,
+            surface: ModerationSurface.story,
+          );
+          return;
+        }
+      }
+
+      // Auto-cover: on publish, if the writer didn't pick one, generate one
+      // from the (moderation-passed) title + body. Never blocks the publish.
+      if (publish) {
+        await _autoGenerateCoverIfNeeded(title: title, body: body);
       }
 
       final user = FirebaseAuth.instance.currentUser;
@@ -579,6 +698,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
           _disposeAllSegments();
           _segments.add(_newTextSegment());
           _storyCoverUrl = null;
+          _storyCoverPreviewBytes = null;
         });
       }
     } catch (e) {
@@ -651,28 +771,109 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     });
   }
 
-  Future<void> _goToAiGenerator() async {
-    final storyDescription = _plainBody.trim();
-    if (storyDescription.isEmpty) {
+  /// Generates a cover image at publish time when the writer didn't pick one.
+  ///
+  /// Silent no-op when:
+  ///   • a cover URL is already set,
+  ///   • title or body is empty (caught earlier anyway),
+  ///   • the image API fails — cover is optional, must never block publish.
+  Future<void> _autoGenerateCoverIfNeeded({
+    required String title,
+    required String body,
+  }) async {
+    if ((_storyCoverUrl ?? '').trim().isNotEmpty) return;
+    if (title.isEmpty || body.isEmpty) return;
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).clearSnackBars();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text("Write some story before generating image.")),
+          duration: Duration(seconds: 60),
+          content: Row(
+            children: [
+              SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              ),
+              SizedBox(width: 12),
+              Expanded(
+                child: Text('Creating a cover image for your story…'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    try {
+      final prompt = _buildCoverPrompt(title: title, story: body);
+      final images = await _imageGen.generateImages(prompt, count: 1);
+      if (!mounted) return;
+      if (images.isEmpty) return;
+      final first = images.first;
+      if (first.url.trim().isEmpty) return;
+      setState(() {
+        _storyCoverUrl = first.url;
+        _storyCoverPreviewBytes = first.bytes;
+      });
+    } catch (_) {
+      // Cover is a nice-to-have; never block publish on a generation failure.
+    } finally {
+      if (mounted) ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    }
+  }
+
+  /// Combines title + story body into a single prompt that biases the cover
+  /// toward the title (the "subject") while using the body for scene details.
+  String _buildCoverPrompt({required String title, required String story}) {
+    const maxStoryChars = 1500;
+    final trimmedStory = story.length > maxStoryChars
+        ? '${story.substring(0, maxStoryChars)}…'
+        : story;
+
+    if (title.isNotEmpty && trimmedStory.isNotEmpty) {
+      return 'Book cover for a children\'s story titled "$title". '
+          'Scene from the story:\n$trimmedStory';
+    }
+    if (title.isNotEmpty) {
+      return 'Book cover for a children\'s story titled "$title".';
+    }
+    return trimmedStory;
+  }
+
+  Future<void> _goToAiGenerator() async {
+    final title = _titleController.text.trim();
+    final storyDescription = _plainBody.trim();
+    if (title.isEmpty && storyDescription.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text("Write a title or story before generating image.")),
       );
       return;
     }
 
-    final selectedImage = await Navigator.push(
+    final combinedPrompt = _buildCoverPrompt(
+      title: title,
+      story: storyDescription,
+    );
+
+    final selectedImage = await Navigator.push<GeneratedStoryImage>(
       context,
       MaterialPageRoute(
         builder: (_) => AiImageGeneratorScreen(
-          initialPrompt: storyDescription,
+          initialPrompt: combinedPrompt,
         ),
       ),
     );
 
     if (selectedImage != null && mounted) {
       setState(() {
-        _storyCoverUrl = selectedImage;
+        _storyCoverUrl = selectedImage.url;
+        _storyCoverPreviewBytes = selectedImage.bytes;
       });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("✅ Cover image added successfully!")),
@@ -765,10 +966,10 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     }
 
     final c = _segments[idx].controller!;
-    final cur = c.text.trim();
+    final cur = _plainTextFromController(c).trim();
     final spacer = cur.isEmpty ? '' : '\n\n';
     setState(() {
-      c.text = '$cur$spacer$delta';
+      _setControllerPlainText(c, '$cur$spacer$delta');
     });
     _scrollStoryToEnd();
   }
@@ -801,7 +1002,8 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
       if (!mounted || uploaded == null) return;
 
       final c = _segments[idx].controller!;
-      final len = c.text.length;
+      final text = _plainTextFromController(c);
+      final len = text.length;
       final sel = c.selection;
       int offset;
       if (sel.isValid) {
@@ -822,6 +1024,19 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     }
   }
 
+  _WriteSeg? _activeTextSegment() {
+    var idx = _focusedTextSegmentIndex();
+    if (idx < 0 || idx >= _segments.length || _segments[idx].isImage) {
+      idx = _lastActiveTextSegmentIndex;
+    }
+    if (idx < 0 || idx >= _segments.length || _segments[idx].isImage) {
+      idx = _segments.lastIndexWhere((s) => !s.isImage);
+    }
+    if (idx < 0) return null;
+    _lastActiveTextSegmentIndex = idx;
+    return _segments[idx];
+  }
+
   Future<void> _handleBack() async {
     FocusManager.instance.primaryFocus?.unfocus();
     await _saveDraftOnExitIfNeeded();
@@ -837,6 +1052,8 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_onStoryEditorHardwareKey);
+    _moderationDebounce?.cancel();
+    _titleController.removeListener(_scheduleModerationCheck);
     _titleController.dispose();
     _disposeAllSegments();
     _storyScrollController.dispose();
@@ -936,15 +1153,16 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
           maxLines: 1,
           onChanged: (_) => setState(() {}),
         ),
+        ModerationLiveBanner(feedback: _liveModeration),
         if (_storyCoverUrl != null) ...[
           const SizedBox(height: 10),
           ClipRRect(
             borderRadius: BorderRadius.circular(10),
             child: AspectRatio(
               aspectRatio: 16 / 9,
-              child: Image.network(
-                _storyCoverUrl!,
-                width: double.infinity,
+              child: StorageImage(
+                url: _storyCoverUrl,
+                bytes: _storyCoverPreviewBytes,
                 fit: BoxFit.cover,
               ),
             ),
@@ -1261,41 +1479,91 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
 
   Widget _buildTextSegment(BuildContext context, int index, _WriteSeg s) {
     final c = s.controller!;
-    final direction = _textDirectionFor(c.text);
-    final textAlign = _textAlignFor(direction);
+    final text = _plainTextFromController(c);
+    final direction = _textDirectionFor(text);
     final isRtl = direction == TextDirection.rtl;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
-      child: TextField(
-        controller: c,
-        focusNode: s.focusNode,
-        onTap: () => _lastActiveTextSegmentIndex = index,
-        onTapOutside: (_) =>
-            FocusManager.instance.primaryFocus?.unfocus(),
-        minLines: _bodyTextMinLinesFor(context, index),
-        maxLines: _bodyTextMaxLinesFor(context),
-        keyboardType: TextInputType.multiline,
-        textInputAction: TextInputAction.newline,
-        textDirection: direction,
-        textAlign: textAlign,
-        decoration: InputDecoration(
-          filled: false,
-          border: InputBorder.none,
-          enabledBorder: InputBorder.none,
-          focusedBorder: InputBorder.none,
-          disabledBorder: InputBorder.none,
-          errorBorder: InputBorder.none,
-          focusedErrorBorder: InputBorder.none,
-          contentPadding: EdgeInsets.symmetric(
-            horizontal: isRtl ? 4 : 2,
-            vertical: isRtl ? 10 : 8,
+      child: Column(
+        crossAxisAlignment:
+            isRtl ? CrossAxisAlignment.end : CrossAxisAlignment.stretch,
+        children: [
+          _buildQuillToolbar(c),
+          const SizedBox(height: 6),
+          Directionality(
+            textDirection: direction,
+            child: quill.QuillEditor.basic(
+              controller: c,
+              focusNode: s.focusNode,
+              config: quill.QuillEditorConfig(
+                minHeight: _bodyTextMinLinesFor(context, index) * 32.0,
+                maxHeight: _bodyTextMaxLinesFor(context) * 34.0,
+                padding: EdgeInsets.symmetric(
+                  horizontal: isRtl ? 4 : 2,
+                  vertical: isRtl ? 10 : 8,
+                ),
+                placeholder: 'Start writing...',
+                textCapitalization: TextCapitalization.sentences,
+                onTapDown: (_, __) {
+                  _lastActiveTextSegmentIndex = index;
+                  return false;
+                },
+                customStyles: quill.DefaultStyles(
+                  paragraph: quill.DefaultTextBlockStyle(
+                    TextStyle(
+                      color: Colors.black87,
+                      fontSize: isRtl ? 17 : 16,
+                      height: isRtl ? 1.65 : 1.55,
+                    ),
+                    const quill.HorizontalSpacing(0, 0),
+                    const quill.VerticalSpacing(0, 0),
+                    const quill.VerticalSpacing(0, 0),
+                    null,
+                  ),
+                ),
+              ),
+            ),
           ),
-        ),
-        style: TextStyle(
-          color: Colors.black87,
-          fontSize: isRtl ? 17 : 16,
-          height: isRtl ? 1.65 : 1.55,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuillToolbar(quill.QuillController controller) {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F3FF),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFE2D9F3)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: quill.QuillSimpleToolbar(
+        controller: controller,
+        config: const quill.QuillSimpleToolbarConfig(
+          multiRowsDisplay: true,
+          toolbarSectionSpacing: 2,
+          toolbarRunSpacing: 2,
+          showFontFamily: false,
+          showFontSize: false,
+          showSmallButton: false,
+          showUnderLineButton: false,
+          showStrikeThrough: false,
+          showInlineCode: false,
+          showColorButton: false,
+          showBackgroundColorButton: false,
+          showAlignmentButtons: false,
+          showCodeBlock: false,
+          showIndent: false,
+          showSubscript: false,
+          showSuperscript: false,
+          showSearchButton: false,
+          showDirection: false,
+          showClipboardCut: false,
+          showClipboardCopy: false,
+          showClipboardPaste: false,
+          showListCheck: false,
+          showDividers: false,
         ),
       ),
     );
@@ -1482,7 +1750,7 @@ class _PendingImageRemoval {
 class _WriteSeg {
   _WriteSeg._({this.controller, this.focusNode, this.imageUrl, this.storagePath});
 
-  factory _WriteSeg.text(TextEditingController c, FocusNode focusNode) =>
+  factory _WriteSeg.text(quill.QuillController c, FocusNode focusNode) =>
       _WriteSeg._(controller: c, focusNode: focusNode);
 
   factory _WriteSeg.image({
@@ -1491,7 +1759,7 @@ class _WriteSeg {
   }) =>
       _WriteSeg._(imageUrl: url, storagePath: storagePath);
 
-  final TextEditingController? controller;
+  final quill.QuillController? controller;
   final FocusNode? focusNode;
   final String? imageUrl;
   final String? storagePath;

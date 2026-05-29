@@ -11,6 +11,7 @@ import '../shared/ui/empty_widget.dart';
 import '../shared/ui/error_widget_custom.dart';
 import '../shared/ui/loading_widget.dart';
 import '../widgets/moderation_ui.dart';
+import '../widgets/storage_image.dart';
 import 'badge_screen.dart';
 import 'community.dart';
 import 'ebook_screen.dart';
@@ -990,12 +991,12 @@ class _StoryCover extends StatelessWidget {
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(8),
-      child: Image.network(
-        imageUrl,
+      child: StorageImage(
+        url: imageUrl,
         width: 82,
         height: 96,
         fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) => Container(
+        placeholder: Container(
           width: 82,
           height: 96,
           color: kAppPrimary,

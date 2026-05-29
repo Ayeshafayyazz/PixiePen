@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../models/generated_story_image.dart';
 import '../services/content_moderation_service.dart';
-import '../widgets/moderation_ui.dart';
 import '../services/story_image_generation_service.dart';
+import '../widgets/moderation_ui.dart';
+import '../widgets/storage_image.dart';
 
 class AiImageGeneratorScreen extends StatefulWidget {
   final String? initialPrompt;
@@ -18,7 +20,7 @@ class _AiImageGeneratorScreenState extends State<AiImageGeneratorScreen> {
   final ContentModerationService _moderation = ContentModerationService();
 
   bool _isLoading = false;
-  final List<String> _generatedImageUrls = [];
+  final List<GeneratedStoryImage> _generatedImages = [];
 
   @override
   void initState() {
@@ -56,14 +58,14 @@ class _AiImageGeneratorScreenState extends State<AiImageGeneratorScreen> {
 
     setState(() {
       _isLoading = true;
-      _generatedImageUrls.clear();
+      _generatedImages.clear();
     });
 
     try {
-      final urls = await _imageGen.generateImageUrls(prompt, count: 4);
+      final images = await _imageGen.generateImages(prompt, count: 4);
       if (!mounted) return;
       setState(() {
-        _generatedImageUrls.addAll(urls);
+        _generatedImages.addAll(images);
         _isLoading = false;
       });
     } on ImageGenerationException catch (e) {
@@ -81,8 +83,24 @@ class _AiImageGeneratorScreenState extends State<AiImageGeneratorScreen> {
     }
   }
 
-  void _selectImageAsCover(String imageUrl) {
-    Navigator.of(context).pop(imageUrl);
+  void _selectImageAsCover(GeneratedStoryImage image) {
+    if (image.url.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('This image is not ready yet. Please try another.'),
+        ),
+      );
+      return;
+    }
+    Navigator.of(context).pop(image);
+  }
+
+  Widget _buildGeneratedImage(GeneratedStoryImage image) {
+    return StorageImage(
+      url: image.url,
+      bytes: image.bytes,
+      fit: BoxFit.cover,
+    );
   }
 
   @override
@@ -148,7 +166,7 @@ class _AiImageGeneratorScreenState extends State<AiImageGeneratorScreen> {
             Expanded(
               child: _isLoading
                   ? Center(child: CircularProgressIndicator(color: themeColor))
-                  : _generatedImageUrls.isEmpty
+                  : _generatedImages.isEmpty
                   ? const Center(
                 child: Text(
                   "Generated images will appear here.",
@@ -162,11 +180,11 @@ class _AiImageGeneratorScreenState extends State<AiImageGeneratorScreen> {
                   crossAxisSpacing: 10,
                   mainAxisSpacing: 10,
                 ),
-                itemCount: _generatedImageUrls.length,
+                itemCount: _generatedImages.length,
                 itemBuilder: (context, index) {
-                  final imageUrl = _generatedImageUrls[index];
+                  final image = _generatedImages[index];
                   return InkWell(
-                    onTap: () => _selectImageAsCover(imageUrl),
+                    onTap: () => _selectImageAsCover(image),
                     child: Card(
                       clipBehavior: Clip.antiAlias,
                       elevation: 4,
@@ -177,7 +195,7 @@ class _AiImageGeneratorScreenState extends State<AiImageGeneratorScreen> {
                       child: Stack(
                         fit: StackFit.expand,
                         children: [
-                          Image.network(imageUrl, fit: BoxFit.cover),
+                          _buildGeneratedImage(image),
                           Align(
                             alignment: Alignment.bottomCenter,
                             child: Container(

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_quill/flutter_quill.dart' as quill;
 import 'package:flutter_tts/flutter_tts.dart';
 
 import 'ebook_screen.dart';
@@ -17,6 +18,7 @@ import '../data/mappers/story_post_mapper.dart';
 import '../domain/models/story_post.dart';
 import '../services/follow_service.dart';
 import '../services/gemini_service.dart';
+import '../widgets/storage_image.dart';
 import '../services/story_service.dart';
 import '../services/content_moderation_service.dart';
 import '../widgets/moderation_ui.dart';
@@ -2526,18 +2528,16 @@ class StoryCard extends StatelessWidget {
                     borderRadius: const BorderRadius.vertical(
                       top: Radius.circular(20),
                     ),
-                    child: Image.network(
-                      post.imageUrl,
+                    child: StorageImage(
+                      url: post.imageUrl,
                       fit: BoxFit.cover,
                       width: double.infinity,
                       height: imageHeight,
-                      errorBuilder: (context, error, stackTrace) {
-                        return Container(
-                          height: imageHeight,
-                          color: Colors.grey[300],
-                          child: const Icon(Icons.image_not_supported),
-                        );
-                      },
+                      placeholder: Container(
+                        height: imageHeight,
+                        color: Colors.grey[300],
+                        child: const Icon(Icons.image_not_supported),
+                      ),
                     ),
                   ),
                   Positioned(
@@ -2838,16 +2838,23 @@ class _StoryActionCount extends StatelessWidget {
 class _ReaderLayoutPiece {
   const _ReaderLayoutPiece.text(this.text, this.speechIndex)
       : isImage = false,
+        imageUrl = null,
+        delta = null;
+
+  const _ReaderLayoutPiece.rich(this.text, this.delta, this.speechIndex)
+      : isImage = false,
         imageUrl = null;
 
   const _ReaderLayoutPiece.image(this.imageUrl)
       : isImage = true,
         text = null,
+        delta = null,
         speechIndex = -1;
 
   final bool isImage;
   final String? text;
   final String? imageUrl;
+  final List<dynamic>? delta;
 
   /// Index into [_paragraphs] / [_paragraphKeys]; -1 for images.
   final int speechIndex;
@@ -2929,6 +2936,14 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
           }
         } else {
           final raw = m['text'] as String? ?? '';
+          final delta = m['delta'];
+          if (delta is List && delta.isNotEmpty) {
+            final idx = nextParagraphs.length;
+            final plain = StoryContentCodec.plainTextFromFormatted(raw);
+            nextParagraphs.add(plain);
+            nextPieces.add(_ReaderLayoutPiece.rich(plain, delta, idx));
+            continue;
+          }
           final paras = _buildParagraphs(raw);
           for (final p in paras) {
             final idx = nextParagraphs.length;
@@ -3338,6 +3353,11 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
   }
 
   Widget _perspectiveButton({required String label, required int index}) {
+    // Maps the three person buttons (indices 0/1/2) onto the OpenAI shift
+    // types so the rewrite happens with proper grammar instead of regex
+    // pronoun swapping.
+    const personShiftTypes = ['first_person', 'second_person', 'third_person'];
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: ElevatedButton(
@@ -3353,10 +3373,24 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
             borderRadius: BorderRadius.circular(8),
           ),
         ),
-        onPressed: () {
+        onPressed: () async {
           _stopReadAloud();
-          viewModel.setPerspective(index);
-          Navigator.pop(context);
+          if (index >= 0 &&
+              index < personShiftTypes.length &&
+              _geminiService.isConfigured) {
+            // OpenAI faithful-rewrite path (handles verb conjugation,
+            // possessives, reflexives, etc. correctly).
+            await _applyGeminiPerspective(
+              index: index,
+              label: label,
+              shiftType: personShiftTypes[index],
+            );
+          } else {
+            // Fallback: legacy regex pronoun substitution (used when the API
+            // key isn't configured so the feature still works offline).
+            viewModel.setPerspective(index);
+            Navigator.pop(context);
+          }
         },
         child: Text(label),
       ),
@@ -3435,14 +3469,12 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
                                 if (viewModel.displayPost.imageUrl.isNotEmpty)
                                   ClipRRect(
                                     borderRadius: BorderRadius.circular(14),
-                                    child: Image.network(
-                                      viewModel.displayPost.imageUrl,
+                                    child: StorageImage(
+                                      url: viewModel.displayPost.imageUrl,
                                       fit: BoxFit.cover,
                                       width: double.infinity,
                                       height: imageHeight,
-                                      errorBuilder:
-                                          (context, error, stackTrace) =>
-                                              Container(
+                                      placeholder: Container(
                                         height: imageHeight,
                                         color: Colors.grey[200],
                                       ),
@@ -3478,26 +3510,11 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
                                         borderRadius: BorderRadius.circular(
                                           10,
                                         ),
-                                        child: Image.network(
-                                          piece.imageUrl!,
+                                        child: StorageImage(
+                                          url: piece.imageUrl!,
                                           width: double.infinity,
                                           fit: BoxFit.fitWidth,
-                                          loadingBuilder: (context, child,
-                                              loadingProgress) {
-                                            if (loadingProgress == null) {
-                                              return child;
-                                            }
-                                            return Container(
-                                              height: 180,
-                                              alignment: Alignment.center,
-                                              color: Colors.grey.shade100,
-                                              child:
-                                                  const CircularProgressIndicator(),
-                                            );
-                                          },
-                                          errorBuilder:
-                                              (context, error, stackTrace) =>
-                                                  Container(
+                                          placeholder: Container(
                                             height: 120,
                                             color: Colors.grey.shade200,
                                             alignment: Alignment.center,
@@ -3511,6 +3528,14 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
                                     );
                                   }
                                   final idx = piece.speechIndex;
+                                  if (piece.delta != null) {
+                                    return _TrackedStoryRichBlock(
+                                      key: _paragraphKeys[idx],
+                                      delta: piece.delta!,
+                                      highlighted:
+                                          idx == _activeParagraphIndex,
+                                    );
+                                  }
                                   return _TrackedStoryParagraph(
                                     key: _paragraphKeys[idx],
                                     text: piece.text!,
@@ -3568,7 +3593,12 @@ class _TrackedStoryParagraph extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final textStyle = Theme.of(context).textTheme.bodyLarge?.copyWith(
+    final baseStyle = Theme.of(context).textTheme.bodyLarge?.copyWith(
+              height: 1.6,
+              color: highlighted ? const Color(0xFF4A148C) : Colors.black87,
+              fontWeight: highlighted ? FontWeight.w600 : FontWeight.normal,
+            ) ??
+        TextStyle(
           height: 1.6,
           color: highlighted ? const Color(0xFF4A148C) : Colors.black87,
           fontWeight: highlighted ? FontWeight.w600 : FontWeight.normal,
@@ -3587,7 +3617,241 @@ class _TrackedStoryParagraph extends StatelessWidget {
             ? Border.all(color: const Color(0xFFE3C54B))
             : Border.all(color: Colors.transparent),
       ),
-      child: Text(text, style: textStyle),
+      child: _FormattedStoryText(text: text, baseStyle: baseStyle),
+    );
+  }
+}
+
+class _TrackedStoryRichBlock extends StatelessWidget {
+  final List<dynamic> delta;
+  final bool highlighted;
+
+  const _TrackedStoryRichBlock({
+    super.key,
+    required this.delta,
+    required this.highlighted,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = quill.QuillController(
+      document: quill.Document.fromJson(delta),
+      selection: const TextSelection.collapsed(offset: 0),
+      readOnly: true,
+    );
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: highlighted ? const Color(0xFFFFF8D8) : Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+        border: highlighted
+            ? Border.all(color: const Color(0xFFE3C54B))
+            : Border.all(color: Colors.transparent),
+      ),
+      child: quill.QuillEditor.basic(
+        controller: controller,
+        config: const quill.QuillEditorConfig(
+          scrollable: false,
+          showCursor: false,
+          enableInteractiveSelection: false,
+          padding: EdgeInsets.zero,
+        ),
+      ),
+    );
+  }
+}
+
+class _FormattedStoryText extends StatelessWidget {
+  final String text;
+  final TextStyle baseStyle;
+
+  const _FormattedStoryText({
+    required this.text,
+    required this.baseStyle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = text.split('\n');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < lines.length; i++) ...[
+          _FormattedStoryLine(line: lines[i], baseStyle: baseStyle),
+          if (i != lines.length - 1) const SizedBox(height: 6),
+        ],
+      ],
+    );
+  }
+}
+
+class _FormattedStoryLine extends StatelessWidget {
+  final String line;
+  final TextStyle baseStyle;
+
+  const _FormattedStoryLine({
+    required this.line,
+    required this.baseStyle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final trimmed = line.trimRight();
+    if (trimmed.trim() == '---') {
+      return Divider(color: Colors.grey.shade300, thickness: 1.2, height: 20);
+    }
+
+    final heading = RegExp(r'^\s{0,3}#{1,3}\s+(.+)$').firstMatch(trimmed);
+    if (heading != null) {
+      return RichText(
+        text: TextSpan(
+          style: baseStyle.copyWith(
+            fontSize: 22,
+            height: 1.28,
+            fontWeight: FontWeight.w900,
+            color: const Color(0xFF2F2140),
+          ),
+          children: _inlineSpans(heading.group(1) ?? '', baseStyle),
+        ),
+      );
+    }
+
+    final quote = RegExp(r'^\s{0,3}>\s?(.+)$').firstMatch(trimmed);
+    if (quote != null) {
+      return DecoratedBox(
+        decoration: const BoxDecoration(
+          border: Border(left: BorderSide(color: kAppPrimary, width: 3)),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.only(left: 10),
+          child: RichText(
+            text: TextSpan(
+              style: baseStyle.copyWith(
+                color: Colors.grey.shade800,
+                fontStyle: FontStyle.italic,
+              ),
+              children: _inlineSpans(quote.group(1) ?? '', baseStyle),
+            ),
+          ),
+        ),
+      );
+    }
+
+    final bullet = RegExp(r'^\s*[-*]\s+(.+)$').firstMatch(trimmed);
+    if (bullet != null) {
+      return _ListStoryLine(
+        marker: '\u2022',
+        content: bullet.group(1) ?? '',
+        baseStyle: baseStyle,
+      );
+    }
+
+    final numbered = RegExp(r'^\s*(\d+[.)])\s+(.+)$').firstMatch(trimmed);
+    if (numbered != null) {
+      return _ListStoryLine(
+        marker: numbered.group(1) ?? '1.',
+        content: numbered.group(2) ?? '',
+        baseStyle: baseStyle,
+      );
+    }
+
+    return RichText(
+      text: TextSpan(
+        style: baseStyle,
+        children: _inlineSpans(trimmed, baseStyle),
+      ),
+    );
+  }
+
+  List<TextSpan> _inlineSpans(String value, TextStyle baseStyle) {
+    final spans = <TextSpan>[];
+    final pattern = RegExp(
+      r'(\*\*[^*]+\*\*|__[^_]+__|\*[^*]+\*|_[^_]+_|\[[^\]]+\]\([^)]+\)|`[^`]+`)',
+    );
+    var cursor = 0;
+    for (final match in pattern.allMatches(value)) {
+      if (match.start > cursor) {
+        spans.add(TextSpan(text: value.substring(cursor, match.start)));
+      }
+      final token = match.group(0) ?? '';
+      if (token.startsWith('**') || token.startsWith('__')) {
+        spans.add(
+          TextSpan(
+            text: token.substring(2, token.length - 2),
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
+        );
+      } else if (token.startsWith('*') || token.startsWith('_')) {
+        spans.add(
+          TextSpan(
+            text: token.substring(1, token.length - 1),
+            style: const TextStyle(fontStyle: FontStyle.italic),
+          ),
+        );
+      } else if (token.startsWith('`')) {
+        spans.add(
+          TextSpan(
+            text: token.substring(1, token.length - 1),
+            style: TextStyle(
+              backgroundColor: Colors.grey.shade200,
+              fontFamily: 'monospace',
+            ),
+          ),
+        );
+      } else {
+        final link = RegExp(r'^\[([^\]]+)\]\([^)]+\)$').firstMatch(token);
+        spans.add(
+          TextSpan(
+            text: link?.group(1) ?? token,
+            style: const TextStyle(
+              color: kAppPrimary,
+              decoration: TextDecoration.underline,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        );
+      }
+      cursor = match.end;
+    }
+    if (cursor < value.length) {
+      spans.add(TextSpan(text: value.substring(cursor)));
+    }
+    return spans;
+  }
+}
+
+class _ListStoryLine extends StatelessWidget {
+  final String marker;
+  final String content;
+  final TextStyle baseStyle;
+
+  const _ListStoryLine({
+    required this.marker,
+    required this.content,
+    required this.baseStyle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 30,
+          child: Text(
+            marker,
+            style: baseStyle.copyWith(fontWeight: FontWeight.w800),
+          ),
+        ),
+        Expanded(
+          child: _FormattedStoryLine(line: content, baseStyle: baseStyle),
+        ),
+      ],
     );
   }
 }

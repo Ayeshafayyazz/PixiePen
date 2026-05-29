@@ -7,6 +7,7 @@ import '../data/mappers/story_post_mapper.dart';
 import '../domain/models/story_post.dart';
 import '../services/follow_service.dart';
 import '../services/story_service.dart';
+import '../widgets/storage_image.dart';
 import 'community.dart';
 import 'theme.dart';
 
@@ -477,12 +478,12 @@ class _PublicStoryTile extends StatelessWidget {
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-                child: Image.network(
-                  post.imageUrl,
+                child: StorageImage(
+                  url: post.imageUrl,
                   width: 78,
                   height: 78,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(
+                  placeholder: Container(
                     width: 78,
                     height: 78,
                     color: const Color(0xFFEDE4F4),

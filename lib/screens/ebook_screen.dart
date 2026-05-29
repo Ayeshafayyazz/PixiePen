@@ -12,6 +12,7 @@ import 'package:printing/printing.dart' show PdfGoogleFonts, networkImage;
 import 'theme.dart';
 import '../utils/pdf_file_exporter.dart';
 import '../utils/story_content.dart';
+import '../widgets/storage_image.dart';
 
 const _kEbookPageBackground = Color(0xFFF5F5F5);
 const _kEbookCardBackground = Color(0xFFFFF4FB);
@@ -1158,11 +1159,11 @@ class _SelectedStoryGridTile extends StatelessWidget {
               fit: StackFit.expand,
               children: [
                 story.coverUrl != null && story.coverUrl!.isNotEmpty
-                    ? Image.network(
-                        story.coverUrl!,
+                    ? StorageImage(
+                        url: story.coverUrl,
                         fit: BoxFit.cover,
                         width: double.infinity,
-                        errorBuilder: (_, __, ___) => _tilePlaceholder(),
+                        placeholder: _tilePlaceholder(),
                       )
                     : _tilePlaceholder(),
                 Positioned(
@@ -1660,10 +1661,10 @@ class _StoryPickerGridTile extends StatelessWidget {
                     fit: StackFit.expand,
                     children: [
                       story.coverUrl != null && story.coverUrl!.isNotEmpty
-                          ? Image.network(
-                              story.coverUrl!,
+                          ? StorageImage(
+                              url: story.coverUrl,
                               fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => _ph(),
+                              placeholder: _ph(),
                             )
                           : _ph(),
                       Positioned(
@@ -1756,10 +1757,10 @@ class _StoryThumbnail extends StatelessWidget {
         color: _kEbookIconBackground,
         child: url == null || url.isEmpty
             ? const Icon(Icons.auto_stories, color: kAppPrimary, size: 34)
-            : Image.network(
-                url,
+            : StorageImage(
+                url: url,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => const Icon(
+                placeholder: const Icon(
                   Icons.auto_stories,
                   color: kAppPrimary,
                   size: 34,
@@ -1812,12 +1813,11 @@ class _BookCoverPage extends StatelessWidget {
                       maxWidth: w,
                       maxHeight: maxArtH,
                     ),
-                    child: Image.network(
-                      ebook.coverImage!,
+                    child: StorageImage(
+                      url: ebook.coverImage,
                       width: w,
                       fit: BoxFit.contain,
-                      alignment: Alignment.center,
-                      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                      placeholder: const SizedBox.shrink(),
                     ),
                   ),
                 ),
@@ -1921,11 +1921,11 @@ class _StoryChapterPage extends StatelessWidget {
                       maxWidth: contentW,
                       maxHeight: maxChapterCoverH,
                     ),
-                    child: Image.network(
-                      story.coverUrl!,
+                    child: StorageImage(
+                      url: story.coverUrl,
                       width: contentW,
                       fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                      placeholder: const SizedBox.shrink(),
                     ),
                   ),
                 ),
@@ -1995,12 +1995,11 @@ class _StoryChapterPage extends StatelessWidget {
                 maxWidth: contentWidth,
                 maxHeight: maxImageHeight,
               ),
-              child: Image.network(
-                url,
+              child: StorageImage(
+                url: url,
                 width: contentWidth,
                 fit: BoxFit.contain,
-                alignment: Alignment.center,
-                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                placeholder: const SizedBox.shrink(),
               ),
             ),
           ),

@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../data/mappers/story_post_mapper.dart';
 import '../domain/models/story_post.dart';
 import '../services/content_moderation_service.dart';
+import '../services/gemini_service.dart';
 import '../services/story_service.dart';
 import '../shared/utils/app_navigator.dart';
 import '../widgets/moderation_ui.dart';
@@ -803,6 +804,7 @@ class _ParentSendBackFeedbackSheet extends StatefulWidget {
 class _ParentSendBackFeedbackSheetState extends State<_ParentSendBackFeedbackSheet> {
   late final TextEditingController _controller;
   final ContentModerationService _moderation = ContentModerationService();
+  final GeminiService _geminiService = GeminiService();
   Timer? _moderationDebounce;
   ModerationLiveFeedback? _liveModeration;
   String? _errorText;
@@ -853,6 +855,18 @@ class _ParentSendBackFeedbackSheetState extends State<_ParentSendBackFeedbackShe
       await ModerationUi.showBlockDialog(
         context,
         result: moderation,
+        surface: ModerationSurface.parentFeedback,
+      );
+      return;
+    }
+
+    final geminiSafe = await _geminiService.moderateContent(feedback);
+    if (!geminiSafe) {
+      setState(() => _errorText = null);
+      if (!mounted) return;
+      await ModerationUi.showPlainMessage(
+        context,
+        message: ContentModerationService.childFriendlyWarning,
         surface: ModerationSurface.parentFeedback,
       );
       return;
