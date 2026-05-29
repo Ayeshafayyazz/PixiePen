@@ -3,12 +3,14 @@ import 'package:flutter/foundation.dart';
 
 import '../data/firestore_keys.dart';
 import 'content_moderation_service.dart';
+import 'gemini_service.dart';
 import 'story_core_service.dart';
 
 class StoryInteractionService {
   StoryInteractionService(this._core);
 
   final StoryCoreService _core;
+  final GeminiService _geminiService = GeminiService();
 
   Future<void> toggleLike({
     required String storyId,
@@ -185,6 +187,10 @@ class StoryInteractionService {
     if (!moderation.isSafe) {
       throw ArgumentError(ContentModerationService.childFriendlyWarning);
     }
+    final geminiSafe = await _geminiService.moderateContent(text);
+    if (!geminiSafe) {
+      throw ArgumentError(ContentModerationService.childFriendlyWarning);
+    }
 
     final commentRef = storyRef.collection(FirestoreCollections.comments).doc();
     final notificationRef =
@@ -274,6 +280,10 @@ class StoryInteractionService {
       storyExcerpt: storyTitle,
     );
     if (!moderation.isSafe) {
+      throw ArgumentError(ContentModerationService.childFriendlyWarning);
+    }
+    final geminiSafe = await _geminiService.moderateContent(text);
+    if (!geminiSafe) {
       throw ArgumentError(ContentModerationService.childFriendlyWarning);
     }
 

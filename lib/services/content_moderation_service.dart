@@ -331,6 +331,73 @@ class ContentModerationService {
     return const ModerationResult.safe();
   }
 
+  /// Live preview tuned for **story writing** (very lenient — fiction-friendly).
+  ///
+  /// Only blocks things that are unsafe **regardless of narrative context** and
+  /// have no legitimate use in a children's story:
+  ///   • real profanity / swear words
+  ///   • phone numbers, emails (PII leak)
+  ///   • external URLs (off-platform contact)
+  ///   • extreme character spam (e.g. `aaaaaaa…`)
+  ///
+  /// It deliberately does NOT flag:
+  ///   • violence words (kill, sword, weapon, die)
+  ///   • "hate" / hostility phrases — characters can argue
+  ///   • drugs / bullying word lists — too many false positives in dialogue
+  ///   • tone, intent, or context
+  ///
+  /// Those judgements are reserved for the **Publish** step, where the full
+  /// document is sent to OpenAI `omni-moderation-latest` and context-aware
+  /// thresholds are applied. The live banner's job is only to prevent the
+  /// obviously-bad-everywhere set — not to coach style or police fiction.
+  ModerationLiveFeedback previewStoryTyping(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) {
+      return const ModerationLiveFeedback(
+        toxicityScore: 0,
+        wouldBeBlocked: false,
+      );
+    }
+
+    if (_spamRepeatChar.hasMatch(trimmed)) {
+      return ModerationLiveFeedback(
+        toxicityScore: 95,
+        wouldBeBlocked: true,
+        bannerMessage: liveBannerHintForReason('spam_pattern'),
+      );
+    }
+
+    final lower = trimmed.toLowerCase();
+    if (emailRegex.hasMatch(lower) || phoneRegex.hasMatch(trimmed)) {
+      return ModerationLiveFeedback(
+        toxicityScore: 95,
+        wouldBeBlocked: true,
+        bannerMessage: liveBannerHintForReason('personal_info'),
+      );
+    }
+    if (_urlRegex.hasMatch(trimmed)) {
+      return ModerationLiveFeedback(
+        toxicityScore: 90,
+        wouldBeBlocked: true,
+        bannerMessage: liveBannerHintForReason('link'),
+      );
+    }
+
+    final clean = normalize(trimmed);
+    if (_matchedWords(clean, profanityList).isNotEmpty) {
+      return ModerationLiveFeedback(
+        toxicityScore: 95,
+        wouldBeBlocked: true,
+        bannerMessage: liveBannerHintForReason('profanity'),
+      );
+    }
+
+    return const ModerationLiveFeedback(
+      toxicityScore: 0,
+      wouldBeBlocked: false,
+    );
+  }
+
   /// Debounced in the UI: shows toxicity meter + whether send would be blocked.
   ModerationLiveFeedback previewWhileTyping(
     ModerationSurface surface,
