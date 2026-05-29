@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 
 import '../firestore_keys.dart';
 import '../../services/content_moderation_service.dart';
+import '../../services/gemini_service.dart';
 import '../../services/story_core_service.dart';
 
 class StoryRepository {
@@ -10,6 +11,7 @@ class StoryRepository {
       : _core = StoryCoreService(firestore: firestore);
 
   final StoryCoreService _core;
+  final GeminiService _geminiService = GeminiService();
 
   Stream<QuerySnapshot<Map<String, dynamic>>> fetchStories({
     String? authorId,
@@ -227,6 +229,10 @@ class StoryRepository {
     if (!moderation.isSafe) {
       throw ArgumentError(ContentModerationService.childFriendlyWarning);
     }
+    final geminiSafe = await _geminiService.moderateContent(text);
+    if (!geminiSafe) {
+      throw ArgumentError(ContentModerationService.childFriendlyWarning);
+    }
 
     final commentRef = storyRef.collection(FirestoreCollections.comments).doc();
     final notificationRef =
@@ -317,6 +323,10 @@ class StoryRepository {
       storyExcerpt: storyTitle,
     );
     if (!moderation.isSafe) {
+      throw ArgumentError(ContentModerationService.childFriendlyWarning);
+    }
+    final geminiSafe = await _geminiService.moderateContent(text);
+    if (!geminiSafe) {
       throw ArgumentError(ContentModerationService.childFriendlyWarning);
     }
 

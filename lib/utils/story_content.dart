@@ -24,11 +24,51 @@ class StoryContentCodec {
     final parts = <String>[];
     for (final m in blocks) {
       if (m['type'] == typeText) {
-        final t = (m['text'] as String?) ?? '';
+        final t = plainTextFromFormatted((m['text'] as String?) ?? '');
         if (t.trim().isNotEmpty) parts.add(t.trim());
       }
     }
     return parts.join('\n\n');
+  }
+
+  static String plainTextFromFormatted(String value) {
+    return value
+        .replaceAllMapped(
+          RegExp(r'\[([^\]]+)\]\([^)]+\)'),
+          (match) => match.group(1) ?? '',
+        )
+        .split('\n')
+        .map((line) {
+          return line
+              .replaceFirst(RegExp(r'^\s{0,3}#{1,3}\s+'), '')
+              .replaceFirst(RegExp(r'^\s{0,3}>\s?'), '')
+              .replaceFirst(RegExp(r'^\s*[-*]\s+'), '')
+              .replaceFirst(RegExp(r'^\s*\d+[.)]\s+'), '')
+              .replaceAllMapped(
+                RegExp(r'\*\*([^*]+)\*\*'),
+                (match) => match.group(1) ?? '',
+              )
+              .replaceAllMapped(
+                RegExp(r'__([^_]+)__'),
+                (match) => match.group(1) ?? '',
+              )
+              .replaceAllMapped(
+                RegExp(r'\*([^*]+)\*'),
+                (match) => match.group(1) ?? '',
+              )
+              .replaceAllMapped(
+                RegExp(r'_([^_]+)_'),
+                (match) => match.group(1) ?? '',
+              )
+              .replaceAllMapped(
+                RegExp(r'`([^`]+)`'),
+                (match) => match.group(1) ?? '',
+              )
+              .trimRight();
+        })
+        .join('\n')
+        .replaceAll(RegExp(r'\n{3,}'), '\n\n')
+        .trim();
   }
 
   /// True when we should render rich layout (at least one image or structured text).
@@ -43,9 +83,14 @@ class StoryContentCodec {
     return false;
   }
 
-  static Map<String, dynamic> textBlock(String text) => {
+  static Map<String, dynamic> textBlock(
+    String text, {
+    List<dynamic>? delta,
+  }) =>
+      {
         'type': typeText,
         'text': text,
+        if (delta != null) 'delta': delta,
       };
 
   static Map<String, dynamic> imageBlock({
