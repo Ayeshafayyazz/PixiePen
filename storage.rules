@@ -28,5 +28,12 @@ service firebase.storage {
       allow write: if isOwner(userId) && isImageUpload();
       allow delete: if isOwner(userId);
     }
+
+    // AI-generated story covers (written by Cloud Functions, read by app).
+    match /generated-story-images/{fileName} {
+      allow read: if true;
+      allow write: if false;
+      allow delete: if false;
+    }
   }
 }
