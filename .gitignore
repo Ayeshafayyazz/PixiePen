@@ -22,7 +22,22 @@ migrate_working_dir/
 #.vscode/
 
 # Flutter/Dart/Pub related
+.env
+**/.env
+!**/.env.example
 **/doc/api/
+
+# Sensitive/Configuration files
+google-services.json
+GoogleService-Info.plist
+*.local
+.firebaserc
+firebase-debug.log
+firebase-debug.*.log
+*.key
+*.pem
+secrets/
+.secrets/
 **/ios/Flutter/.last_build_id
 .dart_tool/
 .flutter-plugins
