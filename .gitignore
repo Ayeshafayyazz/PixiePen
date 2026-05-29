@@ -38,6 +38,11 @@ firebase-debug.*.log
 *.pem
 secrets/
 .secrets/
+
+# Screenshots and temporary files
+flutter_*.png
+*.png.tmp
+*_screenshot*.png
 **/ios/Flutter/.last_build_id
 .dart_tool/
 .flutter-plugins
