@@ -1371,8 +1371,6 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
             child: _buildActionButton(
               icon: Icons.add_photo_alternate_outlined,
               label: 'Add Image',
-              tooltip:
-                  'Add an image from your gallery after the paragraph you are typing in',
               onTap: _insertInlineImageFromGalleryToolbar,
               color: const Color(0xFF6A1B9A),
               compact: compact,
