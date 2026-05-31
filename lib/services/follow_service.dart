@@ -46,18 +46,39 @@ class FollowService {
 
     final followRef = _followRef(currentUserId, targetUserId);
     final followSnap = await followRef.get();
+
+    // Load both users in parallel — we need the actor's display name for
+    // either a follow OR unfollow notification, and we need the target's
+    // `notificationsEnabled` flag to decide whether to write at all.
+    final results = await Future.wait([
+      _db.collection('users').doc(currentUserId).get(),
+      _db.collection('users').doc(targetUserId).get(),
+    ]);
+    final currentUserData = results[0].data() ?? {};
+    final targetUserData = results[1].data() ?? {};
+    final actorName = _displayName(currentUserData);
+    final notifyTarget = targetUserData['notificationsEnabled'] != false;
+    final batch = _db.batch();
+
     if (followSnap.exists) {
-      await followRef.delete();
+      // Unfollow: delete the follow record and (symmetrically with follow)
+      // notify the target so they know they lost a follower.
+      batch.delete(followRef);
+      if (notifyTarget) {
+        final notificationRef = _db.collection('notifications').doc();
+        batch.set(notificationRef, {
+          'toUserId': targetUserId,
+          'fromUserId': currentUserId,
+          'fromUserName': actorName,
+          'type': 'unfollow',
+          'message': '$actorName unfollowed you.',
+          'isRead': false,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
+      await batch.commit();
       return false;
     }
-
-    final currentUserSnap =
-        await _db.collection('users').doc(currentUserId).get();
-    final targetUserSnap =
-        await _db.collection('users').doc(targetUserId).get();
-    final currentUserData = currentUserSnap.data() ?? {};
-    final targetUserData = targetUserSnap.data() ?? {};
-    final batch = _db.batch();
 
     batch.set(followRef, {
       'followerId': currentUserId,
@@ -65,15 +86,14 @@ class FollowService {
       'createdAt': FieldValue.serverTimestamp(),
     });
 
-    if (targetUserData['notificationsEnabled'] != false) {
+    if (notifyTarget) {
       final notificationRef = _db.collection('notifications').doc();
-      final followerName = _displayName(currentUserData);
       batch.set(notificationRef, {
         'toUserId': targetUserId,
         'fromUserId': currentUserId,
-        'fromUserName': followerName,
+        'fromUserName': actorName,
         'type': 'follow',
-        'message': '$followerName started following you.',
+        'message': '$actorName started following you.',
         'isRead': false,
         'createdAt': FieldValue.serverTimestamp(),
       });

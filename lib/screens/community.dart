@@ -2430,6 +2430,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
     if (type == 'comment_reaction') return 'Someone reacted to your comment';
     if (type == 'rating') return 'Someone rated your story';
     if (type == 'follow') return 'Someone started following you';
+    if (type == 'unfollow') return 'Someone unfollowed you';
     if (type == 'parent_approval') return 'A story is waiting for approval';
     if (type == 'approval_result') return 'Your story approval was updated';
     return 'Someone liked your story';
@@ -2441,6 +2442,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
     if (type == 'comment_reaction') return Icons.add_reaction_outlined;
     if (type == 'rating') return Icons.star_outline;
     if (type == 'follow') return Icons.person_add_alt_1;
+    if (type == 'unfollow') return Icons.person_remove_alt_1;
     if (type == 'parent_approval') return Icons.fact_check_outlined;
     if (type == 'approval_result') return Icons.verified_outlined;
     return Icons.favorite;
@@ -2452,6 +2454,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
     if (type == 'comment_reaction') return kAppPrimary;
     if (type == 'rating') return Colors.amber.shade800;
     if (type == 'follow') return Colors.pink.shade600;
+    if (type == 'unfollow') return Colors.blueGrey.shade500;
     if (type == 'parent_approval') return Colors.orange.shade800;
     if (type == 'approval_result') return Colors.green.shade700;
     return Colors.redAccent;
