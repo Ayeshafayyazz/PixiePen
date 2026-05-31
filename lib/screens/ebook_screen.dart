@@ -10,6 +10,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart' show PdfGoogleFonts, networkImage;
 
 import 'theme.dart';
+import '../services/story_image_generation_service.dart';
 import '../utils/pdf_file_exporter.dart';
 import '../utils/story_content.dart';
 import '../widgets/storage_image.dart';
@@ -178,14 +179,189 @@ class EbookTemplateCatalog {
   }
 }
 
-TextStyle _ebookReaderBody(EbookTemplateDef t) {
+/// Body text style for the in-app reader.
+///
+/// Defaults to a book serif (Literata) for that "real book" feel; the user
+/// can override via the reader settings sheet.
+TextStyle _ebookReaderBody(
+  EbookTemplateDef t, {
+  bool? useSerif,
+  double fontScale = 1.0,
+  double lineHeight = 1.7,
+}) {
+  final bool isSerif = useSerif ?? true;
   final base = TextStyle(
-    fontSize: t.readerBodySize,
-    height: 1.55,
+    fontSize: t.readerBodySize * fontScale,
+    height: lineHeight,
     color: t.readerBodyColor,
+    letterSpacing: 0.1,
   );
-  if (t.useSerifBody) return GoogleFonts.literata(textStyle: base);
+  if (isSerif) return GoogleFonts.literata(textStyle: base);
   return GoogleFonts.plusJakartaSans(textStyle: base);
+}
+
+/// "Paragraph" containing only `***`, `---`, `~~~`, `✦ ✦ ✦` etc.
+/// renders as a decorative scene-break ornament instead of literal text.
+final RegExp _kSceneBreakLine = RegExp(
+  r'^\s*(?:[*]\s*){3,}\s*$'
+  r'|^\s*(?:[-]\s*){3,}\s*$'
+  r'|^\s*(?:[~]\s*){3,}\s*$'
+  r'|^\s*(?:[✦●•]\s*){2,}\s*$',
+);
+
+bool _isSceneBreakLine(String paragraph) =>
+    _kSceneBreakLine.hasMatch(paragraph.trim());
+
+/// Centered glyph row used for scene breaks and the end-of-chapter ornament.
+class _ChapterOrnament extends StatelessWidget {
+  final Color color;
+  final String glyph;
+  final double size;
+  final EdgeInsetsGeometry padding;
+
+  const _ChapterOrnament({
+    required this.color,
+    this.glyph = '★  ★  ★',
+    this.size = 14,
+    this.padding = const EdgeInsets.symmetric(vertical: 16),
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: padding,
+      child: Text(
+        glyph,
+        textAlign: TextAlign.center,
+        style: GoogleFonts.literata(
+          fontSize: size,
+          color: color,
+          letterSpacing: 3,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
+/// Subtle 3-D "page flip" applied to each [PageView] child based on its
+/// distance from the focused page. Gives the swipe a book-y feel without
+/// pulling in a new package.
+class _PageFlipEffect extends StatelessWidget {
+  final double pageOffset;
+  final Widget child;
+
+  const _PageFlipEffect({required this.pageOffset, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final double t = pageOffset.clamp(-1.0, 1.0);
+    final double absT = t.abs();
+    // The off-screen edge is the "hinge" — pages curl from the side they're
+    // sliding away from.
+    final Alignment hinge =
+        t < 0 ? Alignment.centerRight : Alignment.centerLeft;
+    final double rotY = t * 0.35; // ~20° at the extreme — subtle.
+    final double scale = 1.0 - absT * 0.04;
+
+    final Matrix4 m = Matrix4.identity()
+      ..setEntry(3, 2, 0.0015) // perspective
+      ..rotateY(rotY)
+      ..scale(scale);
+
+    return Transform(
+      alignment: hinge,
+      transform: m,
+      child: Stack(
+        fit: StackFit.passthrough,
+        children: [
+          child,
+          if (absT > 0.04)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: t < 0
+                          ? Alignment.centerLeft
+                          : Alignment.centerRight,
+                      end: t < 0
+                          ? Alignment.centerRight
+                          : Alignment.centerLeft,
+                      colors: [
+                        Colors.black.withValues(alpha: absT * 0.22),
+                        Colors.black.withValues(alpha: 0),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Small two-option pill toggle used in the reader settings sheet.
+class _SegToggle extends StatelessWidget {
+  final String leftLabel;
+  final String rightLabel;
+  final bool isLeft;
+  final Color accent;
+  final EbookTemplateDef template;
+  final ValueChanged<bool> onChanged;
+
+  const _SegToggle({
+    required this.leftLabel,
+    required this.rightLabel,
+    required this.isLeft,
+    required this.accent,
+    required this.template,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    Widget option(String label, bool active, VoidCallback onTap) {
+      return Expanded(
+        child: GestureDetector(
+          onTap: onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            alignment: Alignment.center,
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            decoration: BoxDecoration(
+              color: active ? accent : Colors.transparent,
+              borderRadius: BorderRadius.circular(99),
+            ),
+            child: Text(
+              label,
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                color: active ? Colors.white : template.readerStoryTitleColor,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: template.readerCardBorder.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(99),
+      ),
+      child: Row(
+        children: [
+          option(leftLabel, isLeft, () => onChanged(true)),
+          option(rightLabel, !isLeft, () => onChanged(false)),
+        ],
+      ),
+    );
+  }
 }
 
 class EbookScreen extends StatefulWidget {
@@ -426,20 +602,123 @@ class _EbookCreatorScreenState extends State<EbookCreatorScreen> {
   final TextEditingController _titleController = TextEditingController();
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   final User? _user = FirebaseAuth.instance.currentUser;
+  final StoryImageGenerationService _imageGen = StoryImageGenerationService();
 
   String _selectedTemplateId = 'classic';
   List<StoryBookItem> _selectedStories = [];
   bool _isCreating = false;
 
+  // AI book cover preview (overrides "first story's cover" when set).
+  String? _aiCoverUrl;
+  Uint8List? _aiCoverBytes;
+  bool _isGeneratingCover = false;
+
   @override
   void initState() {
     super.initState();
+    _titleController.addListener(_onTitleChanged);
     final existing = widget.editing;
     if (existing != null) {
       _titleController.text = existing.title;
       _selectedTemplateId = existing.templateId;
+      // Pre-fill the cover preview with whatever was saved last time so the
+      // editor shows the current book cover and the user can replace it.
+      final savedCover = existing.coverImage?.trim();
+      if (savedCover != null && savedCover.isNotEmpty) {
+        _aiCoverUrl = savedCover;
+      }
       _loadStoriesForEdit(existing);
     }
+  }
+
+  void _onTitleChanged() {
+    // Title is shown live on the AI-cover card preview, so trigger a rebuild
+    // whenever it changes (no-op if a frame is already pending).
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _generateAiCover() async {
+    final title = _titleController.text.trim();
+    if (title.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Add a book title before generating a cover.'),
+        ),
+      );
+      return;
+    }
+    if (_isGeneratingCover) return;
+
+    setState(() => _isGeneratingCover = true);
+    try {
+      // Pull a few story titles + opening lines to bias the cover toward the
+      // book's actual content (themes, characters, mood).
+      final storyTitles = _selectedStories
+          .take(3)
+          .map((s) => s.title.trim())
+          .where((t) => t.isNotEmpty)
+          .join(', ');
+      final firstSnippet = _selectedStories.isNotEmpty
+          ? _selectedStories.first.preview.trim()
+          : '';
+
+      final buf = StringBuffer()
+        ..write("Children's book cover illustration for an anthology titled \"")
+        ..write(title)
+        ..write('".');
+      if (storyTitles.isNotEmpty) {
+        buf
+          ..write(' Themes from inside the book: ')
+          ..write(storyTitles)
+          ..write('.');
+      }
+      if (firstSnippet.isNotEmpty) {
+        buf
+          ..write(' Opening scene mood: ')
+          ..write(firstSnippet)
+          ..write('.');
+      }
+      buf.write(
+        ' Whimsical magical watercolor storybook illustration style with '
+        'soft warm lighting, colorful and cheerful, portrait orientation '
+        'suitable as a book cover. STRICTLY no text, letters, words, '
+        'numbers, signatures, captions, or watermarks anywhere in the '
+        'image — pure illustration only. Age-appropriate for children '
+        'ages 9-12.',
+      );
+
+      final images = await _imageGen.generateImages(buf.toString(), count: 1);
+      if (!mounted) return;
+      if (images.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No cover was generated. Try again.')),
+        );
+        return;
+      }
+      final first = images.first;
+      if (first.url.trim().isEmpty) return;
+      setState(() {
+        _aiCoverUrl = first.url;
+        _aiCoverBytes = first.bytes;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Book cover generated.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not generate cover: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _isGeneratingCover = false);
+    }
+  }
+
+  void _clearAiCover() {
+    setState(() {
+      _aiCoverUrl = null;
+      _aiCoverBytes = null;
+    });
   }
 
   Future<void> _loadStoriesForEdit(Ebook ebook) async {
@@ -458,6 +737,7 @@ class _EbookCreatorScreenState extends State<EbookCreatorScreen> {
 
   @override
   void dispose() {
+    _titleController.removeListener(_onTitleChanged);
     _titleController.dispose();
     super.dispose();
   }
@@ -494,11 +774,16 @@ class _EbookCreatorScreenState extends State<EbookCreatorScreen> {
     setState(() => _isCreating = true);
 
     try {
-      final coverImage = _selectedStories
-          .map((story) => story.coverUrl)
-          .where((url) => url != null && url.isNotEmpty)
-          .cast<String?>()
-          .firstWhere((_) => true, orElse: () => null);
+      // AI-generated book cover wins; falls back to the first story's cover
+      // when the user didn't generate one.
+      final aiCover = _aiCoverUrl?.trim();
+      final coverImage = (aiCover != null && aiCover.isNotEmpty)
+          ? aiCover
+          : _selectedStories
+              .map((story) => story.coverUrl)
+              .where((url) => url != null && url.isNotEmpty)
+              .cast<String?>()
+              .firstWhere((_) => true, orElse: () => null);
 
       final existing = widget.editing;
       if (existing != null) {
@@ -528,6 +813,7 @@ class _EbookCreatorScreenState extends State<EbookCreatorScreen> {
             builder: (_) => EbookReaderScreen(
               ebook: ebook,
               stories: _selectedStories,
+              initialCoverBytes: _aiCoverBytes,
             ),
           ),
         );
@@ -555,6 +841,7 @@ class _EbookCreatorScreenState extends State<EbookCreatorScreen> {
           builder: (_) => EbookReaderScreen(
             ebook: ebook,
             stories: _selectedStories,
+            initialCoverBytes: _aiCoverBytes,
           ),
         ),
       );
@@ -636,18 +923,31 @@ class _EbookCreatorScreenState extends State<EbookCreatorScreen> {
             isCreating: _isCreating,
             primaryActionLabel: isEditing ? 'Save' : 'Preview',
           ),
+          const SizedBox(height: 18),
+          _AiBookCoverCard(
+            coverUrl: _aiCoverUrl,
+            coverBytes: _aiCoverBytes,
+            title: _titleController.text.trim(),
+            isGenerating: _isGeneratingCover,
+            onGenerate: _generateAiCover,
+            onClear: _clearAiCover,
+          ),
           if (_selectedStories.isNotEmpty) ...[
             const SizedBox(height: 20),
             Row(
               children: [
-                Text(
-                  'Stories in this book',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w800,
-                        color: _kEbookTitleColor,
-                      ),
+                Expanded(
+                  child: Text(
+                    'Stories in this book',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          color: _kEbookTitleColor,
+                        ),
+                  ),
                 ),
-                const Spacer(),
+                const SizedBox(width: 12),
                 Text(
                   '${_selectedStories.length} items',
                   style: const TextStyle(
@@ -871,10 +1171,16 @@ class EbookReaderScreen extends StatefulWidget {
   final Ebook ebook;
   final List<StoryBookItem> stories;
 
+  /// Optional in-memory bytes for [Ebook.coverImage] — passed through right
+  /// after generation/save so the cover paints instantly without waiting for
+  /// a (possibly CORS-blocked, on web) network fetch of the URL.
+  final Uint8List? initialCoverBytes;
+
   const EbookReaderScreen({
     super.key,
     required this.ebook,
     required this.stories,
+    this.initialCoverBytes,
   });
 
   @override
@@ -886,6 +1192,12 @@ class _EbookReaderScreenState extends State<EbookReaderScreen> {
   late final List<EbookPageData> _pages;
   int _currentPage = 0;
   bool _isExporting = false;
+
+  // Reader preferences (in-memory only).
+  bool _useSerifFont = true;
+  double _fontScale = 1.0;
+  double _lineHeight = 1.7;
+  String? _activeTemplateId;
 
   @override
   void initState() {
@@ -932,9 +1244,202 @@ class _EbookReaderScreenState extends State<EbookReaderScreen> {
     return cleaned.isEmpty ? 'pixiepen_ebook' : cleaned;
   }
 
+  void _jumpToChapter(int chapterOneBased) {
+    final tocIndex = _pages.indexWhere((p) => p.isToc);
+    final target = tocIndex < 0 ? chapterOneBased : tocIndex + chapterOneBased;
+    final clamped = target.clamp(0, _pages.length - 1);
+    _pageController.animateToPage(
+      clamped,
+      duration: const Duration(milliseconds: 380),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  void _openReadingSettings(EbookTemplateDef currentTemplate) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetCtx) {
+        return StatefulBuilder(
+          builder: (sheetCtx, sheetSetState) {
+            return DraggableScrollableSheet(
+              initialChildSize: 0.62,
+              minChildSize: 0.45,
+              maxChildSize: 0.92,
+              expand: false,
+              builder: (_, scroll) {
+                return Container(
+                  decoration: BoxDecoration(
+                    color: currentTemplate.readerCardBg,
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(26),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.18),
+                        blurRadius: 22,
+                        offset: const Offset(0, -6),
+                      ),
+                    ],
+                  ),
+                  child: ListView(
+                    controller: scroll,
+                    padding: const EdgeInsets.fromLTRB(20, 14, 20, 30),
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 44,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: currentTemplate.readerCardBorder,
+                            borderRadius: BorderRadius.circular(99),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Reading Settings',
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.literata(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900,
+                          color: currentTemplate.readerStoryTitleColor,
+                        ),
+                      ),
+                      const SizedBox(height: 22),
+                      _settingsLabel('Font Family', currentTemplate),
+                      const SizedBox(height: 8),
+                      _SegToggle(
+                        leftLabel: 'Serif (Book)',
+                        rightLabel: 'Sans (App)',
+                        isLeft: _useSerifFont,
+                        accent: kAppPrimary,
+                        template: currentTemplate,
+                        onChanged: (left) {
+                          sheetSetState(() {});
+                          setState(() => _useSerifFont = left);
+                        },
+                      ),
+                      const SizedBox(height: 22),
+                      _settingsLabel(
+                        'Font Size  ·  ${(_fontScale * 100).round()}%',
+                        currentTemplate,
+                      ),
+                      Slider(
+                        value: _fontScale,
+                        min: 0.85,
+                        max: 1.35,
+                        divisions: 10,
+                        activeColor: kAppPrimary,
+                        onChanged: (v) {
+                          sheetSetState(() {});
+                          setState(() => _fontScale = v);
+                        },
+                      ),
+                      const SizedBox(height: 6),
+                      _settingsLabel(
+                        'Line Spacing  ·  ${_lineHeight.toStringAsFixed(2)}',
+                        currentTemplate,
+                      ),
+                      Slider(
+                        value: _lineHeight,
+                        min: 1.45,
+                        max: 1.95,
+                        divisions: 10,
+                        activeColor: kAppPrimary,
+                        onChanged: (v) {
+                          sheetSetState(() {});
+                          setState(() => _lineHeight = v);
+                        },
+                      ),
+                      const SizedBox(height: 18),
+                      _settingsLabel('Theme', currentTemplate),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        height: 132,
+                        child: ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          itemCount: EbookTemplateCatalog.all.length,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(width: 12),
+                          itemBuilder: (context, i) {
+                            final t = EbookTemplateCatalog.all[i];
+                            final id =
+                                _activeTemplateId ?? widget.ebook.templateId;
+                            final selected = t.id == id;
+                            return _TemplateChoiceCard(
+                              template: t,
+                              selected: selected,
+                              onTap: () {
+                                sheetSetState(() {});
+                                setState(() => _activeTemplateId = t.id);
+                              },
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _settingsLabel(String text, EbookTemplateDef t) {
+    return Text(
+      text.toUpperCase(),
+      style: GoogleFonts.plusJakartaSans(
+        fontSize: 11,
+        fontWeight: FontWeight.w800,
+        letterSpacing: 2,
+        color: t.readerPartLabelColor,
+      ),
+    );
+  }
+
+  Widget _buildReaderPage(
+    EbookPageData page,
+    EbookTemplateDef template,
+    int index,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 10),
+      child: page.isCover
+          ? _BookCoverPage(
+              ebook: page.ebook!,
+              stories: widget.stories,
+              template: template,
+              initialBytes: widget.initialCoverBytes,
+            )
+          : page.isToc
+              ? _TocPage(
+                  stories: page.tocStories!,
+                  template: template,
+                  onJumpTo: _jumpToChapter,
+                )
+              : _StoryChapterPage(
+                  story: page.story!,
+                  chapterIndex: page.chapterIndex,
+                  template: template,
+                  useSerif: _useSerifFont,
+                  fontScale: _fontScale,
+                  lineHeight: _lineHeight,
+                  pageOrdinal: index + 1,
+                  totalPages: _pages.length,
+                ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final template = EbookTemplateCatalog.byId(widget.ebook.templateId);
+    final template = EbookTemplateCatalog.byId(
+      _activeTemplateId ?? widget.ebook.templateId,
+    );
 
     return Scaffold(
       backgroundColor: template.readerScaffoldBg,
@@ -944,6 +1449,11 @@ class _EbookReaderScreenState extends State<EbookReaderScreen> {
         title: Text(widget.ebook.title,
             style: const TextStyle(color: Colors.white)),
         actions: [
+          IconButton(
+            tooltip: 'Reading settings',
+            onPressed: () => _openReadingSettings(template),
+            icon: const Icon(Icons.tune, color: Colors.white),
+          ),
           IconButton(
             tooltip: 'Download PDF',
             onPressed: _isExporting ? null : () => _exportPdf(share: false),
@@ -967,30 +1477,33 @@ class _EbookReaderScreenState extends State<EbookReaderScreen> {
                   onPageChanged: (index) =>
                       setState(() => _currentPage = index),
                   itemBuilder: (context, index) {
-                    final page = _pages[index];
-                    return Padding(
-                      padding: const EdgeInsets.fromLTRB(18, 18, 18, 10),
-                      child: page.isCover
-                          ? _BookCoverPage(
-                              ebook: page.ebook!,
-                              template: template,
-                            )
-                          : _StoryChapterPage(
-                              story: page.story!,
-                              template: template,
-                            ),
+                    return AnimatedBuilder(
+                      animation: _pageController,
+                      builder: (context, child) {
+                        double offset = 0;
+                        if (_pageController.position.haveDimensions) {
+                          offset = (_pageController.page ??
+                                  index.toDouble()) -
+                              index;
+                        }
+                        return _PageFlipEffect(
+                          pageOffset: offset,
+                          child: child!,
+                        );
+                      },
+                      child: _buildReaderPage(_pages[index], template, index),
                     );
                   },
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+                padding: const EdgeInsets.fromLTRB(18, 0, 18, 14),
                 child: Row(
                   children: [
                     Expanded(
                       child: LinearProgressIndicator(
                         value: (_currentPage + 1) / _pages.length,
-                        minHeight: 8,
+                        minHeight: 6,
                         color: kAppPrimary,
                         backgroundColor: template.readerCardBorder
                             .withValues(alpha: 0.35),
@@ -999,8 +1512,9 @@ class _EbookReaderScreenState extends State<EbookReaderScreen> {
                     ),
                     const SizedBox(width: 12),
                     Text(
-                      '${_currentPage + 1}/${_pages.length}',
-                      style: TextStyle(
+                      '${_currentPage + 1} / ${_pages.length}',
+                      style: GoogleFonts.literata(
+                        fontSize: 12,
                         fontWeight: FontWeight.w700,
                         color: template.readerStoryTitleColor,
                       ),
@@ -1466,6 +1980,263 @@ class _EbookLibraryCard extends StatelessWidget {
   }
 }
 
+class _AiBookCoverCard extends StatelessWidget {
+  final String? coverUrl;
+  final Uint8List? coverBytes;
+  final String title;
+  final bool isGenerating;
+  final VoidCallback onGenerate;
+  final VoidCallback onClear;
+
+  const _AiBookCoverCard({
+    required this.coverUrl,
+    required this.coverBytes,
+    required this.title,
+    required this.isGenerating,
+    required this.onGenerate,
+    required this.onClear,
+  });
+
+  bool get _hasCover {
+    final url = coverUrl?.trim();
+    return (url != null && url.isNotEmpty) ||
+        (coverBytes != null && coverBytes!.isNotEmpty);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final canGenerate = !isGenerating && title.isNotEmpty;
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: _kEbookCardBackground,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _kEbookCardBorder, width: 1.1),
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: kAppPrimary.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(
+                  Icons.auto_awesome,
+                  color: kAppPrimary,
+                  size: 18,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'AI book cover',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                    color: _kEbookTitleColor,
+                  ),
+                ),
+              ),
+              if (_hasCover)
+                TextButton.icon(
+                  onPressed: isGenerating ? null : onClear,
+                  icon: const Icon(Icons.close, size: 16),
+                  label: const Text('Remove'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: _kEbookMutedText,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _hasCover
+                ? 'Tap "Regenerate" to try a new look. Your title and author '
+                    'will be cleanly overlaid on the cover by the reader and '
+                    'PDF — the AI only paints the artwork.'
+                : 'Generate a beautiful cover image for the whole eBook from '
+                    'your title and stories. We keep the artwork text-free '
+                    'and the app lays your title on top.',
+            style: TextStyle(
+              fontSize: 12.5,
+              color: _kEbookMutedText,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 14),
+          AspectRatio(
+            aspectRatio: 3 / 4,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (_hasCover)
+                    _CoverPreviewImage(
+                      url: coverUrl,
+                      bytes: coverBytes,
+                    )
+                  else
+                    Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            kAppPrimary.withValues(alpha: 0.18),
+                            kAppPrimary.withValues(alpha: 0.06),
+                          ],
+                        ),
+                      ),
+                      alignment: Alignment.center,
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Text(
+                          title.isEmpty
+                              ? 'Your book cover will appear here'
+                              : title,
+                          textAlign: TextAlign.center,
+                          maxLines: 4,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.literata(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                            color: _kEbookTitleColor,
+                            height: 1.25,
+                          ),
+                        ),
+                      ),
+                    ),
+                  if (_hasCover && title.isNotEmpty)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: Container(
+                        padding: const EdgeInsets.fromLTRB(16, 36, 16, 18),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              Colors.black.withValues(alpha: 0.0),
+                              Colors.black.withValues(alpha: 0.75),
+                            ],
+                          ),
+                        ),
+                        child: Text(
+                          title,
+                          textAlign: TextAlign.center,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.literata(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white,
+                            height: 1.2,
+                            shadows: const [
+                              Shadow(
+                                offset: Offset(0, 1),
+                                blurRadius: 4,
+                                color: Color(0xCC000000),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  if (isGenerating)
+                    Container(
+                      color: Colors.black.withValues(alpha: 0.35),
+                      alignment: Alignment.center,
+                      child: const Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: 32,
+                            height: 32,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 3,
+                              color: Colors.white,
+                            ),
+                          ),
+                          SizedBox(height: 12),
+                          Text(
+                            'Painting your cover…',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: canGenerate ? onGenerate : null,
+              icon: Icon(
+                _hasCover ? Icons.refresh : Icons.auto_awesome,
+                size: 18,
+              ),
+              label: Text(
+                _hasCover ? 'Regenerate cover' : 'Generate cover with AI',
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: kAppPrimary,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Renders an AI-generated cover preview. Uses raw bytes when available
+/// (fast first-paint after generation) and falls back to the storage URL
+/// (CORS-safe via [StorageImage]).
+class _CoverPreviewImage extends StatelessWidget {
+  final String? url;
+  final Uint8List? bytes;
+
+  const _CoverPreviewImage({required this.url, required this.bytes});
+
+  @override
+  Widget build(BuildContext context) {
+    final hasBytes = bytes != null && bytes!.isNotEmpty;
+    if (hasBytes) {
+      return Image.memory(
+        bytes!,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+      );
+    }
+    return StorageImage(
+      url: url,
+      fit: BoxFit.cover,
+      placeholder: Container(color: kAppPrimary.withValues(alpha: 0.08)),
+    );
+  }
+}
+
 class _EbookHeader extends StatelessWidget {
   final TextEditingController controller;
   final int selectedCount;
@@ -1773,20 +2544,195 @@ class _StoryThumbnail extends StatelessWidget {
 
 class _BookCoverPage extends StatelessWidget {
   final Ebook ebook;
+  final List<StoryBookItem> stories;
   final EbookTemplateDef template;
+
+  /// Optional in-memory cover bytes — when provided (right after AI
+  /// generation), they paint instantly and we skip the URL fetch.
+  final Uint8List? initialBytes;
 
   const _BookCoverPage({
     required this.ebook,
+    required this.stories,
     required this.template,
+    this.initialBytes,
   });
+
+  bool get _hasCoverImage =>
+      (initialBytes != null && initialBytes!.isNotEmpty) ||
+      (ebook.coverImage != null && ebook.coverImage!.isNotEmpty);
 
   @override
   Widget build(BuildContext context) {
+    // When a cover image exists (AI-generated or from a story), render a
+    // real book-cover with the artwork edge-to-edge and the title/byline
+    // overlaid on top (Path B — AI paints art, app overlays text).
+    // Otherwise fall back to the ornamental text-only cover.
+    if (_hasCoverImage) {
+      return _buildOverlayCover(context);
+    }
+    return _buildOrnamentalCover(context);
+  }
+
+  // -- Variant 1: edge-to-edge image with overlaid title (AI cover style) --
+  Widget _buildOverlayCover(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: template.coverBorder, width: 2.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.28),
+            blurRadius: 28,
+            spreadRadius: -4,
+            offset: const Offset(0, 16),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: AspectRatio(
+        aspectRatio: 3 / 4,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            StorageImage(
+              url: ebook.coverImage,
+              bytes: initialBytes,
+              fit: BoxFit.cover,
+              placeholder: Container(color: template.coverBorder),
+            ),
+            // Top tagline strip with subtle scrim so it reads on any photo.
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(16, 22, 16, 40),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.black.withValues(alpha: 0.45),
+                      Colors.black.withValues(alpha: 0.0),
+                    ],
+                  ),
+                ),
+                child: Text(
+                  'A  P I X I E P E N  C O L L E C T I O N',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 11,
+                    letterSpacing: 3.5,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white.withValues(alpha: 0.92),
+                  ),
+                ),
+              ),
+            ),
+            // Bottom dark gradient + title block.
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(22, 80, 22, 28),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.black.withValues(alpha: 0.0),
+                      Colors.black.withValues(alpha: 0.55),
+                      Colors.black.withValues(alpha: 0.82),
+                    ],
+                    stops: const [0.0, 0.45, 1.0],
+                  ),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Sparkle divider on the dark scrim.
+                    Text(
+                      '★  ★  ★',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.85),
+                        fontSize: 11,
+                        letterSpacing: 4,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      ebook.title,
+                      textAlign: TextAlign.center,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.literata(
+                        fontSize: 30,
+                        height: 1.12,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.white,
+                        shadows: const [
+                          Shadow(
+                            offset: Offset(0, 2),
+                            blurRadius: 8,
+                            color: Color(0xCC000000),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'by ${ebook.authorName}',
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.literata(
+                        fontSize: 15,
+                        fontStyle: FontStyle.italic,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.white.withValues(alpha: 0.95),
+                      ),
+                    ),
+                    if (stories.isNotEmpty) ...[
+                      const SizedBox(height: 14),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.18),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.45),
+                            width: 1,
+                          ),
+                        ),
+                        child: Text(
+                          '${stories.length} ${stories.length == 1 ? 'Story' : 'Stories'}',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // -- Variant 2: text-only ornamental cover (no image available) --
+  Widget _buildOrnamentalCover(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final w = constraints.maxWidth;
-        final maxArtH = math.min(380.0, w * 0.95);
-
         return Container(
           width: double.infinity,
           decoration: BoxDecoration(
@@ -1795,53 +2741,119 @@ class _BookCoverPage extends StatelessWidget {
             border: Border.all(color: template.coverBorder, width: 2.5),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.12),
-                blurRadius: 18,
-                offset: const Offset(0, 10),
+                color: Colors.black.withValues(alpha: 0.22),
+                blurRadius: 24,
+                spreadRadius: -4,
+                offset: const Offset(0, 14),
               ),
             ],
           ),
-          padding: const EdgeInsets.all(22),
+          padding: const EdgeInsets.fromLTRB(24, 30, 24, 28),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              if (ebook.coverImage != null && ebook.coverImage!.isNotEmpty)
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxWidth: w,
-                      maxHeight: maxArtH,
-                    ),
-                    child: StorageImage(
-                      url: ebook.coverImage,
-                      width: w,
-                      fit: BoxFit.contain,
-                      placeholder: const SizedBox.shrink(),
-                    ),
+              // Top ornamental rule
+              Row(children: [
+                Expanded(
+                  child: Divider(
+                    color: template.coverBorder,
+                    thickness: 1.5,
                   ),
                 ),
-              SizedBox(height: ebook.coverImage != null ? 22 : 0),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Icon(
+                    Icons.auto_stories,
+                    color: template.coverBorder,
+                    size: 20,
+                  ),
+                ),
+                Expanded(
+                  child: Divider(
+                    color: template.coverBorder,
+                    thickness: 1.5,
+                  ),
+                ),
+              ]),
+              const SizedBox(height: 22),
               Text(
                 ebook.title,
                 textAlign: TextAlign.center,
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 28,
-                  height: 1.12,
+                style: GoogleFonts.literata(
+                  fontSize: 30,
+                  height: 1.15,
                   fontWeight: FontWeight.w900,
                   color: template.coverTitleColor,
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
               Text(
                 'by ${ebook.authorName}',
                 textAlign: TextAlign.center,
-                style: GoogleFonts.plusJakartaSans(
+                style: GoogleFonts.literata(
                   fontSize: 17,
-                  fontWeight: FontWeight.w600,
+                  fontStyle: FontStyle.italic,
+                  fontWeight: FontWeight.w500,
                   color: template.coverAuthorColor,
                 ),
               ),
+              const SizedBox(height: 20),
+              // Mid ornamental rule
+              Row(children: [
+                Expanded(
+                  child: Divider(color: template.coverBorder, thickness: 1),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Text(
+                    '★  ★  ★',
+                    style: TextStyle(
+                      color: template.coverBorder,
+                      fontSize: 11,
+                      letterSpacing: 3,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Divider(color: template.coverBorder, thickness: 1),
+                ),
+              ]),
+              const SizedBox(height: 14),
+              Text(
+                'A  P I X I E P E N  C O L L E C T I O N',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 11,
+                  letterSpacing: 3.5,
+                  fontWeight: FontWeight.w700,
+                  color: template.coverAuthorColor,
+                ),
+              ),
+              if (stories.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: template.coverBorder.withValues(alpha: 0.13),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: template.coverBorder.withValues(alpha: 0.4),
+                      width: 1,
+                    ),
+                  ),
+                  child: Text(
+                    '${stories.length} ${stories.length == 1 ? 'Story' : 'Stories'}',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: template.coverAuthorColor,
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         );
@@ -1850,112 +2862,482 @@ class _BookCoverPage extends StatelessWidget {
   }
 }
 
-/// One swipe per story: title block once at the top, then text + inline images
-/// in editor order in a single scroll (like a printed book chapter).
+/// In-app Table of Contents page (appears between cover and first chapter
+/// when the book has 2+ stories).
+class _TocPage extends StatelessWidget {
+  final List<StoryBookItem> stories;
+  final EbookTemplateDef template;
+  final void Function(int chapterOneBased) onJumpTo;
+
+  const _TocPage({
+    required this.stories,
+    required this.template,
+    required this.onJumpTo,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: template.readerCardBg,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: template.readerCardBorder, width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.10),
+            blurRadius: 18,
+            offset: const Offset(0, 10),
+          ),
+        ],
+        gradient: RadialGradient(
+          center: Alignment.topCenter,
+          radius: 1.2,
+          colors: [
+            template.readerCardBg,
+            Color.alphaBlend(
+              template.readerCardBorder.withValues(alpha: 0.16),
+              template.readerCardBg,
+            ),
+          ],
+          stops: const [0.55, 1.0],
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      padding: const EdgeInsets.fromLTRB(22, 30, 22, 22),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'C O N T E N T S',
+            textAlign: TextAlign.center,
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 4,
+              color: template.readerPartLabelColor,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Table of Contents',
+            textAlign: TextAlign.center,
+            style: GoogleFonts.literata(
+              fontSize: 26,
+              fontWeight: FontWeight.w900,
+              color: template.readerStoryTitleColor,
+              letterSpacing: 0.4,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(children: [
+            Expanded(
+              child: Divider(
+                color: template.readerCardBorder,
+                thickness: 1.6,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Icon(
+                Icons.menu_book,
+                color: template.readerPartLabelColor,
+                size: 16,
+              ),
+            ),
+            Expanded(
+              child: Divider(
+                color: template.readerCardBorder,
+                thickness: 1.6,
+              ),
+            ),
+          ]),
+          const SizedBox(height: 16),
+          Expanded(
+            child: ListView.separated(
+              physics: const BouncingScrollPhysics(),
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              itemCount: stories.length,
+              separatorBuilder: (_, __) => Divider(
+                color: template.readerCardBorder,
+                thickness: 0.7,
+                height: 1,
+                indent: 12,
+                endIndent: 12,
+              ),
+              itemBuilder: (context, i) {
+                final story = stories[i];
+                return InkWell(
+                  onTap: () => onJumpTo(i + 1),
+                  borderRadius: BorderRadius.circular(10),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 12,
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Container(
+                          width: 36,
+                          height: 36,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: kAppPrimary.withValues(alpha: 0.1),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: kAppPrimary.withValues(alpha: 0.3),
+                              width: 1,
+                            ),
+                          ),
+                          child: Text(
+                            '${i + 1}',
+                            style: GoogleFonts.literata(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                              color: kAppPrimary,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Text(
+                            story.title,
+                            style: GoogleFonts.literata(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                              color: template.readerStoryTitleColor,
+                              height: 1.3,
+                            ),
+                          ),
+                        ),
+                        Icon(
+                          Icons.chevron_right,
+                          color: template.readerPartLabelColor,
+                          size: 18,
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One swipe per story: chapter header, optional cover, drop-capped body that
+/// scrolls internally — styled to feel like a printed book chapter.
 class _StoryChapterPage extends StatelessWidget {
   final StoryBookItem story;
   final EbookTemplateDef template;
+  final int chapterIndex; // 1-based; 0 hides the "Chapter N" label.
+  final bool useSerif;
+  final double fontScale;
+  final double lineHeight;
+  final int pageOrdinal;
+  final int totalPages;
 
   const _StoryChapterPage({
     required this.story,
     required this.template,
+    this.chapterIndex = 0,
+    this.useSerif = true,
+    this.fontScale = 1.0,
+    this.lineHeight = 1.7,
+    this.pageOrdinal = 0,
+    this.totalPages = 0,
   });
 
   @override
   Widget build(BuildContext context) {
     final blocks = ebookStoryBlocks(story);
-    final bodyStyle = _ebookReaderBody(template);
+    final bodyStyle = _ebookReaderBody(
+      template,
+      useSerif: useSerif,
+      fontScale: fontScale,
+      lineHeight: lineHeight,
+    );
 
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
         color: template.readerCardBg,
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: template.readerCardBorder, width: 1.8),
+        border: Border.all(color: template.readerCardBorder, width: 1.5),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.08),
-            blurRadius: 16,
-            offset: const Offset(0, 8),
+            color: Colors.black.withValues(alpha: 0.10),
+            blurRadius: 18,
+            offset: const Offset(0, 10),
           ),
         ],
+        // Subtle paper vignette so the card reads like a page, not a UI tile.
+        gradient: RadialGradient(
+          center: Alignment.topCenter,
+          radius: 1.2,
+          colors: [
+            template.readerCardBg,
+            Color.alphaBlend(
+              template.readerCardBorder.withValues(alpha: 0.18),
+              template.readerCardBg,
+            ),
+          ],
+          stops: const [0.55, 1.0],
+        ),
       ),
-      padding: const EdgeInsets.fromLTRB(18, 20, 18, 16),
+      clipBehavior: Clip.antiAlias,
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final contentW = constraints.maxWidth;
-          final maxChapterCoverH = math.min(240.0, contentW * 0.56);
+          final contentW = constraints.maxWidth - 36; // account for padding
+          final maxChapterCoverH = math.min(220.0, contentW * 0.52);
           final maxInlineImageH = math.min(320.0, contentW * 0.78);
 
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                story.title,
-                textAlign: TextAlign.center,
-                maxLines: 4,
-                overflow: TextOverflow.ellipsis,
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 26,
-                  height: 1.15,
-                  fontWeight: FontWeight.w900,
-                  color: template.readerStoryTitleColor,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'by ${story.authorName}',
-                textAlign: TextAlign.center,
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: template.readerPartLabelColor,
-                ),
-              ),
-              if (story.coverUrl != null && story.coverUrl!.isNotEmpty) ...[
-                const SizedBox(height: 16),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(14),
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxWidth: contentW,
-                      maxHeight: maxChapterCoverH,
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(18, 26, 18, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (chapterIndex > 0) ...[
+                  Text(
+                    'C H A P T E R   $chapterIndex',
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 3,
+                      color: template.readerPartLabelColor,
                     ),
-                    child: StorageImage(
-                      url: story.coverUrl,
-                      width: contentW,
-                      fit: BoxFit.contain,
-                      placeholder: const SizedBox.shrink(),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                Text(
+                  story.title,
+                  textAlign: TextAlign.center,
+                  maxLines: 4,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.literata(
+                    fontSize: 26,
+                    height: 1.18,
+                    fontWeight: FontWeight.w900,
+                    color: template.readerStoryTitleColor,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'by ${story.authorName}',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.literata(
+                    fontSize: 14,
+                    fontStyle: FontStyle.italic,
+                    fontWeight: FontWeight.w500,
+                    color: template.readerPartLabelColor,
+                  ),
+                ),
+                // Option B: heading → cover image → ✦ divider → body.
+                // The cover sits directly under the title/byline (like a
+                // magazine chapter opener), then a delicate ✦ divider
+                // introduces the body text.
+                if (story.coverUrl != null && story.coverUrl!.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: contentW,
+                        maxHeight: maxChapterCoverH,
+                      ),
+                      child: StorageImage(
+                        url: story.coverUrl,
+                        width: contentW,
+                        fit: BoxFit.contain,
+                        placeholder: const SizedBox.shrink(),
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 14),
+                Row(children: [
+                  Expanded(
+                    child: Divider(
+                      color: template.readerCardBorder,
+                      thickness: 1.2,
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    child: Text(
+                      '★',
+                      style: TextStyle(
+                        color: template.readerPartLabelColor,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Divider(
+                      color: template.readerCardBorder,
+                      thickness: 1.2,
+                    ),
+                  ),
+                ]),
+                const SizedBox(height: 18),
+                Expanded(
+                  child: SingleChildScrollView(
+                    physics: const BouncingScrollPhysics(),
+                    child: _buildChapterBody(
+                      blocks,
+                      bodyStyle,
+                      contentW,
+                      maxInlineImageH,
                     ),
                   ),
                 ),
+                if (pageOrdinal > 0 && totalPages > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Align(
+                      alignment: Alignment.bottomRight,
+                      child: Text(
+                        '— $pageOrdinal —',
+                        style: GoogleFonts.literata(
+                          fontSize: 11,
+                          fontStyle: FontStyle.italic,
+                          color: template.readerPartLabelColor,
+                        ),
+                      ),
+                    ),
+                  ),
               ],
-              const SizedBox(height: 18),
-              Expanded(
-                child: SingleChildScrollView(
-                  physics: const BouncingScrollPhysics(),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      for (final block in blocks)
-                        ..._widgetsForBlock(
-                          block,
-                          bodyStyle,
-                          contentW,
-                          maxInlineImageH,
-                        ),
-                      if (_chapterBodyIsEmpty(blocks))
-                        Text(
-                          '(This story is empty.)',
-                          style: bodyStyle,
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
+            ),
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildChapterBody(
+    List<Map<String, dynamic>> blocks,
+    TextStyle bodyStyle,
+    double contentW,
+    double maxInlineH,
+  ) {
+    if (_chapterBodyIsEmpty(blocks)) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 24),
+        child: Text(
+          '(This story is empty.)',
+          style: bodyStyle,
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
+
+    final children = <Widget>[];
+    var dropCapApplied = false;
+
+    for (final block in blocks) {
+      final type = block['type'] as String?;
+      if (type == StoryContentCodec.typeImage) {
+        final url = (block['url'] as String?)?.trim();
+        if (url == null || url.isEmpty) continue;
+        children.add(
+          Padding(
+            padding: const EdgeInsets.only(bottom: 14, top: 4),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: contentW,
+                  maxHeight: maxInlineH,
+                ),
+                child: StorageImage(
+                  url: url,
+                  width: contentW,
+                  fit: BoxFit.contain,
+                  placeholder: const SizedBox.shrink(),
+                ),
+              ),
+            ),
+          ),
+        );
+        continue;
+      }
+
+      final raw = (block['text'] as String?) ?? '';
+      if (raw.trim().isEmpty) continue;
+
+      final paragraphs = raw.split(RegExp(r'\n\s*\n'));
+      for (final para in paragraphs) {
+        final p = para.trim();
+        if (p.isEmpty) continue;
+
+        if (_isSceneBreakLine(p)) {
+          children.add(
+            _ChapterOrnament(color: template.readerPartLabelColor),
+          );
+          continue;
+        }
+
+        if (!dropCapApplied) {
+          dropCapApplied = true;
+          children.add(_buildDropCapParagraph(p, bodyStyle));
+        } else {
+          children.add(
+            Padding(
+              padding: const EdgeInsets.only(bottom: 14),
+              child: Text(
+                p,
+                style: bodyStyle,
+                textAlign: TextAlign.justify,
+              ),
+            ),
+          );
+        }
+      }
+    }
+
+    if (children.isNotEmpty) {
+      children.add(
+        _ChapterOrnament(
+          color: template.readerPartLabelColor,
+          glyph: '— ★ —',
+          size: 18,
+          padding: const EdgeInsets.only(top: 12, bottom: 6),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: children,
+    );
+  }
+
+  Widget _buildDropCapParagraph(String paragraph, TextStyle bodyStyle) {
+    final firstChar = paragraph.substring(0, 1);
+    final rest = paragraph.length > 1 ? paragraph.substring(1) : '';
+
+    final capStyle = GoogleFonts.literata(
+      fontSize: (bodyStyle.fontSize ?? 18) * 3.0,
+      fontWeight: FontWeight.w900,
+      color: template.readerStoryTitleColor,
+      height: 0.92,
+    );
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(text: firstChar, style: capStyle),
+            TextSpan(text: rest, style: bodyStyle),
+          ],
+        ),
+        textAlign: TextAlign.justify,
       ),
     );
   }
@@ -1973,56 +3355,6 @@ class _StoryChapterPage extends StatelessWidget {
       }
     }
     return true;
-  }
-
-  List<Widget> _widgetsForBlock(
-    Map<String, dynamic> block,
-    TextStyle bodyStyle,
-    double contentWidth,
-    double maxImageHeight,
-  ) {
-    final type = block['type'] as String?;
-    if (type == StoryContentCodec.typeImage) {
-      final url = (block['url'] as String?)?.trim();
-      if (url == null || url.isEmpty) return const [];
-      return [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 14),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxWidth: contentWidth,
-                maxHeight: maxImageHeight,
-              ),
-              child: StorageImage(
-                url: url,
-                width: contentWidth,
-                fit: BoxFit.contain,
-                placeholder: const SizedBox.shrink(),
-              ),
-            ),
-          ),
-        ),
-      ];
-    }
-
-    final raw = (block['text'] as String?) ?? '';
-    if (raw.trim().isEmpty) return const [];
-
-    final paragraphs = raw.split(RegExp(r'\n\s*\n'));
-    final out = <Widget>[];
-    for (final para in paragraphs) {
-      final p = para.trim();
-      if (p.isEmpty) continue;
-      out.add(
-        Padding(
-          padding: const EdgeInsets.only(bottom: 14),
-          child: Text(p, style: bodyStyle),
-        ),
-      );
-    }
-    return out;
   }
 }
 
@@ -2065,10 +3397,6 @@ abstract final class _EbookPdfLayout {
   /// Height inside margins for one PDF sheet (A4 minus margins).
   static double innerHeightPt(PdfPageFormat format) =>
       format.height - 2 * marginPt;
-
-  /// Room left on cover after title, subtitle, padding — avoids single-page overflow.
-  static double maxBookCoverArtHeightPt(PdfPageFormat format) =>
-      math.min(300.0, innerHeightPt(format) - 230).clamp(72.0, 300.0);
 
   static double maxChapterCoverHeightPt(PdfPageFormat format) =>
       math.min(220.0, innerHeightPt(format) * 0.28).clamp(72.0, 220.0);
@@ -2144,23 +3472,55 @@ _PdfExportTheme _pdfExportThemeFor(String? templateId) {
 }
 
 class EbookPdfGenerator {
-  /// Embedded TrueType fonts so curly quotes, apostrophes, dashes render (Helvetica lacks these glyphs).
+  /// Embedded TrueType fonts so curly quotes, apostrophes, dashes render
+  /// (Helvetica lacks these glyphs). Prefers Lora (book serif) for that
+  /// printed-novel feel; falls back to Open Sans if Lora isn't available.
   static Future<pw.ThemeData?> _loadPdfEmbeddedFontTheme() async {
+    // Loads Noto Color Emoji as a fallback so glyphs like ✨ 🌟 ❤️ don't
+    // render as crosses (`pdf` can't draw emoji from Lora/Open Sans alone).
+    // If the font can't be fetched (offline build), we accept "no emoji
+    // fallback" as a safe no-op — emojis will still render as crosses but
+    // the PDF will not fail to build.
+    final emojiFallback = <pw.Font>[];
+    try {
+      emojiFallback.add(await PdfGoogleFonts.notoColorEmoji());
+    } catch (_) {
+      /* no emoji fallback available */
+    }
+
     try {
       final fonts = await Future.wait([
-        PdfGoogleFonts.openSansRegular(),
-        PdfGoogleFonts.openSansBold(),
-        PdfGoogleFonts.openSansItalic(),
-        PdfGoogleFonts.openSansBoldItalic(),
+        PdfGoogleFonts.loraRegular(),
+        PdfGoogleFonts.loraBold(),
+        PdfGoogleFonts.loraItalic(),
+        PdfGoogleFonts.loraBoldItalic(),
       ]);
       return pw.ThemeData.withFont(
         base: fonts[0],
         bold: fonts[1],
         italic: fonts[2],
         boldItalic: fonts[3],
+        fontFallback: emojiFallback.isNotEmpty ? emojiFallback : null,
       );
     } catch (_) {
-      return null;
+      // Fall back to Open Sans (universally available in `printing`).
+      try {
+        final fonts = await Future.wait([
+          PdfGoogleFonts.openSansRegular(),
+          PdfGoogleFonts.openSansBold(),
+          PdfGoogleFonts.openSansItalic(),
+          PdfGoogleFonts.openSansBoldItalic(),
+        ]);
+        return pw.ThemeData.withFont(
+          base: fonts[0],
+          bold: fonts[1],
+          italic: fonts[2],
+          boldItalic: fonts[3],
+          fontFallback: emojiFallback.isNotEmpty ? emojiFallback : null,
+        );
+      } catch (_) {
+        return null;
+      }
     }
   }
 
@@ -2256,14 +3616,30 @@ class EbookPdfGenerator {
           contentW,
           format,
           pdfTxt,
+          stories.length,
         ),
       ),
     );
 
-    // One MultiPage per story so each chapter begins on a new PDF page (after the cover).
-    for (final story in stories) {
+    // Table of Contents page (only useful with 2+ stories).
+    if (stories.length >= 2) {
+      document.addPage(
+        pw.Page(
+          pageFormat: format,
+          margin: pw.EdgeInsets.all(_EbookPdfLayout.marginPt),
+          build: (context) =>
+              _buildPdfTocPage(ebook, stories, pdfTheme, contentW, pdfTxt),
+        ),
+      );
+    }
+
+    // One MultiPage per story — each chapter starts on a new sheet and gets a
+    // book-style page footer.
+    for (var i = 0; i < stories.length; i++) {
+      final story = stories[i];
       final chapterWidgets = _buildPdfChapterWidgets(
         story,
+        i + 1,
         pdfTheme,
         cache,
         contentW,
@@ -2275,6 +3651,13 @@ class EbookPdfGenerator {
         pw.MultiPage(
           pageFormat: format,
           margin: pw.EdgeInsets.all(_EbookPdfLayout.marginPt),
+          footer: (ctx) => _buildPdfFooter(
+            ebook.title,
+            ctx.pageNumber,
+            pdfTheme,
+            contentW,
+            pdfTxt,
+          ),
           build: (context) => chapterWidgets,
         ),
       );
@@ -2347,32 +3730,225 @@ class EbookPdfGenerator {
     double contentWidth,
     PdfPageFormat format,
     String Function(String) pdfTxt,
+    int storyCount,
   ) {
-    final maxArtH = _EbookPdfLayout.maxBookCoverArtHeightPt(format);
+    // When a cover image exists, paint the artwork edge-to-edge and overlay
+    // the title and byline on a soft dark scrim — same look as the in-app
+    // reader. Without an image, fall back to a typographic ornamental cover.
+    if (image != null) {
+      return _buildPdfOverlayCover(
+        ebook,
+        image,
+        theme,
+        contentWidth,
+        format,
+        pdfTxt,
+        storyCount,
+      );
+    }
+    return _buildPdfOrnamentalCover(
+      ebook,
+      theme,
+      contentWidth,
+      format,
+      pdfTxt,
+      storyCount,
+    );
+  }
+
+  static pw.Widget _buildPdfOverlayCover(
+    Ebook ebook,
+    pw.ImageProvider image,
+    _PdfExportTheme theme,
+    double contentWidth,
+    PdfPageFormat format,
+    String Function(String) pdfTxt,
+    int storyCount,
+  ) {
+    final innerH = _EbookPdfLayout.innerHeightPt(format);
+
     return pw.Container(
+      width: contentWidth,
+      height: innerH,
       decoration: pw.BoxDecoration(
-        color: theme.coverBg,
         borderRadius: pw.BorderRadius.circular(18),
-        border: pw.Border.all(color: theme.coverBorder, width: 2),
+        border: pw.Border.all(color: theme.coverBorder, width: 2.5),
       ),
-      padding: const pw.EdgeInsets.all(24),
-      child: pw.Column(
-        mainAxisAlignment: pw.MainAxisAlignment.center,
-        children: [
-          if (image != null) ...[
-            pw.ClipRRect(
-              horizontalRadius: 14,
-              verticalRadius: 14,
-              child: pw.SizedBox(
-                width: contentWidth,
-                height: maxArtH,
-                child: pw.Center(
-                  child: pw.Image(image, fit: pw.BoxFit.contain),
+      child: pw.ClipRRect(
+        horizontalRadius: 18,
+        verticalRadius: 18,
+        child: pw.Stack(
+          children: [
+            // Full-bleed cover art.
+            pw.Positioned.fill(
+              child: pw.Image(image, fit: pw.BoxFit.cover),
+            ),
+            // Top tagline strip with subtle scrim.
+            pw.Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: pw.Container(
+                padding:
+                    const pw.EdgeInsets.fromLTRB(22, 26, 22, 40),
+                decoration: pw.BoxDecoration(
+                  gradient: pw.LinearGradient(
+                    begin: pw.Alignment.topCenter,
+                    end: pw.Alignment.bottomCenter,
+                    colors: [
+                      PdfColor.fromInt(0x66000000),
+                      PdfColor.fromInt(0x00000000),
+                    ],
+                  ),
+                ),
+                child: pw.Text(
+                  pdfTxt('A  P I X I E P E N  C O L L E C T I O N'),
+                  textAlign: pw.TextAlign.center,
+                  style: pw.TextStyle(
+                    fontSize: 10,
+                    letterSpacing: 3.5,
+                    fontWeight: pw.FontWeight.bold,
+                    color: PdfColor.fromInt(0xF2FFFFFF),
+                  ),
                 ),
               ),
             ),
-            pw.SizedBox(height: 22),
+            // Bottom dark scrim + title block.
+            pw.Positioned(
+              bottom: 0,
+              left: 0,
+              right: 0,
+              child: pw.Container(
+                padding:
+                    const pw.EdgeInsets.fromLTRB(28, 100, 28, 36),
+                decoration: pw.BoxDecoration(
+                  gradient: pw.LinearGradient(
+                    begin: pw.Alignment.topCenter,
+                    end: pw.Alignment.bottomCenter,
+                    colors: [
+                      PdfColor.fromInt(0x00000000),
+                      PdfColor.fromInt(0x8C000000),
+                      PdfColor.fromInt(0xD1000000),
+                    ],
+                    stops: const [0.0, 0.45, 1.0],
+                  ),
+                ),
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.center,
+                  children: [
+                    pw.Text(
+                      '★  ★  ★',
+                      textAlign: pw.TextAlign.center,
+                      style: pw.TextStyle(
+                        color: PdfColor.fromInt(0xD9FFFFFF),
+                        fontSize: 11,
+                        letterSpacing: 4,
+                      ),
+                    ),
+                    pw.SizedBox(height: 12),
+                    pw.Container(
+                      width: contentWidth - 80,
+                      child: pw.Text(
+                        pdfTxt(ebook.title),
+                        textAlign: pw.TextAlign.center,
+                        maxLines: 3,
+                        overflow: pw.TextOverflow.clip,
+                        style: pw.TextStyle(
+                          fontSize: 32,
+                          fontWeight: pw.FontWeight.bold,
+                          color: PdfColors.white,
+                          height: 1.12,
+                        ),
+                      ),
+                    ),
+                    pw.SizedBox(height: 10),
+                    pw.Text(
+                      pdfTxt('by ${ebook.authorName}'),
+                      textAlign: pw.TextAlign.center,
+                      style: pw.TextStyle(
+                        fontSize: 14,
+                        fontStyle: pw.FontStyle.italic,
+                        color: PdfColor.fromInt(0xF2FFFFFF),
+                        height: 1.3,
+                      ),
+                    ),
+                    if (storyCount > 0) ...[
+                      pw.SizedBox(height: 16),
+                      pw.Container(
+                        padding: const pw.EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 5,
+                        ),
+                        decoration: pw.BoxDecoration(
+                          color: PdfColor.fromInt(0x33FFFFFF),
+                          borderRadius: pw.BorderRadius.circular(20),
+                          border: pw.Border.all(
+                            color: PdfColor.fromInt(0x80FFFFFF),
+                            width: 0.6,
+                          ),
+                        ),
+                        child: pw.Text(
+                          pdfTxt(
+                            '$storyCount ${storyCount == 1 ? 'Story' : 'Stories'}',
+                          ),
+                          style: pw.TextStyle(
+                            fontSize: 10,
+                            fontWeight: pw.FontWeight.bold,
+                            color: PdfColors.white,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
           ],
+        ),
+      ),
+    );
+  }
+
+  static pw.Widget _buildPdfOrnamentalCover(
+    Ebook ebook,
+    _PdfExportTheme theme,
+    double contentWidth,
+    PdfPageFormat format,
+    String Function(String) pdfTxt,
+    int storyCount,
+  ) {
+    final innerH = _EbookPdfLayout.innerHeightPt(format);
+
+    return pw.Container(
+      width: contentWidth,
+      height: innerH,
+      decoration: pw.BoxDecoration(
+        color: theme.coverBg,
+        borderRadius: pw.BorderRadius.circular(18),
+        border: pw.Border.all(color: theme.coverBorder, width: 2.5),
+      ),
+      padding: const pw.EdgeInsets.fromLTRB(30, 36, 30, 32),
+      child: pw.Column(
+        mainAxisAlignment: pw.MainAxisAlignment.center,
+        children: [
+          // Top ornament: rule — sparkle — rule.
+          pw.Row(children: [
+            pw.Expanded(
+              child:
+                  pw.Divider(color: theme.coverBorder, thickness: 1.5),
+            ),
+            pw.SizedBox(width: 10),
+            pw.Text(
+              '★',
+              style: pw.TextStyle(color: theme.coverBorder, fontSize: 14),
+            ),
+            pw.SizedBox(width: 10),
+            pw.Expanded(
+              child:
+                  pw.Divider(color: theme.coverBorder, thickness: 1.5),
+            ),
+          ]),
+          pw.SizedBox(height: 28),
           pw.Container(
             width: contentWidth,
             child: pw.Text(
@@ -2381,14 +3957,14 @@ class EbookPdfGenerator {
               maxLines: 4,
               overflow: pw.TextOverflow.clip,
               style: pw.TextStyle(
-                fontSize: 30,
+                fontSize: 32,
                 fontWeight: pw.FontWeight.bold,
                 color: theme.coverTitle,
-                height: 1.2,
+                height: 1.18,
               ),
             ),
           ),
-          pw.SizedBox(height: 10),
+          pw.SizedBox(height: 12),
           pw.Container(
             width: contentWidth,
             child: pw.Text(
@@ -2398,9 +3974,104 @@ class EbookPdfGenerator {
               overflow: pw.TextOverflow.clip,
               style: pw.TextStyle(
                 fontSize: 16,
+                fontStyle: pw.FontStyle.italic,
                 color: theme.coverAuthor,
-                height: 1.25,
+                height: 1.3,
               ),
+            ),
+          ),
+          pw.SizedBox(height: 22),
+          // Mid ornament: rule — three sparkles — rule.
+          pw.Row(children: [
+            pw.Expanded(
+              child: pw.Divider(color: theme.coverBorder, thickness: 1),
+            ),
+            pw.SizedBox(width: 10),
+            pw.Text(
+              '★  ★  ★',
+              style: pw.TextStyle(color: theme.coverBorder, fontSize: 10),
+            ),
+            pw.SizedBox(width: 10),
+            pw.Expanded(
+              child: pw.Divider(color: theme.coverBorder, thickness: 1),
+            ),
+          ]),
+          pw.SizedBox(height: 16),
+          pw.Container(
+            width: contentWidth,
+            child: pw.Text(
+              pdfTxt('A  P I X I E P E N  C O L L E C T I O N'),
+              textAlign: pw.TextAlign.center,
+              style: pw.TextStyle(
+                fontSize: 9,
+                letterSpacing: 3,
+                color: theme.muted,
+                height: 1.4,
+              ),
+            ),
+          ),
+          if (storyCount > 0) ...[
+            pw.SizedBox(height: 10),
+            pw.Container(
+              padding: const pw.EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 4,
+              ),
+              decoration: pw.BoxDecoration(
+                color: theme.coverBorder.shade(160),
+                borderRadius: pw.BorderRadius.circular(20),
+                border: pw.Border.all(color: theme.coverBorder, width: 0.6),
+              ),
+              child: pw.Text(
+                pdfTxt(
+                  '$storyCount ${storyCount == 1 ? 'Story' : 'Stories'}',
+                ),
+                style: pw.TextStyle(
+                  fontSize: 10,
+                  fontWeight: pw.FontWeight.bold,
+                  color: theme.coverAuthor,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Book-style PDF page footer: italic book title on the left, page number
+  /// on the right. Hidden on the cover.
+  static pw.Widget _buildPdfFooter(
+    String bookTitle,
+    int pageNumber,
+    _PdfExportTheme theme,
+    double contentWidth,
+    String Function(String) pdfTxt,
+  ) {
+    return pw.Container(
+      width: contentWidth,
+      padding: const pw.EdgeInsets.only(top: 6),
+      child: pw.Row(
+        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+        children: [
+          pw.Expanded(
+            child: pw.Text(
+              pdfTxt(bookTitle),
+              maxLines: 1,
+              overflow: pw.TextOverflow.clip,
+              style: pw.TextStyle(
+                fontSize: 9,
+                color: theme.muted,
+                fontStyle: pw.FontStyle.italic,
+              ),
+            ),
+          ),
+          pw.Text(
+            '— $pageNumber —',
+            style: pw.TextStyle(
+              fontSize: 9,
+              color: theme.muted,
+              fontStyle: pw.FontStyle.italic,
             ),
           ),
         ],
@@ -2408,8 +4079,102 @@ class EbookPdfGenerator {
     );
   }
 
+  /// PDF Table of Contents (only added when the book has 2+ stories).
+  static pw.Widget _buildPdfTocPage(
+    Ebook ebook,
+    List<StoryBookItem> stories,
+    _PdfExportTheme theme,
+    double contentWidth,
+    String Function(String) pdfTxt,
+  ) {
+    return pw.Container(
+      decoration: pw.BoxDecoration(
+        color: theme.cardBg,
+        borderRadius: pw.BorderRadius.circular(14),
+        border: pw.Border.all(color: theme.cardBorder, width: 1.2),
+      ),
+      padding: const pw.EdgeInsets.fromLTRB(36, 36, 36, 36),
+      child: pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.Container(
+            width: contentWidth,
+            child: pw.Text(
+              pdfTxt('C O N T E N T S'),
+              textAlign: pw.TextAlign.center,
+              style: pw.TextStyle(
+                fontSize: 10,
+                letterSpacing: 4,
+                color: theme.muted,
+                height: 1.4,
+              ),
+            ),
+          ),
+          pw.SizedBox(height: 6),
+          pw.Container(
+            width: contentWidth,
+            child: pw.Text(
+              pdfTxt('Table of Contents'),
+              textAlign: pw.TextAlign.center,
+              style: pw.TextStyle(
+                fontSize: 26,
+                fontWeight: pw.FontWeight.bold,
+                color: theme.storyTitle,
+                height: 1.2,
+              ),
+            ),
+          ),
+          pw.SizedBox(height: 12),
+          pw.Divider(color: theme.cardBorder, thickness: 1.6),
+          pw.SizedBox(height: 18),
+          for (var i = 0; i < stories.length; i++) ...[
+            pw.Row(
+              crossAxisAlignment: pw.CrossAxisAlignment.center,
+              children: [
+                pw.Container(
+                  width: 30,
+                  height: 30,
+                  alignment: pw.Alignment.center,
+                  decoration: pw.BoxDecoration(
+                    color: theme.storyTitle,
+                    shape: pw.BoxShape.circle,
+                  ),
+                  child: pw.Text(
+                    '${i + 1}',
+                    style: pw.TextStyle(
+                      fontSize: 12,
+                      fontWeight: pw.FontWeight.bold,
+                      color: PdfColors.white,
+                    ),
+                  ),
+                ),
+                pw.SizedBox(width: 14),
+                pw.Expanded(
+                  child: pw.Text(
+                    pdfTxt(stories[i].title),
+                    style: pw.TextStyle(
+                      fontSize: 14,
+                      color: theme.body,
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (i < stories.length - 1) ...[
+              pw.SizedBox(height: 8),
+              pw.Divider(color: theme.cardBorder, thickness: 0.7),
+              pw.SizedBox(height: 8),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+
   static List<pw.Widget> _buildPdfChapterWidgets(
     StoryBookItem story,
+    int chapterNumber,
     _PdfExportTheme theme,
     Map<String, pw.ImageProvider> cache,
     double contentWidth,
@@ -2420,39 +4185,59 @@ class EbookPdfGenerator {
     final maxInlineH = _EbookPdfLayout.maxInlineImageHeightPt(format);
 
     final out = <pw.Widget>[
+      // "C H A P T E R   N" tracked label.
+      pw.Container(
+        width: contentWidth,
+        child: pw.Text(
+          pdfTxt('C H A P T E R   $chapterNumber'),
+          textAlign: pw.TextAlign.center,
+          style: pw.TextStyle(
+            fontSize: 9,
+            letterSpacing: 3,
+            color: theme.muted,
+            height: 1.4,
+          ),
+        ),
+      ),
+      pw.SizedBox(height: 8),
+      // Story title.
       pw.Container(
         width: contentWidth,
         child: pw.Text(
           pdfTxt(story.title),
-          textAlign: pw.TextAlign.left,
+          textAlign: pw.TextAlign.center,
           style: pw.TextStyle(
-            fontSize: 22,
+            fontSize: 24,
             fontWeight: pw.FontWeight.bold,
             color: theme.storyTitle,
-            height: 1.25,
+            height: 1.22,
           ),
         ),
       ),
       pw.SizedBox(height: 6),
+      // Author italic.
       pw.Container(
         width: contentWidth,
         child: pw.Text(
           pdfTxt('by ${story.authorName}'),
-          textAlign: pw.TextAlign.left,
+          textAlign: pw.TextAlign.center,
           style: pw.TextStyle(
             fontSize: 12,
+            fontStyle: pw.FontStyle.italic,
             color: theme.muted,
             height: 1.35,
           ),
         ),
       ),
+      pw.SizedBox(height: 12),
     ];
 
+    // Option B layout (matches the in-app reader):
+    // Chapter label → Title → "by Author" → Cover image → ✦ divider → Body.
     final coverUrl = story.coverUrl?.trim();
     if (coverUrl != null && coverUrl.isNotEmpty) {
       final prov = cache[coverUrl];
       if (prov != null) {
-        out.add(pw.SizedBox(height: 14));
         out.add(
           pw.ClipRRect(
             horizontalRadius: 12,
@@ -2466,11 +4251,34 @@ class EbookPdfGenerator {
             ),
           ),
         );
+        out.add(pw.SizedBox(height: 12));
       }
     }
 
+    // Decorative rule with central sparkle — placed after the cover so it
+    // introduces the body text like a magazine chapter opener.
+    out.add(
+      pw.Row(children: [
+        pw.Expanded(
+          child: pw.Divider(color: theme.cardBorder, thickness: 1.4),
+        ),
+        pw.SizedBox(width: 10),
+        pw.Text(
+          '★',
+          style: pw.TextStyle(color: theme.muted, fontSize: 11),
+        ),
+        pw.SizedBox(width: 10),
+        pw.Expanded(
+          child: pw.Divider(color: theme.cardBorder, thickness: 1.4),
+        ),
+      ]),
+    );
+    out.add(pw.SizedBox(height: 16));
+
     final blocks = ebookStoryBlocks(story);
     var anyBody = false;
+    var dropCapApplied = false;
+
     for (final block in blocks) {
       final type = block['type'] as String?;
       if (type == StoryContentCodec.typeImage) {
@@ -2495,31 +4303,92 @@ class EbookPdfGenerator {
             ),
           ),
         );
-      } else {
-        final raw = (block['text'] as String?) ?? '';
-        if (raw.trim().isEmpty) continue;
-        anyBody = true;
-        for (final para in raw.split(RegExp(r'\n\s*\n'))) {
-          final p = para.trim();
-          if (p.isEmpty) continue;
-          for (final chunk in _splitTextForMultiPage(p)) {
-            out.add(pw.SizedBox(height: 10));
-            out.add(
-              pw.Container(
-                width: contentWidth,
-                child: pw.Text(
-                  pdfTxt(chunk),
-                  textAlign: pw.TextAlign.left,
-                  style: pw.TextStyle(
-                    fontSize: 12.5,
-                    height: 1.65,
-                    letterSpacing: 0.15,
-                    color: theme.body,
-                  ),
+        continue;
+      }
+
+      final raw = (block['text'] as String?) ?? '';
+      if (raw.trim().isEmpty) continue;
+      anyBody = true;
+      for (final para in raw.split(RegExp(r'\n\s*\n'))) {
+        final p = para.trim();
+        if (p.isEmpty) continue;
+
+        if (_isSceneBreakLine(p)) {
+          out.add(pw.SizedBox(height: 8));
+          out.add(
+            pw.Container(
+              width: contentWidth,
+              child: pw.Text(
+                '★  ★  ★',
+                textAlign: pw.TextAlign.center,
+                style: pw.TextStyle(
+                  fontSize: 12,
+                  letterSpacing: 3,
+                  color: theme.muted,
+                  height: 1.4,
                 ),
               ),
-            );
-          }
+            ),
+          );
+          out.add(pw.SizedBox(height: 8));
+          continue;
+        }
+
+        if (!dropCapApplied) {
+          dropCapApplied = true;
+          // Drop cap: first letter large, rest in normal body.
+          final firstChar = pdfTxt(p.substring(0, 1));
+          final rest = p.length > 1 ? pdfTxt(p.substring(1)) : '';
+          out.add(pw.SizedBox(height: 10));
+          out.add(
+            pw.Container(
+              width: contentWidth,
+              child: pw.RichText(
+                text: pw.TextSpan(
+                  children: [
+                    pw.TextSpan(
+                      text: firstChar,
+                      style: pw.TextStyle(
+                        fontSize: 40,
+                        fontWeight: pw.FontWeight.bold,
+                        color: theme.storyTitle,
+                        height: 0.9,
+                      ),
+                    ),
+                    pw.TextSpan(
+                      text: rest,
+                      style: pw.TextStyle(
+                        fontSize: 12.5,
+                        height: 1.65,
+                        letterSpacing: 0.15,
+                        color: theme.body,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+          continue;
+        }
+
+        for (final chunk in _splitTextForMultiPage(p)) {
+          out.add(pw.SizedBox(height: 10));
+          out.add(
+            pw.Container(
+              width: contentWidth,
+              child: pw.Text(
+                pdfTxt(chunk),
+                textAlign: pw.TextAlign.justify,
+                style: pw.TextStyle(
+                  fontSize: 12.5,
+                  height: 1.65,
+                  letterSpacing: 0.15,
+                  color: theme.body,
+                ),
+              ),
+            ),
+          );
         }
       }
     }
@@ -2532,6 +4401,23 @@ class EbookPdfGenerator {
           child: pw.Text(
             pdfTxt('(This story is empty.)'),
             style: pw.TextStyle(fontSize: 13, color: theme.muted),
+          ),
+        ),
+      );
+    } else {
+      // End-of-chapter ornament.
+      out.add(pw.SizedBox(height: 22));
+      out.add(
+        pw.Container(
+          width: contentWidth,
+          child: pw.Text(
+            '— ★ —',
+            textAlign: pw.TextAlign.center,
+            style: pw.TextStyle(
+              fontSize: 16,
+              color: theme.muted,
+              letterSpacing: 3,
+            ),
           ),
         ),
       );
@@ -2657,22 +4543,36 @@ class StoryBookItem {
 class EbookPageData {
   final Ebook? ebook;
   final StoryBookItem? story;
+  final List<StoryBookItem>? tocStories;
+  final int chapterIndex; // 1-based; 0 = not a chapter.
 
-  const EbookPageData._({this.ebook, this.story});
+  const EbookPageData._({
+    this.ebook,
+    this.story,
+    this.tocStories,
+    this.chapterIndex = 0,
+  });
 
   factory EbookPageData.cover(Ebook ebook) => EbookPageData._(ebook: ebook);
 
-  factory EbookPageData.chapter(StoryBookItem story) =>
-      EbookPageData._(story: story);
+  factory EbookPageData.toc(List<StoryBookItem> stories) =>
+      EbookPageData._(tocStories: stories);
 
-  bool get isCover => ebook != null;
+  factory EbookPageData.chapter(StoryBookItem story, int index) =>
+      EbookPageData._(story: story, chapterIndex: index);
+
+  bool get isCover => ebook != null && tocStories == null && story == null;
+  bool get isToc => tocStories != null;
+  bool get isChapter => story != null;
 }
 
-/// Book cover, then one horizontal page per story (each story scrolls internally).
+/// Cover → TOC (when 2+ stories) → one horizontal chapter page per story.
 List<EbookPageData> buildEbookPages(Ebook ebook, List<StoryBookItem> stories) {
   return [
     EbookPageData.cover(ebook),
-    for (final s in stories) EbookPageData.chapter(s),
+    if (stories.length >= 2) EbookPageData.toc(stories),
+    for (var i = 0; i < stories.length; i++)
+      EbookPageData.chapter(stories[i], i + 1),
   ];
 }
 
