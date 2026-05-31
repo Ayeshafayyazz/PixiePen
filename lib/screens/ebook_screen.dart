@@ -2057,12 +2057,9 @@ class _AiBookCoverCard extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             _hasCover
-                ? 'Tap "Regenerate" to try a new look. Your title and author '
-                    'will be cleanly overlaid on the cover by the reader and '
-                    'PDF — the AI only paints the artwork.'
+                ? 'Tap "Regenerate" to try a new look.'
                 : 'Generate a beautiful cover image for the whole eBook from '
-                    'your title and stories. We keep the artwork text-free '
-                    'and the app lays your title on top.',
+                    'your title and stories.',
             style: TextStyle(
               fontSize: 12.5,
               color: _kEbookMutedText,
