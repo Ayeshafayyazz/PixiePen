@@ -62,7 +62,10 @@ class _AiImageGeneratorScreenState extends State<AiImageGeneratorScreen> {
     });
 
     try {
-      final images = await _imageGen.generateImages(prompt, count: 4);
+      // Generate 2 cover options per request (was 4): keeps the layout to a
+      // single row in the 2-column grid and halves the OpenAI image cost per
+      // generation. Other AI image entry points are unaffected.
+      final images = await _imageGen.generateImages(prompt, count: 2);
       if (!mounted) return;
       setState(() {
         _generatedImages.addAll(images);
