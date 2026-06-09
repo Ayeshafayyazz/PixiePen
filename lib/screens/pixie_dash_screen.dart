@@ -981,10 +981,23 @@ class _SkinShelf extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Responsive sizing: derive every dimension from the available screen
+    // width so the shelf looks balanced on small phones, big phones, and
+    // tablets. Each dimension is clamped to safe min/max values so it can
+    // never collapse to nothing or stretch absurdly wide.
+    final screenWidth = MediaQuery.of(context).size.width;
+    final tileWidth = screenWidth.clamp(320.0, 900.0) * 0.36;
+    final clampedTileWidth = tileWidth.clamp(132.0, 200.0);
+    final outerAvatarRadius = (clampedTileWidth * 0.16).clamp(16.0, 24.0);
+    final innerAvatarRadius = outerAvatarRadius * 0.6;
+    final nameFontSize = (clampedTileWidth * 0.11).clamp(12.0, 15.0);
+    final statusFontSize = (clampedTileWidth * 0.095).clamp(11.0, 13.0);
+    final shelfHeight = (clampedTileWidth * 0.78).clamp(96.0, 132.0);
+
     return Material(
       color: Colors.white,
       child: SizedBox(
-        height: 86,
+        height: shelfHeight,
         child: ListView.separated(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
           scrollDirection: Axis.horizontal,
@@ -994,11 +1007,21 @@ class _SkinShelf extends StatelessWidget {
             final skin = _skins[index];
             final unlocked = unlockedSkins.contains(index);
             final selected = selectedSkin == index;
+
+            // Clear, kid-friendly unlock copy. Locked tiles always tell the
+            // player the exact target ("Unlocks at 80 gems") so they know what
+            // they're working toward; unlocked tiles say "Unlocked" with a
+            // small check icon so the achievement is unmistakable.
+            final statusText =
+                unlocked ? 'Unlocked' : 'Unlocks at ${skin.dailyCost} gems';
+            final statusColor =
+                unlocked ? Colors.green.shade700 : Colors.grey.shade700;
+
             return InkWell(
               borderRadius: BorderRadius.circular(8),
               onTap: unlocked ? () => onSelect(index) : null,
               child: Container(
-                width: 112,
+                width: clampedTileWidth,
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
                   color: selected
@@ -1013,10 +1036,10 @@ class _SkinShelf extends StatelessWidget {
                 child: Row(
                   children: [
                     CircleAvatar(
-                      radius: 18,
+                      radius: outerAvatarRadius,
                       backgroundColor: skin.wing,
                       child: CircleAvatar(
-                        radius: 11,
+                        radius: innerAvatarRadius,
                         backgroundColor: skin.body,
                       ),
                     ),
@@ -1030,24 +1053,42 @@ class _SkinShelf extends StatelessWidget {
                             skin.name,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontWeight: FontWeight.w900,
-                              fontSize: 12,
+                              fontSize: nameFontSize,
                             ),
                           ),
-                          Text(
-                            unlocked
-                                ? 'Ready today'
-                                : '${skin.dailyCost - gems} gems today',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: unlocked
-                                  ? Colors.green.shade700
-                                  : Colors.grey.shade700,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 11,
-                            ),
+                          const SizedBox(height: 2),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (unlocked) ...[
+                                Icon(
+                                  Icons.check_circle,
+                                  size: statusFontSize + 2,
+                                  color: statusColor,
+                                ),
+                                const SizedBox(width: 3),
+                              ],
+                              // `maxLines: 2` + `softWrap` ensures the unlock
+                              // instruction is never cut off mid-word on
+                              // narrow screens — the second line wraps
+                              // gracefully instead of showing "...".
+                              Expanded(
+                                child: Text(
+                                  statusText,
+                                  maxLines: 2,
+                                  softWrap: true,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: statusColor,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: statusFontSize,
+                                    height: 1.2,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),
