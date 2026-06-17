@@ -134,19 +134,26 @@ class StoryRepository {
         .collection(FirestoreCollections.savedStories)
         .doc('${userId}_$storyId');
     final userRef = _core.userRef(userId);
-    var isNowSaved = false;
 
-    await _core.db.runTransaction((tx) async {
-      final userSnap = await tx.get(userRef);
-      final savedStoryIds =
-          ((userSnap.data()?[FirestoreStoryFields.savedStoryIds] as List?) ??
-                  const [])
-              .whereType<String>()
-              .toList();
-      final isSaved = savedStoryIds.contains(storyId);
+    final userSnap = await userRef.get();
+    final storySnap = await storyRef.get();
+    final storyData = storySnap.data();
+    if (storyData == null) {
+      throw StateError('This story is no longer available.');
+    }
 
-      if (isSaved) {
-        isNowSaved = false;
+    final savedStoryIds =
+        ((userSnap.data()?[FirestoreStoryFields.savedStoryIds] as List?) ??
+                const [])
+            .whereType<String>()
+            .toList();
+    final savedBy =
+        (storyData[FirestoreStoryFields.savedBy] as List?) ?? const [];
+    final isSaved =
+        savedStoryIds.contains(storyId) || savedBy.contains(userId);
+
+    if (isSaved) {
+      await _core.db.runTransaction((tx) async {
         tx.set(
           userRef,
           {
@@ -155,22 +162,9 @@ class StoryRepository {
           },
           SetOptions(merge: true),
         );
-      } else {
-        isNowSaved = true;
-        tx.set(
-          userRef,
-          {
-            FirestoreStoryFields.savedStoryIds:
-                FieldValue.arrayUnion([storyId]),
-          },
-          SetOptions(merge: true),
-        );
-      }
-    });
-
-    try {
-      if (!isNowSaved) {
-        await savedRef.delete();
+        tx.delete(savedRef);
+      });
+      try {
         await storyRef.set(
           {
             FirestoreStoryFields.saves: FieldValue.increment(-1),
@@ -178,37 +172,51 @@ class StoryRepository {
           },
           SetOptions(merge: true),
         );
-      } else {
-        final storySnap = await storyRef.get();
-        final data = storySnap.data();
-        if (data == null) {
-          throw StateError('This story is no longer available.');
-        }
-        await savedRef.set({
-          FirestoreStoryFields.storyId: storyId,
-          FirestoreStoryFields.userId: userId,
-          FirestoreStoryFields.authorId:
-              data[FirestoreStoryFields.authorId] as String?,
-          'storyTitle': data[FirestoreStoryFields.title] as String? ?? 'Untitled',
-          FirestoreStoryFields.authorName:
-              data[FirestoreStoryFields.authorName] as String? ?? 'Unknown',
-          FirestoreStoryFields.coverUrl:
-              data[FirestoreStoryFields.coverUrl] as String? ?? '',
-          'savedAt': FieldValue.serverTimestamp(),
-        });
-        await storyRef.set(
-          {
-            FirestoreStoryFields.saves: FieldValue.increment(1),
-            FirestoreStoryFields.savedBy: FieldValue.arrayUnion([userId]),
-          },
-          SetOptions(merge: true),
-        );
+      } catch (error, stackTrace) {
+        debugPrint('Could not update story save count: $error');
+        debugPrintStack(stackTrace: stackTrace);
       }
-    } catch (error) {
-      debugPrint('Saved story mirror update skipped: $error');
+      return false;
     }
 
-    return isNowSaved;
+    await _core.db.runTransaction((tx) async {
+      tx.set(
+        userRef,
+        {
+          FirestoreStoryFields.savedStoryIds:
+              FieldValue.arrayUnion([storyId]),
+        },
+        SetOptions(merge: true),
+      );
+      tx.set(savedRef, {
+        FirestoreStoryFields.storyId: storyId,
+        FirestoreStoryFields.userId: userId,
+        FirestoreStoryFields.authorId:
+            storyData[FirestoreStoryFields.authorId] as String?,
+        'storyTitle':
+            storyData[FirestoreStoryFields.title] as String? ?? 'Untitled',
+        FirestoreStoryFields.authorName:
+            storyData[FirestoreStoryFields.authorName] as String? ?? 'Unknown',
+        FirestoreStoryFields.coverUrl:
+            storyData[FirestoreStoryFields.coverUrl] as String? ?? '',
+        'savedAt': FieldValue.serverTimestamp(),
+      });
+    });
+
+    try {
+      await storyRef.set(
+        {
+          FirestoreStoryFields.saves: FieldValue.increment(1),
+          FirestoreStoryFields.savedBy: FieldValue.arrayUnion([userId]),
+        },
+        SetOptions(merge: true),
+      );
+    } catch (error, stackTrace) {
+      debugPrint('Could not update story save count: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
+
+    return true;
   }
 
   Future<void> addComment({
@@ -229,7 +237,7 @@ class StoryRepository {
     if (!moderation.isSafe) {
       throw ArgumentError(ContentModerationService.childFriendlyWarning);
     }
-    final geminiSafe = await _geminiService.moderateContent(text);
+    final geminiSafe = await _geminiService.moderateCommunityComment(text);
     if (!geminiSafe) {
       throw ArgumentError(ContentModerationService.childFriendlyWarning);
     }
@@ -325,7 +333,7 @@ class StoryRepository {
     if (!moderation.isSafe) {
       throw ArgumentError(ContentModerationService.childFriendlyWarning);
     }
-    final geminiSafe = await _geminiService.moderateContent(text);
+    final geminiSafe = await _geminiService.moderateCommunityComment(text);
     if (!geminiSafe) {
       throw ArgumentError(ContentModerationService.childFriendlyWarning);
     }
