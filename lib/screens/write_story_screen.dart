@@ -1263,7 +1263,12 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
       if (s.isImage) {
         inner.add(_buildImageSegment(i, s));
       } else {
-        inner.add(_buildTextSegment(context, i, s));
+        inner.add(
+          KeyedSubtree(
+            key: ValueKey(s.controller),
+            child: _buildTextSegment(context, i, s),
+          ),
+        );
       }
     }
     inner.add(const SizedBox(height: 2));
@@ -1562,6 +1567,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
           showClipboardPaste: false,
           showListCheck: false,
           showDividers: false,
+          showLink: false,
         ),
       ),
     );

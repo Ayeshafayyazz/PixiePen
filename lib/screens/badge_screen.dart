@@ -72,6 +72,7 @@ class _BadgeScreenState extends State<BadgeScreen> {
         appBar: AppBar(
           title: const Text('Badges', style: TextStyle(color: Colors.white)),
           backgroundColor: kAppPrimary,
+          iconTheme: const IconThemeData(color: Colors.white),
         ),
         body: const Center(child: Text('Please log in to view badges.')),
       );
@@ -81,6 +82,7 @@ class _BadgeScreenState extends State<BadgeScreen> {
       appBar: AppBar(
         title: const Text('Badges', style: TextStyle(color: Colors.white)),
         backgroundColor: kAppPrimary,
+        iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: Stack(
         alignment: Alignment.topCenter,

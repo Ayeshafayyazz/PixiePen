@@ -418,6 +418,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
   final Map<String, GlobalKey> _communityStoryKeys = {};
   String? _myStoriesInitialStatus;
   String? _myStoriesHighlightedStoryId;
+  int _profileInitialTab = 0;
 
   @override
   void initState() {
@@ -496,7 +497,10 @@ class _CommunityScreenState extends State<CommunityScreen> {
         initialStatus: _myStoriesInitialStatus,
         highlightedStoryId: _myStoriesHighlightedStoryId,
       ),
-      const ProfileScreen(),
+      ProfileScreen(
+        key: ValueKey('profile-tab-$_profileInitialTab'),
+        initialTabIndex: _profileInitialTab,
+      ),
     ];
 
     return Scaffold(
@@ -772,6 +776,16 @@ class _CommunityScreenState extends State<CommunityScreen> {
               userId: activeUserId,
             );
             if (!context.mounted) return;
+            setState(() {
+              final nextSaved = Set<String>.from(_savedStoryIds);
+              if (isSaved) {
+                nextSaved.add(storyId);
+                _profileInitialTab = 2;
+              } else {
+                nextSaved.remove(storyId);
+              }
+              _savedStoryIds = nextSaved;
+            });
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(
@@ -780,16 +794,30 @@ class _CommunityScreenState extends State<CommunityScreen> {
                       : 'Story removed from Saved.',
                 ),
                 backgroundColor: isSaved ? Colors.green : Colors.grey.shade700,
+                action: isSaved
+                    ? SnackBarAction(
+                        label: 'View',
+                        textColor: Colors.white,
+                        onPressed: () {
+                          setState(() {
+                            _profileInitialTab = 2;
+                            _selectedIndex = 5;
+                          });
+                        },
+                      )
+                    : null,
               ),
             );
           } catch (error, stackTrace) {
             debugPrint('Could not update saved story: $error');
             debugPrintStack(stackTrace: stackTrace);
             if (!context.mounted) return;
+            final message = error is FirebaseException
+                ? error.message ?? error.code
+                : error.toString();
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content:
-                    Text('Could not update saved story. Please try again.'),
+              SnackBar(
+                content: Text('Could not update saved story: $message'),
               ),
             );
           }
@@ -3203,6 +3231,7 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
     required int index,
     required String label,
     required String shiftType,
+    String? customSuggestion,
   }) async {
     Navigator.pop(context);
     final sourceText = _sourceStoryText();
@@ -3217,10 +3246,15 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
     setState(() => _isShiftingPerspective = true);
 
     try {
-      final shifted = await _geminiService.shiftPerspective(
-        shiftType,
-        sourceText,
-      );
+      final shifted = customSuggestion != null
+          ? await _geminiService.shiftPerspectiveBySuggestion(
+              customSuggestion,
+              sourceText,
+            )
+          : await _geminiService.shiftPerspective(
+              shiftType,
+              sourceText,
+            );
       if (!mounted) return;
       viewModel.setGeneratedPerspective(
         index: index,
@@ -3231,6 +3265,91 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Could not shift perspective: $error')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isShiftingPerspective = false);
+      }
+    }
+  }
+
+  Future<void> _showCustomSuggestionDialog() async {
+    Navigator.pop(context); // close perspective menu first
+    final controller = TextEditingController();
+
+    final suggestion = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Custom Story Shift'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Tell AI how you want this story rewritten.',
+                style: TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                maxLength: 240,
+                minLines: 2,
+                maxLines: 4,
+                decoration: const InputDecoration(
+                  hintText: 'Example: Make it more magical and funny.',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final text = controller.text.trim();
+                if (text.isEmpty) return;
+                Navigator.pop(dialogContext, text);
+              },
+              child: const Text('Rewrite'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (!mounted) return;
+    if (suggestion == null || suggestion.trim().isEmpty) return;
+
+    await _stopReadAloud();
+    if (!mounted) return;
+    setState(() => _isShiftingPerspective = true);
+    try {
+      final sourceText = _sourceStoryText();
+      if (sourceText.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No story text to shift.')),
+        );
+        return;
+      }
+      final shifted = await _geminiService.shiftPerspectiveBySuggestion(
+        suggestion.trim(),
+        sourceText,
+      );
+      if (!mounted) return;
+      viewModel.setGeneratedPerspective(
+        index: 15,
+        label: 'Custom Suggestion',
+        text: shifted,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not apply custom shift: $error')),
       );
     } finally {
       if (mounted) {
@@ -3293,9 +3412,35 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
                   shiftType: 'time_shift',
                 ),
                 _aiPerspectiveButton(
-                  label: 'Joy + Fear',
+                  label: 'Joy Lens',
                   index: 13,
-                  shiftType: 'emotional_lens',
+                  shiftType: 'emotional_joy',
+                ),
+                _aiPerspectiveButton(
+                  label: 'Fear Lens',
+                  index: 14,
+                  shiftType: 'emotional_fear',
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: viewModel.currentPerspectiveIndex == 15
+                          ? Colors.purple
+                          : Colors.purple.shade50,
+                      foregroundColor: viewModel.currentPerspectiveIndex == 15
+                          ? Colors.white
+                          : Colors.purple.shade800,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    icon: const Icon(Icons.edit_note),
+                    label: const Text('Custom Suggestion'),
+                    onPressed:
+                        _isShiftingPerspective ? null : _showCustomSuggestionDialog,
+                  ),
                 ),
                 const SizedBox(height: 12),
                 ElevatedButton.icon(
@@ -3443,67 +3588,70 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
             builder: (context, constraints) {
               final pagePadding = constraints.maxWidth < 380 ? 12.0 : 16.0;
 
-              return Padding(
-                padding: EdgeInsets.all(pagePadding),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: LayoutBuilder(
-                        builder: (context, innerConstraints) {
-                          // Width-based cover height stays valid inside scrollables
-                          // (inner maxHeight can be unbounded in the scroll axis).
-                          final imageHeight = (innerConstraints.maxWidth * 0.42)
-                              .clamp(110.0, 168.0);
+              return Stack(
+                children: [
+                  Padding(
+                    padding: EdgeInsets.all(pagePadding),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: LayoutBuilder(
+                            builder: (context, innerConstraints) {
+                              // Width-based cover height stays valid inside scrollables
+                              // (inner maxHeight can be unbounded in the scroll axis).
+                              final imageHeight =
+                                  (innerConstraints.maxWidth * 0.42)
+                                      .clamp(110.0, 168.0);
 
-                          return SingleChildScrollView(
-                            controller: _storyScrollController,
-                            keyboardDismissBehavior:
-                                ScrollViewKeyboardDismissBehavior.onDrag,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _AuthorRow(
-                                  name: viewModel.displayPost.author,
-                                  handle: viewModel.displayPost.handle,
-                                  onTap: _openAuthorProfile,
-                                ),
-                                const SizedBox(height: 6),
-                                if (viewModel.displayPost.imageUrl.isNotEmpty)
-                                  ClipRRect(
-                                    borderRadius: BorderRadius.circular(14),
-                                    child: StorageImage(
-                                      url: viewModel.displayPost.imageUrl,
-                                      fit: BoxFit.cover,
-                                      width: double.infinity,
-                                      height: imageHeight,
-                                      placeholder: Container(
-                                        height: imageHeight,
-                                        color: Colors.grey[200],
-                                      ),
+                              return SingleChildScrollView(
+                                controller: _storyScrollController,
+                                keyboardDismissBehavior:
+                                    ScrollViewKeyboardDismissBehavior.onDrag,
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    _AuthorRow(
+                                      name: viewModel.displayPost.author,
+                                      handle: viewModel.displayPost.handle,
+                                      onTap: _openAuthorProfile,
                                     ),
-                                  ),
-                                const SizedBox(height: 8),
-                                _StoryRatingPanel(
-                                  post: viewModel.displayPost,
-                                  service: widget.service,
-                                  userId: widget.userId,
-                                  userName: widget.userName,
-                                ),
-                                const SizedBox(height: 6),
-                                _ReadAloudBar(
-                                  isSpeaking: _isSpeaking,
-                                  isPreparing: _isPreparingSpeech,
-                                  isPaused: _isPaused,
-                                  onPressed: _toggleReadAloud,
-                                  onStop: _isPaused ||
-                                          _isSpeaking ||
-                                          _isPreparingSpeech
-                                      ? _stopReadAloud
-                                      : null,
-                                ),
-                                const SizedBox(height: 8),
-                                ..._layoutPieces.map((piece) {
+                                    const SizedBox(height: 6),
+                                    if (viewModel.displayPost.imageUrl.isNotEmpty)
+                                      ClipRRect(
+                                        borderRadius: BorderRadius.circular(14),
+                                        child: StorageImage(
+                                          url: viewModel.displayPost.imageUrl,
+                                          fit: BoxFit.cover,
+                                          width: double.infinity,
+                                          height: imageHeight,
+                                          placeholder: Container(
+                                            height: imageHeight,
+                                            color: Colors.grey[200],
+                                          ),
+                                        ),
+                                      ),
+                                    const SizedBox(height: 8),
+                                    _StoryRatingPanel(
+                                      post: viewModel.displayPost,
+                                      service: widget.service,
+                                      userId: widget.userId,
+                                      userName: widget.userName,
+                                    ),
+                                    const SizedBox(height: 6),
+                                    _ReadAloudBar(
+                                      isSpeaking: _isSpeaking,
+                                      isPreparing: _isPreparingSpeech,
+                                      isPaused: _isPaused,
+                                      onPressed: _toggleReadAloud,
+                                      onStop: _isPaused ||
+                                              _isSpeaking ||
+                                              _isPreparingSpeech
+                                          ? _stopReadAloud
+                                          : null,
+                                    ),
+                                    const SizedBox(height: 8),
+                                    ..._layoutPieces.map((piece) {
                                   if (piece.isImage) {
                                     return Padding(
                                       padding: const EdgeInsets.only(
@@ -3544,19 +3692,73 @@ class _StoryReaderPageState extends State<StoryReaderPage> {
                                     text: piece.text!,
                                     highlighted: idx == _activeParagraphIndex,
                                   );
-                                }),
+                                    }),
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                        if (widget.footer != null) ...[
+                          const SizedBox(height: 8),
+                          widget.footer!,
+                        ],
+                      ],
+                    ),
+                  ),
+                  if (_isShiftingPerspective)
+                    Positioned.fill(
+                      child: AbsorbPointer(
+                        absorbing: true,
+                        child: Container(
+                          color: Colors.black.withValues(alpha: 0.34),
+                          alignment: Alignment.center,
+                          child: Container(
+                            constraints: const BoxConstraints(maxWidth: 320),
+                            margin: const EdgeInsets.symmetric(horizontal: 24),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 18,
+                              vertical: 16,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(14),
+                              boxShadow: const [
+                                BoxShadow(
+                                  blurRadius: 16,
+                                  color: Color(0x2A000000),
+                                  offset: Offset(0, 6),
+                                ),
                               ],
                             ),
-                          );
-                        },
+                            child: const Row(
+                              children: [
+                                SizedBox(
+                                  width: 22,
+                                  height: 22,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2.6,
+                                    color: Colors.purple,
+                                  ),
+                                ),
+                                SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    'AI is rewriting your story...',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w700,
+                                      color: Color(0xFF2B2B2B),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                       ),
                     ),
-                    if (widget.footer != null) ...[
-                      const SizedBox(height: 8),
-                      widget.footer!,
-                    ],
-                  ],
-                ),
+                ],
               );
             },
           );

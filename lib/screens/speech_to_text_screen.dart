@@ -20,6 +20,7 @@ class SpeechToTextScreen extends StatefulWidget {
 class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
   late final stt.SpeechToText _speech;
   final ScrollController _scrollController = ScrollController();
+  final TextEditingController _transcriptController = TextEditingController();
 
   bool _speechEnabled = false;
   bool _isListening = false;
@@ -30,7 +31,6 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
   int _listenResumeGeneration = 0;
   double _confidence = 0.0;
 
-  String _savedText = '';
   String _liveWords = '';
   /// Avoid appending the same dictation twice when stop/status both commit.
   String _lastAppendedLive = '';
@@ -38,7 +38,7 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
   String _selectedLanguage = 'en_US';
 
   String get _transcript {
-    final saved = _savedText.trim();
+    final saved = _transcriptController.text.trim();
     final live = _liveWords.trim();
     if (saved.isEmpty) return live;
     if (live.isEmpty) return saved;
@@ -71,7 +71,7 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
   void initState() {
     super.initState();
     _speech = stt.SpeechToText();
-    _savedText = widget.initialText.trim();
+    _transcriptController.text = widget.initialText.trim();
     _initializeSpeech();
   }
 
@@ -255,26 +255,84 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
     }
 
     if (mounted) {
-      Navigator.of(context).pop(_transcript.trim());
+      Navigator.of(context).pop(_transcriptController.text.trim());
     }
   }
 
+  String _speechDedupeKey(String value) {
+    return value
+        .toLowerCase()
+        .replaceAll(
+          RegExp(r'[^\w\s\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]'),
+          ' ',
+        )
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  List<String> _speechWordKeys(String value) {
+    final key = _speechDedupeKey(value);
+    if (key.isEmpty) return const [];
+    return key.split(' ');
+  }
+
+  String _dropAlreadySavedSpeechPrefix(String live, String saved) {
+    final liveWords = live.split(RegExp(r'\s+'));
+    final liveKeys = liveWords
+        .map(_speechDedupeKey)
+        .where((k) => k.isNotEmpty)
+        .toList();
+    final savedKeys = _speechWordKeys(saved);
+    final maxOverlap = liveKeys.length < savedKeys.length
+        ? liveKeys.length
+        : savedKeys.length;
+
+    for (var overlap = maxOverlap; overlap > 0; overlap--) {
+      final savedSuffix = savedKeys.sublist(savedKeys.length - overlap);
+      final livePrefix = liveKeys.take(overlap).toList();
+      var same = true;
+      for (var i = 0; i < overlap; i++) {
+        if (savedSuffix[i] != livePrefix[i]) {
+          same = false;
+          break;
+        }
+      }
+      if (same) {
+        return liveWords.skip(overlap).join(' ').trim();
+      }
+    }
+    return live;
+  }
+
   void _commitLiveWords() {
-    final live = _liveWords.trim();
+    var live = _liveWords.trim();
     if (live.isEmpty) return;
-    if (live == _lastAppendedLive) {
+    final saved = _transcriptController.text.trim();
+    live = _dropAlreadySavedSpeechPrefix(live, saved);
+    final liveKey = _speechDedupeKey(live);
+    if (liveKey.isEmpty) {
       _liveWords = '';
       return;
     }
 
-    final saved = _savedText.trim();
-    if (saved.isNotEmpty && (saved == live || saved.endsWith(' $live'))) {
+    final lastKey = _speechDedupeKey(_lastAppendedLive);
+    if (liveKey == lastKey) {
+      _liveWords = '';
+      return;
+    }
+
+    final savedKey = _speechDedupeKey(saved);
+    if (savedKey.isNotEmpty &&
+        (savedKey == liveKey || savedKey.endsWith(' $liveKey'))) {
       _liveWords = '';
       _lastAppendedLive = live;
       return;
     }
 
-    _savedText = saved.isEmpty ? live : '$saved $live';
+    _transcriptController.text = saved.isEmpty ? live : '$saved $live';
+    _transcriptController.selection = TextSelection.collapsed(
+      offset: _transcriptController.text.length,
+    );
     _lastAppendedLive = live;
     _liveWords = '';
   }
@@ -296,6 +354,7 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
     _listenResumeGeneration++;
     _speech.stop();
     _scrollController.dispose();
+    _transcriptController.dispose();
     super.dispose();
   }
 
@@ -389,32 +448,54 @@ class _SpeechToTextScreenState extends State<SpeechToTextScreen> {
                           child: Scrollbar(
                             controller: _scrollController,
                             thumbVisibility: true,
-                            child: SingleChildScrollView(
-                              controller: _scrollController,
-                              reverse: _isUrduSelected,
-                              padding: const EdgeInsets.only(right: 12),
-                              child: Align(
-                                alignment: _alignmentFor(transcriptDirection),
-                                child: Directionality(
-                                  textDirection: transcriptDirection,
-                                  child: Text(
-                                    transcript.isEmpty
-                                        ? 'Tap the mic and start speaking...'
-                                        : transcript,
-                                    textAlign: transcriptAlign,
-                                    style: textTheme.bodyLarge?.copyWith(
-                                      fontSize: 16,
-                                      height: 1.5,
-                                      color: transcript.isEmpty
-                                          ? Colors.grey.shade500
-                                          : Colors.black87,
-                                    ),
+                            child: Directionality(
+                              textDirection: transcriptDirection,
+                              child: TextField(
+                                controller: _transcriptController,
+                                scrollController: _scrollController,
+                                minLines: 8,
+                                maxLines: null,
+                                keyboardType: TextInputType.multiline,
+                                textInputAction: TextInputAction.newline,
+                                textAlign: transcriptAlign,
+                                style: textTheme.bodyLarge?.copyWith(
+                                  fontSize: 16,
+                                  height: 1.5,
+                                  color: Colors.black87,
+                                ),
+                                decoration: InputDecoration(
+                                  hintText: 'Tap the mic and start speaking...',
+                                  hintStyle: textTheme.bodyLarge?.copyWith(
+                                    fontSize: 16,
+                                    height: 1.5,
+                                    color: Colors.grey.shade500,
                                   ),
+                                  border: InputBorder.none,
+                                  contentPadding:
+                                      const EdgeInsets.only(right: 12),
                                 ),
                               ),
                             ),
                           ),
                         ),
+                        if (_liveWords.trim().isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: _alignmentFor(
+                              _textDirectionFor(_liveWords),
+                            ),
+                            child: Text(
+                              'Listening: ${_liveWords.trim()}',
+                              textAlign: _textAlignFor(
+                                _textDirectionFor(_liveWords),
+                              ),
+                              style: textTheme.bodySmall?.copyWith(
+                                color: Colors.purple.shade700,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 10),
                         Text(
                           _statusMessage,

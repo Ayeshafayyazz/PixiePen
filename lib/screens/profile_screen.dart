@@ -1,9 +1,10 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'badge_screen.dart';
@@ -26,6 +27,7 @@ import '../services/gemini_service.dart';
 import '../services/follow_service.dart';
 import '../utils/story_search.dart';
 import '../widgets/moderation_ui.dart';
+import '../widgets/storage_image.dart';
 
 const List<_AvatarChoice> _avatarChoices = [
   _AvatarChoice(
@@ -1710,10 +1712,10 @@ extension _ProfileScreenDrawerSection on _ProfileScreenState {
             ],
           );
         }),
-        _buildDrawerItem(Icons.family_restroom, "Parent Info", () {
+        _buildDrawerItem(Icons.family_restroom, "Parent Guide", () {
           _openInfoPage(
             context,
-            title: "Parent Info",
+            title: "Parent Guide",
             icon: Icons.family_restroom,
             sections: const [
               _InfoSection(
@@ -3247,74 +3249,45 @@ class _SavedStoriesProfileTab extends StatelessWidget {
     return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
       stream:
           FirebaseFirestore.instance.collection('users').doc(uid).snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
+      builder: (context, userSnapshot) {
+        if (userSnapshot.hasError) {
+          return Center(child: Text('Could not load saved stories.'));
+        }
+        if (userSnapshot.connectionState == ConnectionState.waiting &&
+            !userSnapshot.hasData) {
           return const Center(
             child: CircularProgressIndicator(color: kAppPrimary),
           );
         }
 
-        final savedStoryIds = _readStringList(
-          snapshot.data?.data()?['savedStoryIds'],
+        final savedStoryIds = _readSavedStoryIds(
+          userSnapshot.data?.data()?[FirestoreStoryFields.savedStoryIds],
         );
-        if (savedStoryIds.isEmpty) return _emptyState();
 
-        return FutureBuilder<List<_SavedStoryPost>>(
-          future: _loadSavedPosts(savedStoryIds, uid),
-          builder: (context, postSnap) {
-            if (postSnap.connectionState == ConnectionState.waiting) {
+        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: FirebaseFirestore.instance
+              .collection(FirestoreCollections.savedStories)
+              .where(FirestoreStoryFields.userId, isEqualTo: uid)
+              .snapshots(),
+          builder: (context, savedSnapshot) {
+            if (savedSnapshot.hasError) {
+              return Center(child: Text('Could not load saved stories.'));
+            }
+            if (savedSnapshot.connectionState == ConnectionState.waiting &&
+                !savedSnapshot.hasData) {
               return const Center(
                 child: CircularProgressIndicator(color: kAppPrimary),
               );
             }
 
-            final savedPosts = postSnap.data ?? const <_SavedStoryPost>[];
-            final posts = savedPosts.map((saved) => saved.post).toList();
-            if (posts.isEmpty) return _emptyState();
-
-            return ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: posts.length,
-              itemBuilder: (context, index) {
-                final post = posts[index];
-                return Card(
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  elevation: 3,
-                  margin: const EdgeInsets.only(bottom: 12),
-                  child: ListTile(
-                    onTap: () => _openSavedPost(context, post, uid),
-                    leading: ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: Image.network(
-                        post.imageUrl,
-                        width: 50,
-                        height: 50,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Container(
-                          width: 50,
-                          height: 50,
-                          color: kAppPrimary,
-                          child: const Icon(Icons.book, color: Colors.white),
-                        ),
-                      ),
-                    ),
-                    title: Text(
-                      post.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    subtitle: Text(
-                      'by ${post.author}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    trailing: const Icon(Icons.bookmark, color: kAppPrimary),
-                  ),
-                );
-              },
+            return _SavedStoriesListLoader(
+              key: ValueKey(
+                '${savedStoryIds.join('|')}:${savedSnapshot.data?.docs.length ?? 0}',
+              ),
+              userId: uid,
+              savedStoryIds: savedStoryIds,
+              savedDocs: savedSnapshot.data?.docs ??
+                  const <QueryDocumentSnapshot<Map<String, dynamic>>>[],
             );
           },
         );
@@ -3322,60 +3295,246 @@ class _SavedStoriesProfileTab extends StatelessWidget {
     );
   }
 
-  Future<List<_SavedStoryPost>> _loadSavedPosts(
-    List<String> storyIds,
-    String uid,
-  ) async {
-    final posts = <_SavedStoryPost>[];
+  static List<String> _readSavedStoryIds(dynamic value) {
+    if (value is! List) return const [];
+    return value
+        .map((entry) => entry?.toString().trim() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toList();
+  }
+}
 
-    for (final storyId in storyIds) {
-      final savedDoc = await FirebaseFirestore.instance
-          .collection(FirestoreCollections.savedStories)
-          .doc('${uid}_$storyId')
-          .get();
-      final storyDoc = await FirebaseFirestore.instance
-          .collection('stories')
-          .doc(storyId)
-          .get();
-      final data = storyDoc.data();
-      if (!storyDoc.exists || data == null || data['status'] != 'published') {
-        continue;
+class _SavedStoriesListLoader extends StatefulWidget {
+  final String userId;
+  final List<String> savedStoryIds;
+  final List<QueryDocumentSnapshot<Map<String, dynamic>>> savedDocs;
+
+  const _SavedStoriesListLoader({
+    super.key,
+    required this.userId,
+    required this.savedStoryIds,
+    required this.savedDocs,
+  });
+
+  @override
+  State<_SavedStoriesListLoader> createState() =>
+      _SavedStoriesListLoaderState();
+}
+
+class _SavedStoriesListLoaderState extends State<_SavedStoriesListLoader> {
+  late Future<List<_SavedStoryPost>> _postsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _postsFuture = _loadSavedPosts();
+  }
+
+  @override
+  void didUpdateWidget(covariant _SavedStoriesListLoader oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.savedStoryIds != widget.savedStoryIds ||
+        oldWidget.savedDocs.length != widget.savedDocs.length ||
+        !_savedDocsEqual(oldWidget.savedDocs, widget.savedDocs)) {
+      _postsFuture = _loadSavedPosts();
+    }
+  }
+
+  bool _savedDocsEqual(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> a,
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> b,
+  ) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].id != b[i].id) return false;
+    }
+    return true;
+  }
+
+  Future<List<_SavedStoryPost>> _loadSavedPosts() async {
+    final posts = <_SavedStoryPost>[];
+    final savedByStoryId = <String, Map<String, dynamic>>{};
+
+    for (final doc in widget.savedDocs) {
+      final storyId = _storyIdFromSavedDoc(doc, widget.userId);
+      if (storyId == null) continue;
+      savedByStoryId[storyId] = doc.data();
+    }
+
+    for (final storyId in widget.savedStoryIds) {
+      savedByStoryId.putIfAbsent(storyId, () => const <String, dynamic>{});
+    }
+
+    for (final entry in savedByStoryId.entries) {
+      final storyId = entry.key;
+      final savedData = entry.value;
+
+      DocumentSnapshot<Map<String, dynamic>>? storyDoc;
+      Map<String, dynamic>? data;
+      try {
+        storyDoc = await FirebaseFirestore.instance
+            .collection(FirestoreCollections.stories)
+            .doc(storyId)
+            .get();
+        data = storyDoc.data();
+      } catch (error) {
+        debugPrint('Could not load saved story $storyId: $error');
       }
 
-      final authorName =
-          (data['authorName'] as String?)?.trim().isNotEmpty == true
-              ? (data['authorName'] as String).trim()
-              : 'Unknown';
-      final mappedPost = StoryPostMapper.fromFirestoreMap(
-        storyId: storyDoc.id,
-        data: data,
-        currentUserId: uid,
-        accent: kAppPrimary,
-        fallbackAuthor: authorName,
-      );
+      StoryPost post;
+      if (storyDoc != null &&
+          storyDoc.exists &&
+          data != null &&
+          data[FirestoreStoryFields.status] == 'published') {
+        final authorName =
+            (data[FirestoreStoryFields.authorName] as String?)?.trim().isNotEmpty ==
+                    true
+                ? (data[FirestoreStoryFields.authorName] as String).trim()
+                : 'Unknown';
+        final mappedPost = StoryPostMapper.fromFirestoreMap(
+          storyId: storyDoc.id,
+          data: data,
+          currentUserId: widget.userId,
+          accent: kAppPrimary,
+          fallbackAuthor: authorName,
+        );
+        post = StoryPost(
+          id: mappedPost.id,
+          authorId: mappedPost.authorId,
+          author: mappedPost.author,
+          handle: mappedPost.handle,
+          title: mappedPost.title,
+          excerpt: mappedPost.excerpt,
+          likes: mappedPost.likes,
+          comments: mappedPost.comments,
+          likedByMe: mappedPost.likedByMe,
+          savedByMe: true,
+          accent: mappedPost.accent,
+          imageUrl: mappedPost.imageUrl,
+          contentBlocks: mappedPost.contentBlocks,
+        );
+      } else {
+        final title =
+            (savedData['storyTitle'] as String?)?.trim().isNotEmpty == true
+                ? (savedData['storyTitle'] as String).trim()
+                : 'Saved story';
+        final author =
+            (savedData[FirestoreStoryFields.authorName] as String?)
+                        ?.trim()
+                        .isNotEmpty ==
+                    true
+                ? (savedData[FirestoreStoryFields.authorName] as String).trim()
+                : 'Unknown';
+        final cover =
+            (savedData[FirestoreStoryFields.coverUrl] as String?)?.trim() ?? '';
+        post = StoryPost(
+          id: storyId,
+          authorId:
+              (savedData[FirestoreStoryFields.authorId] as String?) ?? '',
+          author: author,
+          handle: author.replaceAll(' ', '').toLowerCase(),
+          title: title,
+          excerpt: '',
+          likes: 0,
+          comments: 0,
+          likedByMe: false,
+          savedByMe: true,
+          accent: kAppPrimary,
+          imageUrl: cover.isNotEmpty
+              ? cover
+              : 'https://picsum.photos/seed/$storyId/600/300',
+        );
+      }
+
       posts.add(
         _SavedStoryPost(
-          savedAt: _readProfileDate(savedDoc.data()?['savedAt']),
-          post: StoryPost(
-            id: mappedPost.id,
-            authorId: mappedPost.authorId,
-            author: mappedPost.author,
-            handle: mappedPost.handle,
-            title: mappedPost.title,
-            excerpt: mappedPost.excerpt,
-            likes: mappedPost.likes,
-            comments: mappedPost.comments,
-            likedByMe: mappedPost.likedByMe,
-            accent: mappedPost.accent,
-            imageUrl: mappedPost.imageUrl,
-            contentBlocks: mappedPost.contentBlocks,
-          ),
+          savedAt: _readProfileDate(savedData['savedAt']),
+          post: post,
         ),
       );
     }
 
     posts.sort((a, b) => b.savedAt.compareTo(a.savedAt));
     return posts;
+  }
+
+  String? _storyIdFromSavedDoc(
+    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+    String userId,
+  ) {
+    final data = doc.data();
+    final fromField =
+        (data[FirestoreStoryFields.storyId] as String?)?.trim();
+    if (fromField != null && fromField.isNotEmpty) return fromField;
+
+    final prefix = '${userId}_';
+    if (doc.id.startsWith(prefix) && doc.id.length > prefix.length) {
+      return doc.id.substring(prefix.length);
+    }
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<_SavedStoryPost>>(
+      future: _postsFuture,
+      builder: (context, postSnap) {
+        if (postSnap.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(color: kAppPrimary),
+          );
+        }
+
+        final savedPosts = postSnap.data ?? const <_SavedStoryPost>[];
+        if (savedPosts.isEmpty) return _emptyState();
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: savedPosts.length,
+          itemBuilder: (context, index) {
+            final saved = savedPosts[index];
+            final post = saved.post;
+            return Card(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              elevation: 3,
+              margin: const EdgeInsets.only(bottom: 12),
+              child: ListTile(
+                onTap: () => _openSavedPost(context, post),
+                leading: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: StorageImage(
+                    url: post.imageUrl,
+                    width: 50,
+                    height: 50,
+                    fit: BoxFit.cover,
+                    placeholder: Container(
+                      width: 50,
+                      height: 50,
+                      color: kAppPrimary,
+                      child: const Icon(Icons.book, color: Colors.white),
+                    ),
+                  ),
+                ),
+                title: Text(
+                  post.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                subtitle: Text(
+                  'by ${post.author}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                trailing: const Icon(Icons.bookmark, color: kAppPrimary),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   Widget _emptyState() {
@@ -3398,23 +3557,18 @@ class _SavedStoriesProfileTab extends StatelessWidget {
     );
   }
 
-  void _openSavedPost(BuildContext context, StoryPost post, String uid) {
+  void _openSavedPost(BuildContext context, StoryPost post) {
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => StoryReaderPage(
           post: post,
           service: StoryService(),
-          userId: uid,
+          userId: widget.userId,
           userName: FirebaseAuth.instance.currentUser?.displayName ?? 'User',
         ),
       ),
     );
-  }
-
-  static List<String> _readStringList(dynamic value) {
-    if (value is! List) return const [];
-    return value.whereType<String>().where((id) => id.isNotEmpty).toList();
   }
 }
 

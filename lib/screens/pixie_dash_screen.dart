@@ -22,6 +22,7 @@ class _PixieDashScreenState extends State<PixieDashScreen>
   static const _gemsKey = 'pixie_dash_gems';
   static const _selectedSkinKey = 'pixie_dash_selected_skin';
   static const _unlockedSkinsKey = 'pixie_dash_unlocked_skins';
+  static const _tutorialSeenKey = 'pixie_dash_tutorial_seen';
 
   late final AnimationController _ticker;
   final math.Random _random = math.Random();
@@ -83,6 +84,7 @@ class _PixieDashScreenState extends State<PixieDashScreen>
         .toSet();
 
     if (!mounted) return;
+    final tutorialSeen = prefs.getBool(_tutorialSeenKey) ?? false;
     setState(() {
       _bestScore = prefs.getInt(_bestScoreKey) ?? 0;
       _dailyBest = prefs.getInt(_dailyScoreKey) ?? 0;
@@ -92,6 +94,31 @@ class _PixieDashScreenState extends State<PixieDashScreen>
       if (!_unlockedSkins.contains(_selectedSkin)) _selectedSkin = 0;
       _loaded = true;
     });
+
+    // First-time players get the "How to Play" overlay automatically. We
+    // schedule it for *after* the current frame so the Scaffold is fully
+    // mounted before `showDialog` runs.
+    if (!tutorialSeen) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _showHowToPlayDialog(firstTime: true);
+      });
+    }
+  }
+
+  /// Shows the "How to Play" overlay. When [firstTime] is true, dismissing
+  /// the dialog persists a flag so the overlay never auto-shows again for
+  /// this user on this device. The help (?) button in the AppBar reuses
+  /// this same dialog with `firstTime: false` so re-opening it is harmless.
+  Future<void> _showHowToPlayDialog({required bool firstTime}) async {
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: !firstTime,
+      builder: (_) => _HowToPlayDialog(firstTime: firstTime),
+    );
+    if (firstTime) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_tutorialSeenKey, true);
+    }
   }
 
   Future<void> _saveProgress() async {
@@ -290,6 +317,13 @@ class _PixieDashScreenState extends State<PixieDashScreen>
         foregroundColor: Colors.white,
         title: const Text('Pixie Dash'),
         actions: [
+          IconButton(
+            tooltip: 'How to play',
+            icon: const Icon(Icons.help_outline),
+            onPressed: _loaded
+                ? () => _showHowToPlayDialog(firstTime: false)
+                : null,
+          ),
           Padding(
             padding: const EdgeInsets.only(right: 14),
             child: Center(
@@ -1130,6 +1164,272 @@ class _TinyStat extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// First-time tutorial overlay for the Pixie Dash mini-game.
+///
+/// Fully responsive: width, padding, and font sizes are derived from the
+/// available screen size (capped at sensible max values so it does not
+/// stretch across tablets). The body is scrollable, so even on very short
+/// screens (e.g. a small phone in landscape) every rule remains reachable.
+class _HowToPlayDialog extends StatelessWidget {
+  final bool firstTime;
+
+  const _HowToPlayDialog({required this.firstTime});
+
+  @override
+  Widget build(BuildContext context) {
+    final mediaQuery = MediaQuery.of(context);
+    final screenWidth = mediaQuery.size.width;
+    final screenHeight = mediaQuery.size.height;
+
+    // Dialog dimensions adapt to the device. The clamps prevent extreme
+    // values on very narrow phones and very wide tablets.
+    final dialogWidth = math.min(screenWidth * 0.92, 460.0);
+    final maxDialogHeight = screenHeight * 0.85;
+    final horizontalPadding = (dialogWidth * 0.06).clamp(16.0, 24.0);
+    final headingFontSize = (dialogWidth * 0.055).clamp(18.0, 22.0);
+    final ruleTitleFontSize = (dialogWidth * 0.038).clamp(14.0, 16.0);
+    final ruleBodyFontSize = (dialogWidth * 0.032).clamp(12.0, 14.0);
+
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      backgroundColor: Colors.white,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: dialogWidth,
+          maxHeight: maxDialogHeight,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Header bar with title + close icon.
+            Container(
+              padding: EdgeInsets.fromLTRB(
+                horizontalPadding,
+                horizontalPadding * 0.9,
+                horizontalPadding * 0.4,
+                horizontalPadding * 0.9,
+              ),
+              decoration: BoxDecoration(
+                color: kAppPrimary,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(20),
+                ),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.auto_awesome,
+                    color: Colors.white,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'How to Play Pixie Dash',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: headingFontSize,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  if (!firstTime)
+                    IconButton(
+                      tooltip: 'Close',
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                ],
+              ),
+            ),
+            // Scrollable rules list — keeps the tutorial readable even on
+            // small screens because long content scrolls instead of being
+            // clipped or pushing the action button off-screen.
+            Flexible(
+              child: SingleChildScrollView(
+                padding: EdgeInsets.fromLTRB(
+                  horizontalPadding,
+                  horizontalPadding,
+                  horizontalPadding,
+                  horizontalPadding * 0.5,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _RuleRow(
+                      icon: Icons.swipe,
+                      iconColor: const Color(0xFF7C4DFF),
+                      title: 'Move',
+                      body:
+                          'Swipe left or right anywhere on the play area — '
+                          'or use the arrow buttons below — to slide your '
+                          'pixie between the three lanes.',
+                      titleFontSize: ruleTitleFontSize,
+                      bodyFontSize: ruleBodyFontSize,
+                    ),
+                    _RuleRow(
+                      icon: Icons.star_rounded,
+                      iconColor: const Color(0xFFF9A825),
+                      title: 'Collect Stars',
+                      body:
+                          'Yellow stars are worth +25 points each and help '
+                          'you earn extra gems at the end of the run.',
+                      titleFontSize: ruleTitleFontSize,
+                      bodyFontSize: ruleBodyFontSize,
+                    ),
+                    _RuleRow(
+                      icon: Icons.shield_outlined,
+                      iconColor: const Color(0xFF00ACC1),
+                      title: 'Grab Shields',
+                      body:
+                          'Cyan shields protect you from one crash and last '
+                          'about 5 seconds. They also give a small score bonus.',
+                      titleFontSize: ruleTitleFontSize,
+                      bodyFontSize: ruleBodyFontSize,
+                    ),
+                    _RuleRow(
+                      icon: Icons.auto_awesome_motion,
+                      iconColor: const Color(0xFFFF7043),
+                      title: 'Use Magnets',
+                      body:
+                          'Orange magnets pull nearby stars toward your '
+                          'pixie for a few seconds — perfect for big combos.',
+                      titleFontSize: ruleTitleFontSize,
+                      bodyFontSize: ruleBodyFontSize,
+                    ),
+                    _RuleRow(
+                      icon: Icons.warning_amber_rounded,
+                      iconColor: const Color(0xFFB71C1C),
+                      title: 'Avoid Obstacles',
+                      body:
+                          'Brown blocks are obstacles. Hitting one without a '
+                          'shield ends the run — so dodge them by switching lanes!',
+                      titleFontSize: ruleTitleFontSize,
+                      bodyFontSize: ruleBodyFontSize,
+                    ),
+                    _RuleRow(
+                      icon: Icons.diamond_outlined,
+                      iconColor: const Color(0xFFFFB300),
+                      title: 'Earn Gems & Unlock Colors',
+                      body:
+                          'After every run you earn gems based on your '
+                          'score and stars. Reach a color\'s gem target '
+                          '(shown under each pixie skin) to unlock that '
+                          'color and play with it.',
+                      titleFontSize: ruleTitleFontSize,
+                      bodyFontSize: ruleBodyFontSize,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            // Footer action button.
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                horizontalPadding,
+                4,
+                horizontalPadding,
+                horizontalPadding,
+              ),
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () => Navigator.of(context).pop(),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: kAppPrimary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  icon: const Icon(Icons.sports_esports),
+                  label: Text(
+                    firstTime ? "Got it! Let's play" : 'Close',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: ruleTitleFontSize,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A single titled rule row used inside [_HowToPlayDialog]. The icon, title,
+/// and body all scale with the dialog's font sizes so the layout stays
+/// balanced on every device.
+class _RuleRow extends StatelessWidget {
+  final IconData icon;
+  final Color iconColor;
+  final String title;
+  final String body;
+  final double titleFontSize;
+  final double bodyFontSize;
+
+  const _RuleRow({
+    required this.icon,
+    required this.iconColor,
+    required this.title,
+    required this.body,
+    required this.titleFontSize,
+    required this.bodyFontSize,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: iconColor.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: iconColor, size: 22),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: titleFontSize,
+                    fontWeight: FontWeight.w800,
+                    color: const Color(0xFF1F2A44),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  body,
+                  style: TextStyle(
+                    fontSize: bodyFontSize,
+                    color: const Color(0xFF4A4A4A),
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
