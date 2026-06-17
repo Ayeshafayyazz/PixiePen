@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:pixiepen/screens/community.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -578,12 +579,29 @@ class _EbookScreenState extends State<EbookScreen> {
         if (storiesById[storyId] != null) storiesById[storyId]!,
     ];
   }
-
   AppBar _buildAppBar(String title) {
     return AppBar(
       backgroundColor: kAppPrimary,
-      iconTheme: const IconThemeData(color: Colors.white),
-      title: Text(title, style: const TextStyle(color: Colors.white)),
+      leading: IconButton(
+        icon: const Icon(
+          Icons.arrow_back,
+          color: Colors.white,
+        ),
+        onPressed: () {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const CommunityScreen(),
+            ),
+          );
+        },
+      ),
+      title: Text(
+        title,
+        style: const TextStyle(
+          color: Colors.white,
+        ),
+      ),
     );
   }
 }
