@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/generated_story_image.dart';
-import '../services/content_moderation_service.dart';
 import '../services/story_image_generation_service.dart';
-import '../widgets/moderation_ui.dart';
 import '../widgets/storage_image.dart';
 
 class AiImageGeneratorScreen extends StatefulWidget {
@@ -17,7 +15,6 @@ class AiImageGeneratorScreen extends StatefulWidget {
 class _AiImageGeneratorScreenState extends State<AiImageGeneratorScreen> {
   final TextEditingController _promptController = TextEditingController();
   final StoryImageGenerationService _imageGen = StoryImageGenerationService();
-  final ContentModerationService _moderation = ContentModerationService();
 
   bool _isLoading = false;
   final List<GeneratedStoryImage> _generatedImages = [];
@@ -41,20 +38,6 @@ class _AiImageGeneratorScreenState extends State<AiImageGeneratorScreen> {
   Future<void> _generateImages() async {
     final prompt = _promptController.text.trim();
     if (prompt.isEmpty) return;
-
-    final mod = _moderation.moderateWithSurface(
-      ModerationSurface.aiPrompt,
-      prompt,
-    );
-    if (!mod.isSafe) {
-      if (!mounted) return;
-      await ModerationUi.showBlockDialog(
-        context,
-        result: mod,
-        surface: ModerationSurface.aiPrompt,
-      );
-      return;
-    }
 
     setState(() {
       _isLoading = true;

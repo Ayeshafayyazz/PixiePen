@@ -38,6 +38,8 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
   final TextEditingController _titleController = TextEditingController();
   /// One scroll for title, story blocks, images, and actions (Medium-style flow).
   final ScrollController _storyScrollController = ScrollController();
+  final GlobalKey _titleFieldKey = GlobalKey();
+  final Map<int, GlobalKey> _segmentEditorKeys = {};
   final ContentModerationService _moderationService =
       ContentModerationService();
   final GeminiService _geminiService = GeminiService();
@@ -556,15 +558,18 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
           return;
         }
 
-        final geminiSafe = await _geminiService.moderateContent(
-          '$title\n\n$body',
+        final storyVerdict = await _geminiService.moderateStoryContent(
+          title: title,
+          body: body,
         );
-        if (!geminiSafe) {
+        if (!storyVerdict.isSafe) {
           if (!mounted) return;
-          await ModerationUi.showPlainMessage(
-            context,
-            message: ContentModerationService.childFriendlyWarning,
-            surface: ModerationSurface.story,
+          await _showModerationWarning(
+            ModerationResult.unsafe(
+              flagReason: 'generic',
+              flaggedSentence: storyVerdict.flaggedSentence,
+            ),
+            detailOverride: storyVerdict.reason,
           );
           return;
         }
@@ -900,13 +905,108 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     }
   }
 
-  Future<void> _showModerationWarning(ModerationResult result) async {
+  Future<void> _showModerationWarning(
+    ModerationResult result, {
+    String? detailOverride,
+  }) async {
     if (!mounted) return;
+    final highlightedSentence = _resolveHighlightedSentence(result);
     await ModerationUi.showBlockDialog(
       context,
       result: result,
       surface: ModerationSurface.story,
+      highlightedSentence: highlightedSentence,
+      highlightedTerms: result.flaggedTerms,
+      extraDetail: detailOverride,
+      onEditSentence: highlightedSentence == null
+          ? null
+          : () => _jumpToSentence(highlightedSentence),
     );
+  }
+
+  String? _resolveHighlightedSentence(ModerationResult result) {
+    final fromResult = result.flaggedSentence?.trim();
+    if (fromResult != null && fromResult.isNotEmpty) return fromResult;
+    return _blockedSentenceForModeration(result);
+  }
+
+  void _jumpToSentence(String sentence) {
+    final needle = sentence.trim();
+    if (needle.isEmpty) return;
+
+    final title = _titleController.text;
+    final titleIndex = _indexOfIgnoringCase(title, needle);
+    if (titleIndex >= 0) {
+      _titleController.selection = TextSelection(
+        baseOffset: titleIndex,
+        extentOffset: titleIndex + needle.length,
+      );
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final ctx = _titleFieldKey.currentContext;
+        if (ctx != null && ctx.mounted) {
+          Scrollable.ensureVisible(
+            ctx,
+            alignment: 0.15,
+            duration: const Duration(milliseconds: 320),
+            curve: Curves.easeInOut,
+          );
+        }
+      });
+      return;
+    }
+
+    for (var i = 0; i < _segments.length; i++) {
+      final segment = _segments[i];
+      if (segment.isImage || segment.controller == null) continue;
+      final plain = _plainTextFromController(segment.controller!);
+      final idx = _indexOfIgnoringCase(plain, needle);
+      if (idx < 0) continue;
+
+      segment.controller!.updateSelection(
+        TextSelection(baseOffset: idx, extentOffset: idx + needle.length),
+        quill.ChangeSource.local,
+      );
+      segment.focusNode?.requestFocus();
+      _lastActiveTextSegmentIndex = i;
+
+      final key = _segmentEditorKeys[i];
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final ctx = key?.currentContext;
+        if (ctx != null && ctx.mounted) {
+          Scrollable.ensureVisible(
+            ctx,
+            alignment: 0.2,
+            duration: const Duration(milliseconds: 320),
+            curve: Curves.easeInOut,
+          );
+        }
+      });
+      return;
+    }
+  }
+
+  int _indexOfIgnoringCase(String haystack, String needle) {
+    return haystack.toLowerCase().indexOf(needle.toLowerCase());
+  }
+
+  String? _blockedSentenceForModeration(ModerationResult result) {
+    if (result.flaggedTerms.isEmpty) return null;
+    final text = '${_titleController.text.trim()}\n\n${_plainBody.trim()}';
+    if (text.trim().isEmpty) return null;
+
+    final sentencePattern = RegExp(r'[^.!?\n]+[.!?]?|\n+');
+    for (final match in sentencePattern.allMatches(text)) {
+      final sentence = match.group(0)?.trim();
+      if (sentence == null || sentence.isEmpty) continue;
+      for (final term in result.flaggedTerms) {
+        final termPattern = RegExp(
+          r'\b' + RegExp.escape(term.trim()) + r'\b',
+          caseSensitive: false,
+        );
+        if (termPattern.hasMatch(sentence)) return sentence;
+      }
+    }
+    return null;
   }
 
   bool _isStoryTranscript(String text) {
@@ -1147,6 +1247,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     return Column(
       children: [
         _buildTextField(
+          key: _titleFieldKey,
           controller: _titleController,
           hint: "Enter story title...",
           icon: Icons.title,
@@ -1213,6 +1314,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
   }
 
   Widget _buildTextField({
+    Key? key,
     required TextEditingController controller,
     required String hint,
     required IconData icon,
@@ -1225,6 +1327,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
     final textAlign = _textAlignFor(direction);
 
     return Container(
+      key: key,
       margin: const EdgeInsets.symmetric(vertical: 6),
       decoration: _fieldDecoration(outlined: outlined),
       clipBehavior: Clip.antiAlias,
@@ -1265,7 +1368,7 @@ class _WriteStoryScreenState extends State<WriteStoryScreen> {
       } else {
         inner.add(
           KeyedSubtree(
-            key: ValueKey(s.controller),
+            key: _segmentEditorKeys.putIfAbsent(i, GlobalKey.new),
             child: _buildTextSegment(context, i, s),
           ),
         );

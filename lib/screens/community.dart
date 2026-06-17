@@ -14,6 +14,7 @@ import 'public_profile_screen.dart';
 import 'theme.dart';
 import 'write_story_screen.dart';
 import '../controllers/story_controller.dart';
+import '../data/firestore_keys.dart';
 import '../data/mappers/story_post_mapper.dart';
 import '../domain/models/story_post.dart';
 import '../services/follow_service.dart';
@@ -2589,16 +2590,9 @@ class StoryCard extends StatelessWidget {
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  CircleAvatar(
-                                    radius: 18,
-                                    backgroundColor: const Color(0xFF7B1FA2),
-                                    child: Text(
-                                      post.author.isNotEmpty
-                                          ? post.author[0]
-                                          : '?',
-                                      style:
-                                          const TextStyle(color: Colors.white),
-                                    ),
+                                  _CommunityAuthorAvatar(
+                                    authorId: post.authorId,
+                                    authorName: post.author,
                                   ),
                                   const SizedBox(width: 8),
                                   Flexible(
@@ -2722,6 +2716,56 @@ class StoryCard extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _CommunityAuthorAvatar extends StatelessWidget {
+  final String authorId;
+  final String authorName;
+
+  const _CommunityAuthorAvatar({
+    required this.authorId,
+    required this.authorName,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (authorId.isEmpty) return _fallbackAvatar();
+
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection(FirestoreCollections.users)
+          .doc(authorId)
+          .snapshots(),
+      builder: (context, snapshot) {
+        final data = snapshot.data?.data();
+        final photoUrl = ((data?['photoURL'] as String?) ??
+                (data?['profileImageUrl'] as String?))
+            ?.trim();
+        if (photoUrl == null || photoUrl.isEmpty) return _fallbackAvatar();
+
+        return ClipOval(
+          child: StorageImage(
+            url: photoUrl,
+            width: 36,
+            height: 36,
+            fit: BoxFit.cover,
+            placeholder: _fallbackAvatar(),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _fallbackAvatar() {
+    return CircleAvatar(
+      radius: 18,
+      backgroundColor: const Color(0xFF7B1FA2),
+      child: Text(
+        authorName.isNotEmpty ? authorName[0] : '?',
+        style: const TextStyle(color: Colors.white),
       ),
     );
   }

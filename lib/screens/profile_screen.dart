@@ -2815,6 +2815,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         title:
             const Text("Edit Profile", style: TextStyle(color: Colors.white)),
         backgroundColor: kAppPrimary,
+        iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: SafeArea(
         child: LayoutBuilder(
@@ -3322,6 +3323,8 @@ class _SavedStoriesListLoader extends StatefulWidget {
 }
 
 class _SavedStoriesListLoaderState extends State<_SavedStoriesListLoader> {
+  final StoryService _storyService = StoryService();
+  final Set<String> _updatingSavedStoryIds = {};
   late Future<List<_SavedStoryPost>> _postsFuture;
 
   @override
@@ -3494,6 +3497,7 @@ class _SavedStoriesListLoaderState extends State<_SavedStoriesListLoader> {
           itemBuilder: (context, index) {
             final saved = savedPosts[index];
             final post = saved.post;
+            final updating = _updatingSavedStoryIds.contains(post.id);
             return Card(
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
@@ -3528,7 +3532,17 @@ class _SavedStoriesListLoaderState extends State<_SavedStoriesListLoader> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                trailing: const Icon(Icons.bookmark, color: kAppPrimary),
+                trailing: IconButton(
+                  tooltip: 'Remove from Saved',
+                  icon: updating
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.bookmark, color: kAppPrimary),
+                  onPressed: updating ? null : () => _unsavePost(post.id),
+                ),
               ),
             );
           },
@@ -3555,6 +3569,32 @@ class _SavedStoriesListLoaderState extends State<_SavedStoriesListLoader> {
         ],
       ),
     );
+  }
+
+  Future<void> _unsavePost(String storyId) async {
+    if (_updatingSavedStoryIds.contains(storyId)) return;
+    setState(() => _updatingSavedStoryIds.add(storyId));
+    try {
+      await _storyService.toggleSave(
+        storyId: storyId,
+        userId: widget.userId,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Story removed from Saved.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not remove saved story. Please try again.'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _updatingSavedStoryIds.remove(storyId));
+      }
+    }
   }
 
   void _openSavedPost(BuildContext context, StoryPost post) {
