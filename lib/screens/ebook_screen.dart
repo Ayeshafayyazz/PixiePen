@@ -3478,9 +3478,14 @@ class EbookPdfGenerator {
     // If the font can't be fetched (offline build), we accept "no emoji
     // fallback" as a safe no-op — emojis will still render as crosses but
     // the PDF will not fail to build.
-    final emojiFallback = <pw.Font>[];
+    final pdfFontFallback = <pw.Font>[];
     try {
-      emojiFallback.add(await PdfGoogleFonts.notoColorEmoji());
+      pdfFontFallback.add(await PdfGoogleFonts.notoSansSymbols2Regular());
+    } catch (_) {
+      /* no symbol fallback available */
+    }
+    try {
+      pdfFontFallback.add(await PdfGoogleFonts.notoColorEmoji());
     } catch (_) {
       /* no emoji fallback available */
     }
@@ -3497,7 +3502,7 @@ class EbookPdfGenerator {
         bold: fonts[1],
         italic: fonts[2],
         boldItalic: fonts[3],
-        fontFallback: emojiFallback.isNotEmpty ? emojiFallback : null,
+        fontFallback: pdfFontFallback.isNotEmpty ? pdfFontFallback : null,
       );
     } catch (_) {
       // Fall back to Open Sans (universally available in `printing`).
@@ -3513,7 +3518,7 @@ class EbookPdfGenerator {
           bold: fonts[1],
           italic: fonts[2],
           boldItalic: fonts[3],
-          fontFallback: emojiFallback.isNotEmpty ? emojiFallback : null,
+          fontFallback: pdfFontFallback.isNotEmpty ? pdfFontFallback : null,
         );
       } catch (_) {
         return null;
@@ -3763,10 +3768,11 @@ class EbookPdfGenerator {
     int storyCount,
   ) {
     final innerH = _EbookPdfLayout.innerHeightPt(format);
+    final coverH = math.min(innerH, contentWidth * 4 / 3);
 
     return pw.Container(
       width: contentWidth,
-      height: innerH,
+      height: coverH,
       decoration: pw.BoxDecoration(
         borderRadius: pw.BorderRadius.circular(18),
         border: pw.Border.all(color: theme.coverBorder, width: 2.5),
@@ -3786,8 +3792,7 @@ class EbookPdfGenerator {
               left: 0,
               right: 0,
               child: pw.Container(
-                padding:
-                    const pw.EdgeInsets.fromLTRB(22, 26, 22, 40),
+                padding: const pw.EdgeInsets.fromLTRB(16, 22, 16, 40),
                 decoration: pw.BoxDecoration(
                   gradient: pw.LinearGradient(
                     begin: pw.Alignment.topCenter,
@@ -3802,7 +3807,7 @@ class EbookPdfGenerator {
                   pdfTxt('A  P I X I E P E N  C O L L E C T I O N'),
                   textAlign: pw.TextAlign.center,
                   style: pw.TextStyle(
-                    fontSize: 10,
+                    fontSize: 11,
                     letterSpacing: 3.5,
                     fontWeight: pw.FontWeight.bold,
                     color: PdfColor.fromInt(0xF2FFFFFF),
@@ -3816,8 +3821,7 @@ class EbookPdfGenerator {
               left: 0,
               right: 0,
               child: pw.Container(
-                padding:
-                    const pw.EdgeInsets.fromLTRB(28, 100, 28, 36),
+                padding: const pw.EdgeInsets.fromLTRB(22, 80, 22, 28),
                 decoration: pw.BoxDecoration(
                   gradient: pw.LinearGradient(
                     begin: pw.Alignment.topCenter,
@@ -3844,33 +3848,33 @@ class EbookPdfGenerator {
                     ),
                     pw.SizedBox(height: 12),
                     pw.Container(
-                      width: contentWidth - 80,
+                      width: contentWidth - 44,
                       child: pw.Text(
                         pdfTxt(ebook.title),
                         textAlign: pw.TextAlign.center,
                         maxLines: 3,
                         overflow: pw.TextOverflow.clip,
                         style: pw.TextStyle(
-                          fontSize: 32,
+                          fontSize: 30,
                           fontWeight: pw.FontWeight.bold,
                           color: PdfColors.white,
                           height: 1.12,
                         ),
                       ),
                     ),
-                    pw.SizedBox(height: 10),
+                    pw.SizedBox(height: 8),
                     pw.Text(
                       pdfTxt('by ${ebook.authorName}'),
                       textAlign: pw.TextAlign.center,
                       style: pw.TextStyle(
-                        fontSize: 14,
+                        fontSize: 15,
                         fontStyle: pw.FontStyle.italic,
                         color: PdfColor.fromInt(0xF2FFFFFF),
                         height: 1.3,
                       ),
                     ),
                     if (storyCount > 0) ...[
-                      pw.SizedBox(height: 16),
+                      pw.SizedBox(height: 14),
                       pw.Container(
                         padding: const pw.EdgeInsets.symmetric(
                           horizontal: 14,
@@ -3881,7 +3885,7 @@ class EbookPdfGenerator {
                           borderRadius: pw.BorderRadius.circular(20),
                           border: pw.Border.all(
                             color: PdfColor.fromInt(0x80FFFFFF),
-                            width: 0.6,
+                            width: 0.8,
                           ),
                         ),
                         child: pw.Text(
@@ -3889,7 +3893,7 @@ class EbookPdfGenerator {
                             '$storyCount ${storyCount == 1 ? 'Story' : 'Stories'}',
                           ),
                           style: pw.TextStyle(
-                            fontSize: 10,
+                            fontSize: 12,
                             fontWeight: pw.FontWeight.bold,
                             color: PdfColors.white,
                           ),
