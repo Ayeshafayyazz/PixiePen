@@ -10,12 +10,27 @@ class ModerationUi {
     BuildContext context, {
     required ModerationResult result,
     required ModerationSurface surface,
+    String? highlightedSentence,
+    List<String> highlightedTerms = const [],
+    VoidCallback? onEditSentence,
+    String? extraDetail,
   }) async {
     if (result.isSafe) return;
     if (!context.mounted) return;
-    final body = ContentModerationService.messageForResult(result, surface);
+    var body = ContentModerationService.messageForResult(result, surface);
+    final extra = extraDetail?.trim();
+    if (extra != null && extra.isNotEmpty) {
+      body = '$body\n\n$extra';
+    }
     final title = ContentModerationService.dialogTitleFor(surface);
-    return _showModerationAlert(context, title: title, body: body);
+    return _showModerationAlert(
+      context,
+      title: title,
+      body: body,
+      highlightedSentence: highlightedSentence,
+      highlightedTerms: highlightedTerms,
+      onEditSentence: onEditSentence,
+    );
   }
 
   /// Same chrome for a free-form message (e.g. server-side [ArgumentError] text).
@@ -48,6 +63,9 @@ class ModerationUi {
     BuildContext context, {
     required String title,
     required String body,
+    String? highlightedSentence,
+    List<String> highlightedTerms = const [],
+    VoidCallback? onEditSentence,
   }) async {
     if (!context.mounted) return;
 
@@ -57,6 +75,9 @@ class ModerationUi {
     final maxBodyWidth = math.min(440.0, w - horizontal * 2);
     final titleSize = w < 340 ? 17.0 : 19.0;
     final bodySize = w < 340 ? 14.5 : 16.0;
+    final sentence = highlightedSentence?.trim();
+    final hasSentence = sentence != null && sentence.isNotEmpty;
+    final canJump = hasSentence && onEditSentence != null;
 
     await showDialog<void>(
       context: context,
@@ -64,6 +85,11 @@ class ModerationUi {
       barrierColor: Colors.black54,
       useSafeArea: true,
       builder: (ctx) {
+        void handleEdit() {
+          Navigator.of(ctx).pop();
+          onEditSentence?.call();
+        }
+
         return AlertDialog(
           insetPadding: EdgeInsets.symmetric(horizontal: horizontal, vertical: 24),
           titlePadding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
@@ -86,20 +112,76 @@ class ModerationUi {
           content: ConstrainedBox(
             constraints: BoxConstraints(maxWidth: maxBodyWidth),
             child: SingleChildScrollView(
-              child: SelectableText(
-                body,
-                style: TextStyle(
-                  fontSize: bodySize,
-                  height: 1.45,
-                  color: Colors.black87,
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SelectableText(
+                    body,
+                    style: TextStyle(
+                      fontSize: bodySize,
+                      height: 1.45,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  if (hasSentence) ...[
+                    const SizedBox(height: 14),
+                    Text(
+                      'Sentence to fix:',
+                      style: TextStyle(
+                        fontSize: bodySize,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.deepPurple.shade800,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Material(
+                      color: const Color(0xFFFFEBEE),
+                      borderRadius: BorderRadius.circular(10),
+                      child: InkWell(
+                        onTap: canJump ? handleEdit : null,
+                        borderRadius: BorderRadius.circular(10),
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: const Color(0xFFE57373)),
+                          ),
+                          child: SelectableText.rich(
+                            _highlightedSentenceSpan(
+                              sentence,
+                              highlightedTerms,
+                              TextStyle(
+                                fontSize: bodySize,
+                                height: 1.45,
+                                color: Colors.black87,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (canJump) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Tap the sentence to jump to it in your story.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: bodySize - 1,
+                          color: Colors.black54,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    ],
+                  ],
+                ],
               ),
             ),
           ),
           actionsAlignment: MainAxisAlignment.center,
           actions: [
             FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(),
+              onPressed: canJump ? handleEdit : () => Navigator.of(ctx).pop(),
               style: FilledButton.styleFrom(
                 minimumSize: Size(math.min(maxBodyWidth - 24, 300), 48),
                 padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
@@ -110,6 +192,41 @@ class ModerationUi {
         );
       },
     );
+  }
+
+  static TextSpan _highlightedSentenceSpan(
+    String sentence,
+    List<String> terms,
+    TextStyle style,
+  ) {
+    final cleanTerms = terms
+        .map((term) => term.trim())
+        .where((term) => term.isNotEmpty)
+        .toList();
+    if (cleanTerms.isEmpty) return TextSpan(text: sentence, style: style);
+
+    final pattern = RegExp(
+      r'\b(' + cleanTerms.map(RegExp.escape).join('|') + r')\b',
+      caseSensitive: false,
+    );
+    final spans = <TextSpan>[];
+    var last = 0;
+    for (final match in pattern.allMatches(sentence)) {
+      if (match.start > last) {
+        spans.add(TextSpan(text: sentence.substring(last, match.start)));
+      }
+      spans.add(
+        TextSpan(
+          text: sentence.substring(match.start, match.end),
+          style: style.copyWith(fontWeight: FontWeight.w900),
+        ),
+      );
+      last = match.end;
+    }
+    if (last < sentence.length) {
+      spans.add(TextSpan(text: sentence.substring(last)));
+    }
+    return TextSpan(style: style, children: spans);
   }
 }
 
