@@ -14,6 +14,15 @@ void main() {
       expect(result.isSafe, isTrue);
     });
 
+    test('allows fictional adventure words in stories', () {
+      final result = service.moderateStory(
+        title: 'The Brave Knight',
+        body: 'The hero used a sword to fight the dragon and save the village.',
+      );
+
+      expect(result.isSafe, isTrue);
+    });
+
     test('blocks categorized keywords after normalization', () {
       final result = service.moderateText('You are a st.upid loser!');
 
