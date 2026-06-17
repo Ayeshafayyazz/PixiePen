@@ -16,15 +16,18 @@ class ModerationResult {
   final bool isSafe;
   final String? flagReason;
   final List<String> flaggedTerms;
+  final String? flaggedSentence;
 
   const ModerationResult.safe()
       : isSafe = true,
         flagReason = null,
-        flaggedTerms = const [];
+        flaggedTerms = const [],
+        flaggedSentence = null;
 
   const ModerationResult.unsafe({
     required this.flagReason,
     this.flaggedTerms = const [],
+    this.flaggedSentence,
   }) : isSafe = false;
 }
 
@@ -328,6 +331,12 @@ class ContentModerationService {
       return _moderateShortSocialText(trimmed);
     }
 
+    if (surface == ModerationSurface.story) {
+      final storyLocal = _moderateStoryLocal(trimmed);
+      if (!storyLocal.isSafe) return storyLocal;
+      return const ModerationResult.safe();
+    }
+
     final base = moderateText(trimmed);
     if (!base.isSafe) return base;
 
@@ -548,6 +557,84 @@ class ContentModerationService {
       case ModerationSurface.parentFeedback:
         return false;
     }
+  }
+
+  /// Story publish/save: block only content unsafe in **any** context — not
+  /// isolated fiction words (kill, sword, fight, etc.). Context review is
+  /// handled by [GeminiService.moderateStoryContent] at publish time.
+  ModerationResult _moderateStoryLocal(String trimmed) {
+    final lower = trimmed.toLowerCase();
+
+    if (emailRegex.hasMatch(lower)) {
+      return ModerationResult.unsafe(
+        flagReason: 'personal_info',
+        flaggedSentence: _firstSentenceMatching(trimmed, emailRegex),
+      );
+    }
+
+    if (phoneRegex.hasMatch(trimmed)) {
+      return ModerationResult.unsafe(
+        flagReason: 'personal_info',
+        flaggedSentence: _firstSentenceMatching(trimmed, phoneRegex),
+      );
+    }
+
+    if (_containsProfanityVariant(lower)) {
+      for (final pattern in _profanityPatterns) {
+        if (pattern.hasMatch(lower)) {
+          return ModerationResult.unsafe(
+            flagReason: 'profanity',
+            flaggedSentence: _firstSentenceMatching(trimmed, pattern),
+          );
+        }
+      }
+      return const ModerationResult.unsafe(flagReason: 'profanity');
+    }
+
+    final profanity = _matchedWords(normalize(trimmed), profanityList);
+    if (profanity.isNotEmpty) {
+      return ModerationResult.unsafe(
+        flagReason: 'profanity',
+        flaggedTerms: profanity,
+        flaggedSentence: _firstSentenceContainingTerms(trimmed, profanity),
+      );
+    }
+
+    return const ModerationResult.safe();
+  }
+
+  String? _firstSentenceMatching(String text, RegExp pattern) {
+    for (final sentence in _splitSentences(text)) {
+      if (pattern.hasMatch(sentence)) return sentence;
+    }
+    return null;
+  }
+
+  String? _firstSentenceContainingTerms(String text, List<String> terms) {
+    for (final sentence in _splitSentences(text)) {
+      final lower = sentence.toLowerCase();
+      for (final term in terms) {
+        final t = term.trim().toLowerCase();
+        if (t.isEmpty) continue;
+        if (RegExp(r'\b' + RegExp.escape(t) + r'\b', caseSensitive: false)
+            .hasMatch(lower)) {
+          return sentence;
+        }
+      }
+    }
+    return null;
+  }
+
+  List<String> _splitSentences(String text) {
+    final sentences = <String>[];
+    final pattern = RegExp(r'[^.!?\n]+[.!?]?|\n+');
+    for (final match in pattern.allMatches(text)) {
+      final sentence = match.group(0)?.trim();
+      if (sentence != null && sentence.isNotEmpty) {
+        sentences.add(sentence);
+      }
+    }
+    return sentences;
   }
 
   ModerationResult _moderateShortSocialText(String trimmed) {

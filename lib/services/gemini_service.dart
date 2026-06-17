@@ -3,6 +3,22 @@ import 'dart:convert';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 
+class StoryModerationVerdict {
+  final bool isSafe;
+  final String? flaggedSentence;
+  final String? reason;
+
+  const StoryModerationVerdict.safe()
+      : isSafe = true,
+        flaggedSentence = null,
+        reason = null;
+
+  const StoryModerationVerdict.unsafe({
+    this.flaggedSentence,
+    this.reason,
+  }) : isSafe = false;
+}
+
 /// AI helper for child-safe story features.
 ///
 /// **Note:** the class is still called `GeminiService` for backwards
@@ -266,6 +282,71 @@ class GeminiService {
       return true; // avoid false blocks for harmless comments
     } catch (_) {
       return true; // avoid false blocks for harmless comments
+    }
+  }
+
+  /// Context-aware moderation for full stories at publish/save time.
+  ///
+  /// Judges sentences by meaning and tone — not isolated words — so fictional
+  /// adventure (swords, dragons, mild peril) can pass when kind and age-appropriate.
+  Future<StoryModerationVerdict> moderateStoryContent({
+    required String title,
+    required String body,
+  }) async {
+    final storyTitle = title.trim();
+    final storyBody = body.trim();
+    final combined =
+        storyTitle.isEmpty ? storyBody : '$storyTitle\n\n$storyBody';
+    if (combined.trim().isEmpty) {
+      return const StoryModerationVerdict.safe();
+    }
+    if (!_hasApiKey) return const StoryModerationVerdict.safe();
+
+    try {
+      final raw = await _chat(
+        system:
+            'You review children\'s creative stories (ages 9-12) for PixiePen. '
+            'Judge by CONTEXT and overall sentence meaning — NOT isolated words. '
+            'ALLOW age-appropriate fiction: adventure, fantasy, heroes vs villains, '
+            'mild peril, characters overcoming fears, and neutral or gently sad '
+            'storytelling that is not harsh or cruel. Words like fight, kill, sword, '
+            'weapon, or battle are ALLOWED when they describe fictional story action '
+            'and do NOT promote real-world violence, cruelty, or fear. '
+            'ALLOW positive, neutral, and relevant sentences that sound kind. '
+            'REJECT only when a specific sentence is profane, sexually inappropriate, '
+            'hateful, bullying, promotes real violence/cruelty, self-harm, or is '
+            'genuinely harsh or frightening for children. '
+            'If rejecting, copy the EXACT problematic sentence from the story. '
+            'Return JSON ONLY with keys: allow (boolean), reason (string), '
+            'flagged_sentence (string or null).',
+        user: 'Title:\n$storyTitle\n\nStory:\n$storyBody',
+        jsonMode: true,
+        temperature: 0,
+      );
+
+      final parsed = _parseJsonObject(raw);
+      final allow = parsed['allow'];
+      if (allow is bool && allow) {
+        return const StoryModerationVerdict.safe();
+      }
+      if (allow is bool && !allow) {
+        final sentence = parsed['flagged_sentence']?.toString().trim();
+        final reason = parsed['reason']?.toString().trim();
+        return StoryModerationVerdict.unsafe(
+          flaggedSentence:
+              sentence != null && sentence.isNotEmpty ? sentence : null,
+          reason: reason != null && reason.isNotEmpty ? reason : null,
+        );
+      }
+      return const StoryModerationVerdict.safe();
+    } catch (_) {
+      final apiSafe = await moderateContent(combined, failOpen: true);
+      if (!apiSafe) {
+        return const StoryModerationVerdict.unsafe(
+          reason: 'This story may include content that is not safe for PixiePen.',
+        );
+      }
+      return const StoryModerationVerdict.safe();
     }
   }
 
