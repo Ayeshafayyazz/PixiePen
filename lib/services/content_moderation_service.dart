@@ -74,7 +74,22 @@ class ContentModerationService {
     'crap',
     'damn',
     'fuck',
+    'fucking',
+    'fucker',
+    'motherfucker',
     'shit',
+    'shitty',
+  ];
+
+  /// Regex roots catch common inflections/slang that exact-word lists miss
+  /// (e.g. "fucking", "fucked", "shitty"), especially in short comments.
+  static final List<RegExp> _profanityPatterns = [
+    RegExp(r'\bfuck(?:ing|ed|er|ers)?\b', caseSensitive: false),
+    RegExp(r'\bmotherfuck(?:er|ers|ing|ed)?\b', caseSensitive: false),
+    RegExp(r'\bshit(?:ty|head|heads)?\b', caseSensitive: false),
+    RegExp(r'\bbitch(?:es|y)?\b', caseSensitive: false),
+    RegExp(r'\basshole(?:s)?\b', caseSensitive: false),
+    RegExp(r'\bbastard(?:s)?\b', caseSensitive: false),
   ];
 
   static const List<String> violenceList = [
@@ -242,6 +257,10 @@ class ContentModerationService {
       return const ModerationResult.unsafe(flagReason: 'personal_info');
     }
 
+    if (_containsProfanityVariant(lowerText)) {
+      return const ModerationResult.unsafe(flagReason: 'profanity');
+    }
+
     final profanity = _matchedWords(cleanText, profanityList);
     if (profanity.isNotEmpty) {
       return ModerationResult.unsafe(
@@ -306,7 +325,7 @@ class ContentModerationService {
 
     if (surface == ModerationSurface.comment ||
         surface == ModerationSurface.reply) {
-      return _moderateShortSocialText(trimmed, storyExcerpt);
+      return _moderateShortSocialText(trimmed);
     }
 
     final base = moderateText(trimmed);
@@ -497,6 +516,13 @@ class ContentModerationService {
     return _matchedWords(normalize(text), words).isNotEmpty;
   }
 
+  bool _containsProfanityVariant(String lowerText) {
+    for (final pattern in _profanityPatterns) {
+      if (pattern.hasMatch(lowerText)) return true;
+    }
+    return false;
+  }
+
   List<String>? _cachedFuzzyTerms;
 
   List<String> _allFuzzyTerms() {
@@ -516,17 +542,15 @@ class ContentModerationService {
       case ModerationSurface.reply:
         return false;
       case ModerationSurface.story:
-      case ModerationSurface.appFeedback:
-      case ModerationSurface.parentFeedback:
       case ModerationSurface.aiPrompt:
         return true;
+      case ModerationSurface.appFeedback:
+      case ModerationSurface.parentFeedback:
+        return false;
     }
   }
 
-  ModerationResult _moderateShortSocialText(
-    String trimmed,
-    String? storyExcerpt,
-  ) {
+  ModerationResult _moderateShortSocialText(String trimmed) {
     final clean = normalize(trimmed);
     if (clean.isEmpty) return const ModerationResult.safe();
 
@@ -549,18 +573,6 @@ class ContentModerationService {
 
     final base = moderateText(trimmed);
     if (!base.isSafe) return base;
-
-    final fuzzySelf = _fuzzyTokenScan(clean);
-    if (!fuzzySelf.isSafe) return fuzzySelf;
-
-    final extra = storyExcerpt?.trim();
-    if (extra != null && extra.isNotEmpty) {
-      final combined = '$trimmed $extra';
-      final combo = moderateText(combined);
-      if (!combo.isSafe) return combo;
-      final fuzzyCombo = _fuzzyTokenScan(normalize(combined));
-      if (!fuzzyCombo.isSafe) return fuzzyCombo;
-    }
 
     final agg = _aggregatedSocialToxicityScore(trimmed, clean);
     if (agg >= toxicityBlockThreshold) {

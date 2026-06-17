@@ -96,12 +96,20 @@ class StoryInteractionService {
 
     await _core.db.runTransaction((tx) async {
       final userSnap = await tx.get(userRef);
+      final storySnap = await tx.get(storyRef);
+      final storyData = storySnap.data();
+      if (storyData == null) {
+        throw StateError('This story is no longer available.');
+      }
       final savedStoryIds =
           ((userSnap.data()?[FirestoreStoryFields.savedStoryIds] as List?) ??
                   const [])
               .whereType<String>()
               .toList();
-      final isSaved = savedStoryIds.contains(storyId);
+      final savedBy = (storyData[FirestoreStoryFields.savedBy] as List?) ??
+          const [];
+      final isSaved = savedStoryIds.contains(storyId) ||
+          savedBy.contains(userId);
 
       if (isSaved) {
         isNowSaved = false;
@@ -110,6 +118,15 @@ class StoryInteractionService {
           {
             FirestoreStoryFields.savedStoryIds:
                 FieldValue.arrayRemove([storyId]),
+          },
+          SetOptions(merge: true),
+        );
+        tx.delete(savedRef);
+        tx.set(
+          storyRef,
+          {
+            FirestoreStoryFields.saves: FieldValue.increment(-1),
+            FirestoreStoryFields.savedBy: FieldValue.arrayRemove([userId]),
           },
           SetOptions(merge: true),
         );
@@ -123,38 +140,22 @@ class StoryInteractionService {
           },
           SetOptions(merge: true),
         );
-      }
-    });
-
-    try {
-      if (!isNowSaved) {
-        await savedRef.delete();
-        await storyRef.set(
-          {
-            FirestoreStoryFields.saves: FieldValue.increment(-1),
-            FirestoreStoryFields.savedBy: FieldValue.arrayRemove([userId]),
-          },
-          SetOptions(merge: true),
-        );
-      } else {
-        final storySnap = await storyRef.get();
-        final data = storySnap.data();
-        if (data == null) {
-          throw StateError('This story is no longer available.');
-        }
-        await savedRef.set({
+        tx.set(savedRef, {
           FirestoreStoryFields.storyId: storyId,
           FirestoreStoryFields.userId: userId,
           FirestoreStoryFields.authorId:
-              data[FirestoreStoryFields.authorId] as String?,
-          'storyTitle': data[FirestoreStoryFields.title] as String? ?? 'Untitled',
+              storyData[FirestoreStoryFields.authorId] as String?,
+          'storyTitle':
+              storyData[FirestoreStoryFields.title] as String? ?? 'Untitled',
           FirestoreStoryFields.authorName:
-              data[FirestoreStoryFields.authorName] as String? ?? 'Unknown',
+              storyData[FirestoreStoryFields.authorName] as String? ??
+                  'Unknown',
           FirestoreStoryFields.coverUrl:
-              data[FirestoreStoryFields.coverUrl] as String? ?? '',
+              storyData[FirestoreStoryFields.coverUrl] as String? ?? '',
           'savedAt': FieldValue.serverTimestamp(),
         });
-        await storyRef.set(
+        tx.set(
+          storyRef,
           {
             FirestoreStoryFields.saves: FieldValue.increment(1),
             FirestoreStoryFields.savedBy: FieldValue.arrayUnion([userId]),
@@ -162,9 +163,7 @@ class StoryInteractionService {
           SetOptions(merge: true),
         );
       }
-    } catch (error) {
-      debugPrint('Saved story mirror update skipped: $error');
-    }
+    });
 
     return isNowSaved;
   }
@@ -187,7 +186,7 @@ class StoryInteractionService {
     if (!moderation.isSafe) {
       throw ArgumentError(ContentModerationService.childFriendlyWarning);
     }
-    final geminiSafe = await _geminiService.moderateContent(text);
+    final geminiSafe = await _geminiService.moderateCommunityComment(text);
     if (!geminiSafe) {
       throw ArgumentError(ContentModerationService.childFriendlyWarning);
     }
@@ -282,7 +281,7 @@ class StoryInteractionService {
     if (!moderation.isSafe) {
       throw ArgumentError(ContentModerationService.childFriendlyWarning);
     }
-    final geminiSafe = await _geminiService.moderateContent(text);
+    final geminiSafe = await _geminiService.moderateCommunityComment(text);
     if (!geminiSafe) {
       throw ArgumentError(ContentModerationService.childFriendlyWarning);
     }

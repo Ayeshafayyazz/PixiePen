@@ -49,7 +49,8 @@ class GeminiService {
   /// Supported [shiftType]s:
   ///   • `first_person`, `second_person`, `third_person` — faithful narrative
   ///     voice conversion (pronouns + verb conjugation only, no plot changes).
-  ///   • `villain`, `side_character`, `time_shift`, `emotional_lens` —
+  ///   • `villain`, `side_character`, `time_shift`, `emotional_joy`,
+  ///     `emotional_fear` —
   ///     creative re-imaginings (the model may reinterpret freely).
   Future<String> shiftPerspective(String shiftType, String storyText) async {
     final trimmed = storyText.trim();
@@ -88,6 +89,40 @@ class GeminiService {
       return result.isEmpty ? trimmed : result;
     } catch (_) {
       return trimmed;
+    }
+  }
+
+  /// Rewrites a story using a reader-provided custom instruction.
+  ///
+  /// This is used by the "Custom Suggestion" story-shift option in the reader.
+  /// The instruction is treated as guidance only and is wrapped in child-safety
+  /// constraints so output remains age-appropriate for 9-12.
+  Future<String> shiftPerspectiveBySuggestion(
+    String suggestion,
+    String storyText,
+  ) async {
+    final trimmedStory = storyText.trim();
+    final trimmedSuggestion = suggestion.trim();
+    if (!_hasApiKey || trimmedStory.isEmpty || trimmedSuggestion.isEmpty) {
+      return trimmedStory;
+    }
+
+    try {
+      final result = await _chat(
+        system:
+            'You rewrite scenes for children ages 9-12. Always keep content '
+            'strictly child-safe: no scary, violent, romantic, or adult '
+            'details. Follow the user suggestion closely while preserving the '
+            'core plot and character names unless explicitly asked to change '
+            'them. Return only the rewritten story text with no preamble.',
+        temperature: 0.6,
+        user:
+            'User suggestion for rewriting:\n$trimmedSuggestion\n\n'
+            'Original story:\n$trimmedStory',
+      );
+      return result.isEmpty ? trimmedStory : result;
+    } catch (_) {
+      return trimmedStory;
     }
   }
 
@@ -131,11 +166,15 @@ class GeminiService {
   /// Checks whether text is appropriate for children ages 9-12.
   ///
   /// Uses OpenAI's free Moderation API plus stricter kid-safety thresholds.
-  /// Returns `true` (safe) if the API call fails so the UI doesn't block on
-  /// transient errors.
-  Future<bool> moderateContent(String text) async {
+  ///
+  /// By default this is fail-open (`failOpen = true`) so temporary network/API
+  /// errors do not block long-form authoring. For short social surfaces (e.g.
+  /// comments/replies) callers can pass `failOpen: false` to enforce strict
+  /// moderation when local checks are inconclusive.
+  Future<bool> moderateContent(String text, {bool failOpen = true}) async {
     final input = text.trim();
-    if (!_hasApiKey || input.isEmpty) return true;
+    if (input.isEmpty) return true;
+    if (!_hasApiKey) return failOpen;
 
     try {
       final response = await http
@@ -153,14 +192,14 @@ class GeminiService {
           .timeout(_requestTimeout);
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        return true;
+        return failOpen;
       }
 
       final decoded = jsonDecode(response.body);
       final results = decoded is Map ? decoded['results'] : null;
-      if (results is! List || results.isEmpty) return true;
+      if (results is! List || results.isEmpty) return failOpen;
       final first = results.first;
-      if (first is! Map) return true;
+      if (first is! Map) return failOpen;
 
       if (first['flagged'] == true) return false;
 
@@ -175,7 +214,58 @@ class GeminiService {
       }
       return true;
     } catch (_) {
-      return true;
+      return failOpen;
+    }
+  }
+
+  /// Strict moderation policy for community comments/replies.
+  ///
+  /// Rules requested by product:
+  /// - allow comments that are positive OR neutral, as long as they are
+  ///   respectful and appropriate
+  /// - reject profanity, vulgarity, hate, harassment, bullying, threats,
+  ///   discrimination, sexual content, abusive language, and other harmful text
+  /// - if OpenAI Moderation API is unavailable, fail closed (do not allow posting)
+  Future<bool> moderateCommunityComment(String text) async {
+    final input = text.trim();
+    if (input.isEmpty) return true;
+    if (!_hasApiKey) return false;
+
+    // Pass 1: OpenAI Moderation API (broad safety categories).
+    final safeByModerationApi = await moderateContent(input, failOpen: false);
+    if (!safeByModerationApi) return false;
+
+    // Pass 2: Context/tone gate for community quality.
+    //
+    // Important: this pass should reduce false negatives after Moderation API,
+    // not create false positives for harmless comments. So if this classifier
+    // fails transiently or returns malformed JSON, we allow by default because
+    // pass 1 already performed strict fail-closed moderation.
+    try {
+      final raw = await _chat(
+        system:
+            'You are a community comment safety checker for children ages 9-12. '
+            'Allow comments that are respectful, appropriate, and either '
+            'positive or neutral. Do NOT require explicit positivity. '
+            'Reject comments that are rude, hostile, insulting, degrading, '
+            'sarcastically abusive, bullying, threatening, discriminatory, '
+            'sexual, or otherwise harmful. Reject anything with profanity, '
+            'vulgar language, hate speech, harassment, bullying, threats, '
+            'discrimination, sexual content, abusive tone, or harmful intent. '
+            'Return JSON ONLY with keys: allow (boolean), reason (string). '
+            'Examples that should ALLOW: "nice to meet you", '
+            '"good job on your story", "thanks for sharing".',
+        user: 'Comment:\n$input',
+        jsonMode: true,
+        temperature: 0,
+      );
+
+      final parsed = _parseJsonObject(raw);
+      final allow = parsed['allow'];
+      if (allow is bool) return allow;
+      return true; // avoid false blocks for harmless comments
+    } catch (_) {
+      return true; // avoid false blocks for harmless comments
     }
   }
 
@@ -295,9 +385,12 @@ class GeminiService {
       case 'time_shift':
         return "Rewrite this showing the same character 10 years later for a "
             "children's story";
-      case 'emotional_lens':
-        return 'Rewrite this scene twice, once with joy and once with fear, '
-            'keeping it child-friendly';
+      case 'emotional_joy':
+        return 'Rewrite this scene with a joyful emotional lens, keeping it '
+            'child-friendly';
+      case 'emotional_fear':
+        return 'Rewrite this scene with a gentle fear/tension emotional lens, '
+            'keeping it child-friendly and age-appropriate';
       default:
         return "Rewrite this children's story scene in a fresh, fun, "
             "age-appropriate way";
