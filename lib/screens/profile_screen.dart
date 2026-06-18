@@ -232,6 +232,49 @@ String? _cleanString(dynamic value) {
   return trimmed.isEmpty ? null : trimmed;
 }
 
+bool _isChildWithoutOwnEmail(Map<String, dynamic>? data) {
+  return data?['childLoginWithoutOwnEmail'] == true;
+}
+
+bool _isSyntheticChildEmail(String? email) {
+  return email?.trim().toLowerCase().endsWith('@pixiepen-child.invalid') ==
+      true;
+}
+
+String _profileEmailFor(
+  Map<String, dynamic>? data, {
+  required String? authEmail,
+}) {
+  if (_isChildWithoutOwnEmail(data)) return '';
+
+  final storedEmail = _cleanString(data?['email']);
+  if (storedEmail != null && !_isSyntheticChildEmail(storedEmail)) {
+    return storedEmail.toLowerCase();
+  }
+
+  final fallbackEmail = _cleanString(authEmail);
+  if (fallbackEmail != null && !_isSyntheticChildEmail(fallbackEmail)) {
+    return fallbackEmail.toLowerCase();
+  }
+
+  return '';
+}
+
+String _profileHandleFor({
+  required String displayName,
+  required String email,
+}) {
+  if (email.trim().isNotEmpty) {
+    return '@${email.trim().split('@').first}';
+  }
+
+  final nameHandle = displayName
+      .trim()
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9_]'), '');
+  return nameHandle.isEmpty ? '' : '@$nameHandle';
+}
+
 class _AvatarArt extends StatelessWidget {
   final _AvatarChoice avatar;
   final double radius;
@@ -597,12 +640,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
         (_user!.displayName != null && _user!.displayName!.trim().isNotEmpty)
             ? _user!.displayName!.trim()
             : (_user!.email?.split('@').first ?? 'guest');
+    final authEmail = _user!.email?.trim().toLowerCase();
+    final syntheticChildEmail = _isSyntheticChildEmail(authEmail);
 
     if (!snap.exists) {
       await docRef.set({
         'username': fallbackName,
-        'email': _user!.email?.trim().toLowerCase(),
+        'email': syntheticChildEmail ? '' : authEmail,
         'role': 'child',
+        if (syntheticChildEmail) 'childLoginWithoutOwnEmail': true,
         'avatarId': _avatarChoices.first.id,
         'createdAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
@@ -612,9 +658,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (username == null || username.isEmpty) {
         await docRef.set({'username': fallbackName}, SetOptions(merge: true));
       }
-      final preserveContactEmail = data['childLoginWithoutOwnEmail'] == true;
+      final preserveContactEmail =
+          data['childLoginWithoutOwnEmail'] == true || syntheticChildEmail;
       await docRef.set({
-        if (!preserveContactEmail) 'email': _user!.email?.trim().toLowerCase(),
+        'email': preserveContactEmail ? '' : authEmail,
+        if (preserveContactEmail) 'childLoginWithoutOwnEmail': true,
         if (data['role'] == null) 'role': 'child',
         if (data['avatarId'] == null) 'avatarId': _avatarChoices.first.id,
       }, SetOptions(merge: true));
@@ -726,8 +774,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _buildHeader(BuildContext context, String? userId) {
-    final String authFallbackEmail = _user?.email ?? "no-email@example.com";
-
     return Container(
       padding: const EdgeInsets.only(top: 50, bottom: 30),
       width: double.infinity,
@@ -772,13 +818,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 : const Stream.empty(),
             builder: (context, userDocSnap) {
               String displayName = "Guest User";
-              var contactEmail = authFallbackEmail;
+              var contactEmail = _profileEmailFor(
+                null,
+                authEmail: _user?.email,
+              );
+              Map<String, dynamic>? data;
               if (userDocSnap.hasData && userDocSnap.data!.exists) {
-                final data = userDocSnap.data!.data() ?? {};
-                final stored = (data['email'] as String?)?.trim();
-                if (stored != null && stored.isNotEmpty) {
-                  contactEmail = stored;
-                }
+                data = userDocSnap.data!.data() ?? {};
+                contactEmail = _profileEmailFor(
+                  data,
+                  authEmail: _user?.email,
+                );
                 final dynamic usernameField =
                     data['username'] ?? data['displayName'];
                 if (usernameField is String &&
@@ -787,18 +837,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 } else if (_user?.displayName != null &&
                     _user!.displayName!.trim().isNotEmpty) {
                   displayName = _user!.displayName!.trim();
-                } else {
+                } else if (contactEmail.isNotEmpty) {
                   displayName = contactEmail.split('@').first;
                 }
               } else {
                 if (_user?.displayName != null &&
                     _user!.displayName!.trim().isNotEmpty) {
                   displayName = _user!.displayName!.trim();
-                } else {
+                } else if (contactEmail.isNotEmpty) {
                   displayName = contactEmail.split('@').first;
                 }
               }
-              final handle = '@${contactEmail.split('@').first}';
+              final handle = _profileHandleFor(
+                displayName: displayName,
+                email: contactEmail,
+              );
 
               return Column(
                 children: [
@@ -810,10 +863,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       color: Colors.white,
                     ),
                   ),
-                  Text(
-                    handle,
-                    style: const TextStyle(color: Colors.white70, fontSize: 14),
-                  ),
+                  if (handle.isNotEmpty)
+                    Text(
+                      handle,
+                      style:
+                          const TextStyle(color: Colors.white70, fontSize: 14),
+                    ),
                 ],
               );
             },
@@ -1585,12 +1640,10 @@ class _FollowUserResult {
 
 extension _ProfileScreenDrawerSection on _ProfileScreenState {
   Widget _buildDrawer(BuildContext context) {
-    final String email = _user?.email ?? "no-email@example.com";
-
     return Drawer(
       child: Column(
         children: [
-          _buildDrawerHeader(email),
+          _buildDrawerHeader(),
           Expanded(
             child: _buildDrawerOptionsSection(context),
           ),
@@ -1600,30 +1653,32 @@ extension _ProfileScreenDrawerSection on _ProfileScreenState {
     );
   }
 
-  Widget _buildDrawerHeader(String email) {
+  Widget _buildDrawerHeader() {
     return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
       stream: _user != null
           ? _db.collection('users').doc(_user!.uid).snapshots()
           : const Stream.empty(),
       builder: (context, snap) {
         String displayName = _user?.displayName ?? "Guest User";
+        var email = _profileEmailFor(null, authEmail: _user?.email);
         Map<String, dynamic>? userData;
         if (snap.hasData && snap.data!.exists) {
           userData = snap.data!.data() ?? {};
+          email = _profileEmailFor(userData, authEmail: _user?.email);
           final username = (userData['username'] as String?)?.trim();
           if (username != null && username.isNotEmpty) {
             displayName = username;
           } else if (_user?.displayName != null &&
               _user!.displayName!.trim().isNotEmpty) {
             displayName = _user!.displayName!.trim();
-          } else {
+          } else if (email.isNotEmpty) {
             displayName = email.split('@').first;
           }
         } else {
           if (_user?.displayName != null &&
               _user!.displayName!.trim().isNotEmpty) {
             displayName = _user!.displayName!.trim();
-          } else {
+          } else if (email.isNotEmpty) {
             displayName = email.split('@').first;
           }
         }
@@ -2331,14 +2386,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   String? _photoUrl;
   String? _avatarId;
   String _role = 'child';
+  late bool _childLoginWithoutOwnEmail;
   bool _saving = false;
   bool _photoSaving = false;
 
   @override
   void initState() {
     super.initState();
+    _childLoginWithoutOwnEmail = _isSyntheticChildEmail(_user?.email);
     _nameController = TextEditingController(text: _user?.displayName ?? "");
-    _handleController = TextEditingController(text: _user?.email ?? "");
+    _handleController = TextEditingController(
+      text: _isSyntheticChildEmail(_user?.email) ? "" : _user?.email ?? "",
+    );
     _parentEmailController = TextEditingController();
     _photoUrl = _user?.photoURL;
     _loadProfileFromFirestore();
@@ -2353,15 +2412,19 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (username != null && username.trim().isNotEmpty) {
         _nameController.text = username;
       }
-      final savedEmail = data['email'] as String?;
-      if (savedEmail != null && savedEmail.trim().isNotEmpty) {
-        _handleController.text = savedEmail.trim().toLowerCase();
-      }
       final role = data['role'] as String?;
       final parentEmail = data['parentEmail'] as String?;
+      final childLoginWithoutOwnEmail =
+          data['childLoginWithoutOwnEmail'] == true ||
+              _isSyntheticChildEmail(_user?.email);
+      _handleController.text = _profileEmailFor(
+        data,
+        authEmail: _user?.email,
+      );
       if (mounted) {
         setState(() {
           _role = role == 'parent' ? 'parent' : 'child';
+          _childLoginWithoutOwnEmail = childLoginWithoutOwnEmail;
           _parentEmailController.text = parentEmail ?? '';
         });
       }
@@ -2426,7 +2489,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       await _db.collection('users').doc(_user!.uid).set({
         'username': newName,
         'displayName': newName,
-        'email': _user!.email?.trim().toLowerCase(),
+        'email': _childLoginWithoutOwnEmail
+            ? ''
+            : _user!.email?.trim().toLowerCase(),
         'role': _role,
         'parentEmail': _role == 'child' && parentEmail.isNotEmpty
             ? parentEmail

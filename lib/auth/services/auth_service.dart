@@ -84,7 +84,7 @@ class AuthService {
       await user.updateDisplayName(u);
       await _db.collection('users').doc(user.uid).set({
         'username': u,
-        'email': pe,
+        'email': '',
         'parentEmail': pe,
         'role': 'child',
         'childLoginWithoutOwnEmail': true,
