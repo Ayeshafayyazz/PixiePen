@@ -446,6 +446,11 @@ class _CommunityScreenState extends State<CommunityScreen> {
     super.dispose();
   }
 
+  void _hideCurrentSnackBar() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+  }
+
   void _listenToUserSavedStories() {
     final userId = _user?.uid;
     if (userId == null || userId.isEmpty) return;
@@ -505,11 +510,16 @@ class _CommunityScreenState extends State<CommunityScreen> {
     ];
 
     return Scaffold(
-      body: pages[_selectedIndex],
+      body: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (_) => _hideCurrentSnackBar(),
+        child: pages[_selectedIndex],
+      ),
       bottomNavigationBar: BottomNavigationBar(
         type: BottomNavigationBarType.fixed,
         currentIndex: _selectedIndex,
         onTap: (index) {
+          _hideCurrentSnackBar();
           setState(() {
             _selectedIndex = index;
             if (index != 0) {
@@ -787,7 +797,8 @@ class _CommunityScreenState extends State<CommunityScreen> {
               }
               _savedStoryIds = nextSaved;
             });
-            ScaffoldMessenger.of(context).showSnackBar(
+            final snackBarController =
+                ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(
                   isSaved
@@ -795,11 +806,13 @@ class _CommunityScreenState extends State<CommunityScreen> {
                       : 'Story removed from Saved.',
                 ),
                 backgroundColor: isSaved ? Colors.green : Colors.grey.shade700,
+                duration: const Duration(seconds: 3),
                 action: isSaved
                     ? SnackBarAction(
                         label: 'View',
                         textColor: Colors.white,
                         onPressed: () {
+                          _hideCurrentSnackBar();
                           setState(() {
                             _profileInitialTab = 2;
                             _selectedIndex = 5;
@@ -809,6 +822,9 @@ class _CommunityScreenState extends State<CommunityScreen> {
                     : null,
               ),
             );
+            Timer(const Duration(seconds: 3), () {
+              if (mounted) snackBarController.close();
+            });
           } catch (error, stackTrace) {
             debugPrint('Could not update saved story: $error');
             debugPrintStack(stackTrace: stackTrace);
@@ -964,7 +980,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
       setState(() {
         _myStoriesInitialStatus = targetStatus;
         _myStoriesHighlightedStoryId = storyId;
-        _selectedIndex = 3;
+        _selectedIndex = 4;
       });
       return;
     }
