@@ -3877,6 +3877,7 @@ class EbookPdfGenerator {
                           fontWeight: pw.FontWeight.bold,
                           color: PdfColors.white,
                           height: 1.12,
+                          letterSpacing: 0.15,
                         ),
                       ),
                     ),
@@ -3895,25 +3896,27 @@ class EbookPdfGenerator {
                       pw.SizedBox(height: 14),
                       pw.Container(
                         padding: const pw.EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 5,
+                          horizontal: 16,
+                          vertical: 6,
                         ),
                         decoration: pw.BoxDecoration(
-                          color: PdfColor.fromInt(0x33FFFFFF),
-                          borderRadius: pw.BorderRadius.circular(20),
+                          color: PdfColor.fromInt(0x2DFFFFFF),
+                          borderRadius: pw.BorderRadius.circular(22),
                           border: pw.Border.all(
-                            color: PdfColor.fromInt(0x80FFFFFF),
-                            width: 0.8,
+                            color: PdfColor.fromInt(0xA0FFFFFF),
+                            width: 1,
                           ),
                         ),
                         child: pw.Text(
                           pdfTxt(
                             '$storyCount ${storyCount == 1 ? 'Story' : 'Stories'}',
                           ),
+                          textAlign: pw.TextAlign.center,
                           style: pw.TextStyle(
-                            fontSize: 12,
+                            fontSize: 13,
                             fontWeight: pw.FontWeight.bold,
-                            color: PdfColors.white,
+                            color: PdfColor.fromInt(0xF2FFFFFF),
+                            letterSpacing: 0.2,
                           ),
                         ),
                       ),
